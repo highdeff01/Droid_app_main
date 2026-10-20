@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   calibrateCoordinates,
+  dampJitter,
   getStoredCalibration,
   screenToViewport,
 } from "@/lib/coordinate-calibration";
@@ -82,14 +83,13 @@ export const GlobalAICursorOverlay: React.FC<GlobalAICursorOverlayProps> = ({
   const animFrameRef = useRef<number | null>(null);
   const currentPosRef = useRef(currentPos);
   currentPosRef.current = currentPos;
-  const lastScreenPointRef = useRef<{ x: number; y: number } | undefined>(undefined);
 
   // Map native-resolution coords through the shared calibration profile (the same
-  // space the user's calibrated mouse uses), then onto the current viewport.
+  // call the user's calibrated mouse uses), then onto the current viewport.
+  // Landing points are never damped, so AI and user targets coincide exactly.
   const toCalibratedViewport = (rawX: number, rawY: number) => {
     const profile = getStoredCalibration();
-    const screenPoint = calibrateCoordinates(rawX, rawY, profile, lastScreenPointRef.current);
-    lastScreenPointRef.current = { x: screenPoint.x, y: screenPoint.y };
+    const screenPoint = calibrateCoordinates(rawX, rawY, profile);
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const target = screenToViewport(screenPoint, profile, { width: vw, height: vh });
@@ -110,8 +110,16 @@ export const GlobalAICursorOverlay: React.FC<GlobalAICursorOverlayProps> = ({
 
     // If there's movement, interpolate bezier steps with natural human curvature
     const steps = Math.max(8, Math.min(24, Math.round(dist / 35)));
-    const controlX = (startX + destX) / 2 + (Math.random() - 0.5) * 45;
-    const controlY = (startY + destY) / 2 + (Math.random() - 0.5) * 45;
+    // Path curvature jitter is damped by the profile's jitterDamping; the endpoint is not.
+    const midX = (startX + destX) / 2;
+    const midY = (startY + destY) / 2;
+    const control = dampJitter(
+      { x: midX + (Math.random() - 0.5) * 45, y: midY + (Math.random() - 0.5) * 45 },
+      { x: midX, y: midY },
+      getStoredCalibration().jitterDamping
+    );
+    const controlX = control.x;
+    const controlY = control.y;
 
     let stepIdx = 0;
     const interval = setInterval(() => {
