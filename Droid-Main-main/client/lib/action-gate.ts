@@ -113,14 +113,17 @@ export function analysisConfidence(
   element?: DetectedUIElement,
 ): number | undefined {
   const value = element ? element.confidence : report.confidence;
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function failure(error: unknown, signal: AbortSignal): GateResult {
   if (signal.aborted) {
     return { status: "cancelled", reason: "Action cancelled before dispatch" };
   }
-  const reason = error instanceof Error ? error.message : "Screen analysis failed";
+  const reason =
+    error instanceof Error ? error.message : "Screen analysis failed";
   return { status: "blocked", reason };
 }
 
@@ -141,19 +144,36 @@ export async function runActionGate(
     );
     const frame: string | undefined = capture.frame?.image;
     if (!frame) throw new Error("Screen capture returned no frame");
-    const data = await post("/api/ai/describe-screen", { imageData: frame }, { apiKey, signal });
+    const data = await post(
+      "/api/ai/describe-screen",
+      { imageData: frame },
+      { apiKey, signal },
+    );
     if (signal.aborted) return failure(null, signal);
     const report: ScreenPerceptionReport | undefined = data.report;
     if (!report) throw new Error("Screen analysis returned no report");
     if (!target.needsTarget) {
-      return { status: "verified", frame, report, confidence: analysisConfidence(report) };
+      return {
+        status: "verified",
+        frame,
+        report,
+        confidence: analysisConfidence(report),
+      };
     }
     const element = findTargetElement(report, target.x, target.y);
     if (!element) {
       const name = target.label ? `"${target.label}" ` : "";
-      throw new Error(`Target ${name}not found at (${target.x}, ${target.y}) in the analyzed screen`);
+      throw new Error(
+        `Target ${name}not found at (${target.x}, ${target.y}) in the analyzed screen`,
+      );
     }
-    return { status: "verified", frame, report, element, confidence: analysisConfidence(report, element) };
+    return {
+      status: "verified",
+      frame,
+      report,
+      element,
+      confidence: analysisConfidence(report, element),
+    };
   } catch (error) {
     return failure(error, signal);
   }

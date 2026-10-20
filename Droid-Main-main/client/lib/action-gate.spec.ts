@@ -40,7 +40,13 @@ describe("gateTargetForSteps", () => {
   it("picks the first positional step over a preceding non-positional step", () => {
     const steps: GateStepLike[] = [
       { action: "press_key", x: 0, y: 0, name: "Enter" },
-      { action: "click", x: 42, y: 84, name: "Submit", targetOcrLabel: "Submit button" },
+      {
+        action: "click",
+        x: 42,
+        y: 84,
+        name: "Submit",
+        targetOcrLabel: "Submit button",
+      },
     ];
 
     expect(gateTargetForSteps(steps)).toEqual({
@@ -87,7 +93,9 @@ describe("findTargetElement", () => {
     });
     const report = makeReport({ elements: [element] });
 
-    expect(findTargetElement(report, 100 - TARGET_PADDING_PX, 125)).toBe(element);
+    expect(findTargetElement(report, 100 - TARGET_PADDING_PX, 125)).toBe(
+      element,
+    );
   });
 
   it("returns undefined for a point beyond the padding slack", () => {
@@ -96,7 +104,9 @@ describe("findTargetElement", () => {
     });
     const report = makeReport({ elements: [element] });
 
-    expect(findTargetElement(report, 100 - TARGET_PADDING_PX - 1, 125)).toBeUndefined();
+    expect(
+      findTargetElement(report, 100 - TARGET_PADDING_PX - 1, 125),
+    ).toBeUndefined();
   });
 });
 
@@ -151,7 +161,11 @@ describe("runActionGate", () => {
     const controller = new AbortController();
 
     const result = await runActionGate(
-      { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
+      {
+        targetDevice: "device-1",
+        target: baseTarget,
+        signal: controller.signal,
+      },
       post,
     );
 
@@ -181,7 +195,11 @@ describe("runActionGate", () => {
     const controller = new AbortController();
 
     const result = await runActionGate(
-      { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
+      {
+        targetDevice: "device-1",
+        target: baseTarget,
+        signal: controller.signal,
+      },
       post,
     );
 
@@ -201,7 +219,11 @@ describe("runActionGate", () => {
     const controller = new AbortController();
 
     const result = await runActionGate(
-      { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
+      {
+        targetDevice: "device-1",
+        target: baseTarget,
+        signal: controller.signal,
+      },
       post,
     );
 
@@ -267,7 +289,11 @@ describe("runActionGate", () => {
     const controller = new AbortController();
 
     const resultPromise = runActionGate(
-      { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
+      {
+        targetDevice: "device-1",
+        target: baseTarget,
+        signal: controller.signal,
+      },
       post,
     );
     await describeCalledPromise;
