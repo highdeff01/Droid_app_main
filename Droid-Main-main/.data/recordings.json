@@ -1,0 +1,80 @@
+[
+  {
+    "id": "recording_1790120078276_0dfjzsr",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-09-22T23:34:38.276Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-09-22T23:34:38.276Z"
+  },
+  {
+    "id": "recording_1790711249732_jtwcep3",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-09-29T19:47:29.732Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-09-29T19:47:29.733Z"
+  },
+  {
+    "id": "recording_1790711916665_lfoxin8",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-09-29T19:58:36.665Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-09-29T19:58:36.667Z"
+  },
+  {
+    "id": "recording_1790726049180_3ghtaop",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-09-29T23:54:09.180Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-09-29T23:54:09.181Z"
+  },
+  {
+    "id": "recording_1790726073889_zjtofbn",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-09-29T23:54:33.889Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-09-29T23:54:33.890Z"
+  },
+  {
+    "id": "recording_1790744738382_by041jx",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-09-30T05:05:38.382Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-09-30T05:05:38.383Z"
+  }
+]

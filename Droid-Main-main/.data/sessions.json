@@ -1,0 +1,86 @@
+[
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-09-22T23:34:38.268Z",
+      "updatedAt": "2026-09-22T23:34:38.268Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1790120078268_virphtmw",
+    "createdAt": "2026-09-22T23:34:38.268Z",
+    "updatedAt": "2026-09-22T23:34:38.268Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-09-29T19:47:29.690Z",
+      "updatedAt": "2026-09-29T19:47:29.690Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1790711249690_n19ha55h",
+    "createdAt": "2026-09-29T19:47:29.690Z",
+    "updatedAt": "2026-09-29T19:47:29.690Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-09-29T19:58:36.618Z",
+      "updatedAt": "2026-09-29T19:58:36.618Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1790711916618_xjzu4g8g",
+    "createdAt": "2026-09-29T19:58:36.618Z",
+    "updatedAt": "2026-09-29T19:58:36.618Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-09-29T23:54:09.145Z",
+      "updatedAt": "2026-09-29T23:54:09.145Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1790726049145_bc10s2px",
+    "createdAt": "2026-09-29T23:54:09.145Z",
+    "updatedAt": "2026-09-29T23:54:09.145Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-09-29T23:54:33.853Z",
+      "updatedAt": "2026-09-29T23:54:33.853Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1790726073853_bpwnqcqh",
+    "createdAt": "2026-09-29T23:54:33.853Z",
+    "updatedAt": "2026-09-29T23:54:33.853Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-09-30T05:05:38.312Z",
+      "updatedAt": "2026-09-30T05:05:38.312Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1790744738312_8yt6a83e",
+    "createdAt": "2026-09-30T05:05:38.312Z",
+    "updatedAt": "2026-09-30T05:05:38.312Z"
+  }
+]

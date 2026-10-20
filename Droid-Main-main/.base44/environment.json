@@ -1,0 +1,13 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/api/health",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "GEMINI_API_KEY",
+      "description": "Google Gemini API key for AI vision/analysis features. Optional — the app boots without it using fallback heuristics, but AI features (screen analysis, task planning, description refinement) won't work. Get one at https://aistudio.google.com/apikey",
+      "requiredAtBoot": false,
+      "generatedForDevelopment": true
+    }
+  ]
+}

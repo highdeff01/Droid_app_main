@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "DroidVision AI Page Bridge",
+  "version": "1.0.0",
+  "description": "Reports the active browser tab and its interactive page elements to the DroidVision AI screen-analysis workflow.",
+  "permissions": ["tabs", "activeTab"],
+  "host_permissions": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Report this page to DroidVision AI"
+  }
+}

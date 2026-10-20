@@ -1,0 +1,6 @@
+{
+  "name": "Drive Workspace",
+  "description": "Unified AI Automation Master Platform — Autonomous Automation & Vision Control Hub with Master Workflow Orchestrator.",
+  "requestFramePermissions": ["camera", "microphone", "display-capture"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
