@@ -53,29 +53,101 @@ export function saveStoredCalibration(profile: CoordinateCalibrationProfile): vo
   } catch {}
 }
 
-export function calibrateCoordinates(
-  xOrCoords: number | { x: number; y: number },
-  yOrOffset?: number | { x?: number; y?: number } | CoordinateCalibrationProfile,
-  profileArg?: CoordinateCalibrationProfile
-): CalibrationCoordinates {
-  const x = typeof xOrCoords === "number" ? xOrCoords : xOrCoords.x;
-  const y = typeof xOrCoords === "number" ? (typeof yOrOffset === "number" ? yOrOffset : 0) : xOrCoords.y;
-  let offX = 0;
-  let offY = 0;
-  let scaleX = 1.0;
-  let scaleY = 1.0;
+export interface Point {
+  x: number;
+  y: number;
+}
 
-  const prof = profileArg || (typeof yOrOffset === "object" && yOrOffset !== null ? yOrOffset : undefined);
-  if (prof) {
-    offX = "offsetX" in prof ? prof.offsetX : ((prof as any).x || 0);
-    offY = "offsetY" in prof ? prof.offsetY : ((prof as any).y || 0);
-    scaleX = "scaleX" in prof ? prof.scaleX : 1.0;
-    scaleY = "scaleY" in prof ? prof.scaleY : 1.0;
+/** Positive number or the fallback. */
+const positiveOr = (value: number | undefined, fallback: number) =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+
+/**
+ * Factors that map the native resolution space (resolutionWidth × resolutionHeight)
+ * onto physical screen pixels (screen size × dpiScale).
+ */
+export function resolutionToScreenFactors(profile: CoordinateCalibrationProfile): Point {
+  const dpi = positiveOr(profile.dpiScale, 1);
+  const resW = positiveOr(profile.resolutionWidth, DEFAULT_CALIBRATION_PROFILE.resolutionWidth!);
+  const resH = positiveOr(profile.resolutionHeight, DEFAULT_CALIBRATION_PROFILE.resolutionHeight!);
+  const screenW = positiveOr(profile.screenWidth, resW);
+  const screenH = positiveOr(profile.screenHeight, resH);
+  return { x: (screenW * dpi) / resW, y: (screenH * dpi) / resH };
+}
+
+/**
+ * Moves `current` toward `previous` by the profile's jitterDamping: the point
+ * advances 1/damping of the way from the previous point. Damping ≤ 1 is a no-op.
+ */
+export function dampJitter(current: Point, previous: Point | undefined, damping: number | undefined): Point {
+  const factor = positiveOr(damping, 1);
+  if (!previous || factor <= 1) return current;
+  return {
+    x: previous.x + (current.x - previous.x) / factor,
+    y: previous.y + (current.y - previous.y) / factor,
+  };
+}
+
+/** Normalizes the legacy argument forms into a point and a full profile. */
+function resolveCalibrationArgs(
+  xOrCoords: number | Point,
+  yOrOffset: number | { x?: number; y?: number } | CoordinateCalibrationProfile | undefined,
+  profileArg: CoordinateCalibrationProfile | undefined,
+): { point: Point; profile: CoordinateCalibrationProfile } {
+  const point =
+    typeof xOrCoords === "number"
+      ? { x: xOrCoords, y: typeof yOrOffset === "number" ? yOrOffset : 0 }
+      : { x: xOrCoords.x, y: xOrCoords.y };
+  if (profileArg) return { point, profile: { ...DEFAULT_CALIBRATION_PROFILE, ...profileArg } };
+  if (typeof yOrOffset === "object" && yOrOffset !== null) {
+    if ("offsetX" in yOrOffset) return { point, profile: { ...DEFAULT_CALIBRATION_PROFILE, ...yOrOffset } };
+    const legacy = yOrOffset as { x?: number; y?: number };
+    return {
+      point,
+      profile: { ...DEFAULT_CALIBRATION_PROFILE, offsetX: legacy.x || 0, offsetY: legacy.y || 0 },
+    };
   }
+  return { point, profile: getStoredCalibration() };
+}
 
-  const finalX = Math.round((x + offX) * scaleX);
-  const finalY = Math.round((y + offY) * scaleY);
-  const driftPx = Math.round(Math.sqrt(Math.pow(finalX - x, 2) + Math.pow(finalY - y, 2)));
+/**
+ * Maps a point in the native resolution space into calibrated physical screen
+ * pixels: offset and scale correction, jitter damping against `previous`
+ * (an earlier calibrated point), then resolution → screen × dpiScale.
+ * Without a profile the stored calibration profile is used.
+ */
+export function calibrateCoordinates(
+  xOrCoords: number | Point,
+  yOrOffset?: number | { x?: number; y?: number } | CoordinateCalibrationProfile,
+  profileArg?: CoordinateCalibrationProfile,
+  previous?: Point,
+): CalibrationCoordinates {
+  const { point, profile } = resolveCalibrationArgs(xOrCoords, yOrOffset, profileArg);
+  const correctedX = (point.x + profile.offsetX) * profile.scaleX;
+  const correctedY = (point.y + profile.offsetY) * profile.scaleY;
+  const driftPx = Math.round(Math.hypot(correctedX - point.x, correctedY - point.y));
 
-  return { x: finalX, y: finalY, driftPx };
+  const factors = resolutionToScreenFactors(profile);
+  const screenPoint = { x: correctedX * factors.x, y: correctedY * factors.y };
+  const damped = dampJitter(screenPoint, previous, profile.jitterDamping);
+
+  return { x: Math.round(damped.x), y: Math.round(damped.y), driftPx };
+}
+
+/**
+ * Projects a calibrated physical screen point onto a viewport of the given CSS
+ * size, so the AI cursor lands where the calibrated user cursor would.
+ */
+export function screenToViewport(
+  point: Point,
+  profile: CoordinateCalibrationProfile,
+  viewport: { width: number; height: number },
+): Point {
+  const factors = resolutionToScreenFactors(profile);
+  const resW = positiveOr(profile.resolutionWidth, DEFAULT_CALIBRATION_PROFILE.resolutionWidth!);
+  const resH = positiveOr(profile.resolutionHeight, DEFAULT_CALIBRATION_PROFILE.resolutionHeight!);
+  return {
+    x: (point.x / (resW * factors.x)) * viewport.width,
+    y: (point.y / (resH * factors.y)) * viewport.height,
+  };
 }

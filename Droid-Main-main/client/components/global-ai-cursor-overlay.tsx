@@ -9,6 +9,11 @@ import {
   Crosshair,
   Volume2,
 } from "lucide-react";
+import {
+  calibrateCoordinates,
+  getStoredCalibration,
+  screenToViewport,
+} from "@/lib/coordinate-calibration";
 
 export interface GlobalAICursorState {
   x: number;
@@ -62,8 +67,8 @@ export const GlobalAICursorOverlay: React.FC<GlobalAICursorOverlayProps> = ({
   cursorState,
 }) => {
   const [currentPos, setCurrentPos] = useState<{ x: number; y: number }>({
-    x: typeof window !== "undefined" ? window.innerWidth / 2 : 960,
-    y: typeof window !== "undefined" ? window.innerHeight / 2 : 540,
+    x: typeof window !== "undefined" ? window.innerWidth / 2 : 0,
+    y: typeof window !== "undefined" ? window.innerHeight / 2 : 0,
   });
 
   const [trail, setTrail] = useState<{ x: number; y: number; id: number; opacity: number }[]>([]);
@@ -77,26 +82,20 @@ export const GlobalAICursorOverlay: React.FC<GlobalAICursorOverlayProps> = ({
   const animFrameRef = useRef<number | null>(null);
   const currentPosRef = useRef(currentPos);
   currentPosRef.current = currentPos;
+  const lastScreenPointRef = useRef<{ x: number; y: number } | undefined>(undefined);
 
-  // Convert 1920x1080 or normalized (0..1) coords to current viewport pixels
-  const normalizeToViewport = (rawX: number, rawY: number) => {
-    const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
-    const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
-
-    let targetX = rawX;
-    let targetY = rawY;
-
-    if (rawX <= 1.0 && rawY <= 1.0 && rawX >= 0 && rawY >= 0) {
-      targetX = rawX * vw;
-      targetY = rawY * vh;
-    } else if (rawX > 0 && rawX <= 1920 && rawY > 0 && rawY <= 1080) {
-      targetX = (rawX / 1920) * vw;
-      targetY = (rawY / 1080) * vh;
-    }
-
+  // Map native-resolution coords through the shared calibration profile (the same
+  // space the user's calibrated mouse uses), then onto the current viewport.
+  const toCalibratedViewport = (rawX: number, rawY: number) => {
+    const profile = getStoredCalibration();
+    const screenPoint = calibrateCoordinates(rawX, rawY, profile, lastScreenPointRef.current);
+    lastScreenPointRef.current = { x: screenPoint.x, y: screenPoint.y };
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const target = screenToViewport(screenPoint, profile, { width: vw, height: vh });
     return {
-      x: Math.max(20, Math.min(vw - 20, Math.round(targetX))),
-      y: Math.max(20, Math.min(vh - 20, Math.round(targetY))),
+      x: Math.max(0, Math.min(vw, Math.round(target.x))),
+      y: Math.max(0, Math.min(vh, Math.round(target.y))),
     };
   };
 
@@ -104,7 +103,7 @@ export const GlobalAICursorOverlay: React.FC<GlobalAICursorOverlayProps> = ({
   useEffect(() => {
     if (!cursorState || !enabled) return;
 
-    const { x: destX, y: destY } = normalizeToViewport(cursorState.x || 960, cursorState.y || 540);
+    const { x: destX, y: destY } = toCalibratedViewport(cursorState.x ?? 0, cursorState.y ?? 0);
     const startX = currentPosRef.current.x;
     const startY = currentPosRef.current.y;
     const dist = Math.hypot(destX - startX, destY - startY);
