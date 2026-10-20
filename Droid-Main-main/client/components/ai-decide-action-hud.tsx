@@ -67,7 +67,7 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
   const [aiDecision, setAiDecision] = useState<{
     mode: DecideMode;
     reasoning: string;
-    confidence: number;
+    confidence?: number;
     suggestion: string;
   } | null>(null);
   const [typeText, setTypeText] = useState("");
@@ -131,6 +131,8 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
         reasoning = `No specific input/button, AI defaults to NAVIGATE to feedback position.`;
       }
 
+      // Confidence comes only from the screen analysis; omitted when none ran.
+      let confidence: number | undefined;
       // Try to get richer reasoning from backend planner if available
       try {
         const liveImg = screenshotUrl || "";
@@ -145,6 +147,7 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
           if (j.success && j.report) report = j.report;
         }
         if (report) {
+          confidence = report.confidence;
           const pr = await fetch("/api/ai/plan-and-act", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -170,7 +173,7 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
       setAiDecision({
         mode: decidedMode,
         reasoning,
-        confidence: 0.92,
+        confidence,
         suggestion:
           decidedMode === "type"
             ? `Type at (${typeX},${typeY})`
@@ -259,8 +262,9 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
             AI Decide — Type / Sequence / Navigate
             {aiDecision && (
               <Badge className="bg-purple-950 text-purple-300 border-purple-800 text-[10px] ml-1">
-                {aiDecision.mode.toUpperCase()}{" "}
-                {Math.round(aiDecision.confidence * 100)}%
+                {aiDecision.mode.toUpperCase()}
+                {aiDecision.confidence !== undefined &&
+                  ` ${Math.round(aiDecision.confidence * 100)}%`}
               </Badge>
             )}
           </CardTitle>

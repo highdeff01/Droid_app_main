@@ -2168,6 +2168,7 @@ export default function Dashboard({
                     const map: any = {
                       backdrop_click: { action: "click", x: 100, y: 100 },
                       escape_key: { action: "press_key", keyPayload: "escape" },
+                      tab_enter: { action: "press_key", keyPayload: "enter" },
                     };
                     const act = map[method];
                     if (!act) { toast.error("Unknown recovery method"); return; }
