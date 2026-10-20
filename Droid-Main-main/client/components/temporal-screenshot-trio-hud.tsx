@@ -52,6 +52,10 @@ import {
 import { TabContextualSettingsBar } from "./tab-contextual-settings-bar";
 import { SequenceStep, AIThinkingState } from "./live-screen-hud";
 
+/** " conf NN%" when the analysis reported a confidence, otherwise nothing. */
+const confidenceSuffix = (thinking: AIThinkingState) =>
+  thinking.confidence === undefined ? "" : ` conf ${(thinking.confidence * 100).toFixed(0)}%`;
+
 export interface TemporalFrameData {
   id: string;
   role: "previous" | "current" | "next";
@@ -185,7 +189,7 @@ export const TemporalScreenshotTrioHUD: React.FC<
         : `Live Frame #${liveRing.length + 1}`,
       screenshotUrl: currentLiveScreenshot,
       thinkingProcess: aiThinking
-        ? `Targeting (${aiThinking.x}, ${aiThinking.y}) conf ${(aiThinking.confidence * 100).toFixed(0)}%`
+        ? `Targeting (${aiThinking.x}, ${aiThinking.y})${confidenceSuffix(aiThinking)}`
         : "Live recording capture - analyzing element geometry",
       testsRun:
         perceptionElements.length > 0
@@ -219,7 +223,7 @@ export const TemporalScreenshotTrioHUD: React.FC<
         isLiveStreamActive && frozenSnapshotUrl
           ? frozenSnapshotUrl
           : currentLiveScreenshot,
-      thinkingProcess: `${aiThinking.action} @ (${aiThinking.x},${aiThinking.y}) conf ${(aiThinking.confidence * 100).toFixed(0)}%`,
+      thinkingProcess: `${aiThinking.action} @ (${aiThinking.x},${aiThinking.y})${confidenceSuffix(aiThinking)}`,
       testsRun: "Real-time spline + OCR verification",
       actionDispatched: aiThinking.action,
       timestamp: new Date().toLocaleTimeString(),

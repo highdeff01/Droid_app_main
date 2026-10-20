@@ -69,6 +69,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
+import { gateTargetForSteps, runActionGate } from "@/lib/action-gate";
 import {
   LiveScreenHUD,
   SequenceStep,
@@ -806,24 +807,88 @@ export default function Dashboard({
     }).catch(() => {});
     return () => { disposed = true; };
   }, [replayApiKey]);
+  const gateAbortRef = useRef<AbortController | null>(null);
+  const actionBusyRef = useRef(false);
+  // The single guard every device dispatch passes through: fresh capture → analysis → verified target.
+  const verifyBeforeDispatch = async (steps: SequenceStep[]) => {
+    const target = gateTargetForSteps(steps);
+    const controller = new AbortController();
+    gateAbortRef.current = controller;
+    setIsPerceiving(true);
+    setAiThinking({ x: target.x, y: target.y, action: `Analyzing screen: ${target.label || steps[0].action}`, isThinking: true, targetLabel: target.label });
+    setVerificationBadge({ status: "verifying", message: "Capturing and analyzing screen before acting" });
+    try {
+      const result = await runActionGate({
+        targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined, target,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
+      });
+      if (controller.signal.aborted) {
+        setAiThinking(null);
+        setVerificationBadge({ status: "failed", message: "Action cancelled before dispatch" });
+        return false;
+      }
+      if (result.status !== "verified") {
+        const reason = result.status === "cancelled" ? "Screen analysis timed out (45s); action not dispatched" : result.reason;
+        setAiThinking(null);
+        setVerificationBadge({ status: "failed", message: reason });
+        toast.error(`Action blocked: ${reason}`);
+        return false;
+      }
+      setScreenshotUrl(result.frame);
+      setAiLiveUrl(result.frame);
+      setPerceptionReport(result.report);
+      setAiThinking({ x: target.x, y: target.y, action: target.label || steps[0].action, confidence: result.confidence, isThinking: false, targetLabel: result.element?.name ?? target.label });
+      setVerificationBadge({ status: "verified", message: target.needsTarget ? `Target verified: ${result.element?.name}` : "Screen analyzed" });
+      return true;
+    } finally {
+      if (gateAbortRef.current === controller) gateAbortRef.current = null;
+      setIsPerceiving(false);
+    }
+  };
+  const waitForReplay = async (id: string) => {
+    for (;;) {
+      const data = await replayRequest(`/api/replay/${id}`);
+      applyReplay(data.run);
+      if (data.run.status === "completed") return;
+      if (["failed", "cancelled"].includes(data.run.status)) throw new Error(data.run.error || "Replay stopped");
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  };
+  const dispatchVerifiedReplay = async (steps: SequenceStep[]) => {
+    if (!(await verifyBeforeDispatch(steps)) || replayStopRequested.current) return undefined;
+    const data = await replayRequest("/api/replay", { targetDevice, deviceId: selectedAdbDevice || undefined,
+      steps: steps.map(step => ({ ...step, referenceScreenshotUrl: step.referenceScreenshotUrl || undefined })), iterations: 1, confirmation: true });
+    replayIdRef.current = data.run.id;
+    sessionStorage.setItem("screen-replay-id", data.run.id);
+    applyReplay(data.run);
+    if (replayStopRequested.current) await handleReplayControl("cancel");
+    return data.run.id as string;
+  };
+  const releaseSequence = () => {
+    sequenceRunningRef.current = false; setIsSequenceRunning(false); setIsAutonomousRunning(false);
+  };
   const handleRunSequence = async (stepsToRun?: SequenceStep[], iterations = 1) => {
-    if (sequenceRunningRef.current) return;
+    if (actionBusyRef.current || sequenceRunningRef.current) { toast.info("An action is already being verified or running. Press Stop to cancel it."); return; }
     const steps = Array.isArray(stepsToRun) ? stepsToRun : sequence;
     if (!steps.length) { toast.info("Add or record steps first."); return; }
+    actionBusyRef.current = true;
     sequenceRunningRef.current = true;
     replayStopRequested.current = false;
     setIsSequenceRunning(true);
     try {
-      const data = await replayRequest("/api/replay", { targetDevice, deviceId: selectedAdbDevice || undefined,
-        steps: steps.map(step => ({ ...step, referenceScreenshotUrl: step.referenceScreenshotUrl || undefined })), iterations, confirmation: true });
-      replayIdRef.current = data.run.id;
-      sessionStorage.setItem("screen-replay-id", data.run.id);
-      applyReplay(data.run);
-      if (replayStopRequested.current) await replayRequest(`/api/replay/${data.run.id}/cancel`, {});
-      return data.run.id as string;
+      let id: string | undefined;
+      for (let i = 0; i < iterations && !replayStopRequested.current; i++) {
+        if (id) { await waitForReplay(id); sequenceRunningRef.current = true; }
+        if (replayStopRequested.current) break;
+        id = await dispatchVerifiedReplay(steps);
+        if (!id) { releaseSequence(); return undefined; }
+      }
+      return id;
     } catch (error) {
-      sequenceRunningRef.current = false; setIsSequenceRunning(false); setIsAutonomousRunning(false);
-      toast.error(error instanceof Error ? error.message : "Replay failed");
+      releaseSequence();
+      if (!replayStopRequested.current) toast.error(error instanceof Error ? error.message : "Replay failed");
+    } finally {
+      actionBusyRef.current = false;
     }
   };
   const handleReplayControl = async (command: "pause" | "resume" | "cancel") => {
@@ -833,8 +898,15 @@ export default function Dashboard({
   };
   const handleStopSequence = async () => {
     replayStopRequested.current = true;
-    await handleReplayControl("cancel");
     setIsRecordMode(false);
+    const pendingGate = gateAbortRef.current;
+    if (pendingGate) {
+      pendingGate.abort();
+      setAiThinking(null);
+      toast.info("Pending action cancelled before dispatch.");
+      return;
+    }
+    await handleReplayControl("cancel");
     toast.info("Stop requested. In-flight device actions cannot be undone; the monitor confirms when replay stops.");
   };
   const executeHubTask = async (_url: string, options: RequestInit) => {
@@ -845,14 +917,17 @@ export default function Dashboard({
       x: task.targetPosition?.x ?? task.x ?? 0, y: task.targetPosition?.y ?? task.y ?? 0,
       text: task.textPayload ?? task.text, keyPayload: task.keyPayload ?? task.key,
     }]);
-    if (!id) throw new Error("Replay could not start. Check the monitor and selected device.");
-    for (;;) {
-      const data = await replayRequest(`/api/replay/${id}`);
-      applyReplay(data.run);
-      if (data.run.status === "completed") return new Response(JSON.stringify({ success: true, verified: true }), { status: 200, headers: { "Content-Type": "application/json" } });
-      if (["failed", "cancelled"].includes(data.run.status)) throw new Error(data.run.error || "Replay stopped");
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
+    if (!id) throw new Error("Action was not dispatched: screen verification failed, was cancelled, or another action is running.");
+    await waitForReplay(id);
+    return new Response(JSON.stringify({ success: true, verified: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  // AI-driven single-target actions (navigate, entity, copilot element): record the step, then dispatch through the gate.
+  const dispatchAiTarget = (step: Partial<SequenceStep> & { x: number; y: number; name: string }) => {
+    handleAddSequenceStep({ action: "click", ...step } as any);
+    void executeHubTask("/api/execute-task", {
+      method: "POST",
+      body: JSON.stringify({ targetDevice, deviceId: selectedAdbDevice, task: { id: `ai_${Date.now()}`, action: "click", targetOcrLabel: step.name, ...step } }),
+    }).catch(() => {});
   };
   const captureScreen = async () => {
     try {
@@ -930,7 +1005,7 @@ export default function Dashboard({
       });
       if (!data.success || !data.report) throw new Error(data.error || "Perception unavailable");
       setPerceptionReport(data.report);
-      setVerificationBadge({ status: "verifying", message: "Screen analyzed; actions still require outcome verification" });
+      setVerificationBadge(null);
       return data.report;
     } catch (error: any) {
       setPerceptionReport(null);
@@ -2073,31 +2148,12 @@ export default function Dashboard({
                   deviceId={selectedAdbDevice}
                   onAddStep={handleAddSequenceStep}
                   onRunSequence={() => { void handleRunSequence(); }}
-                  onNavigate={(x, y, label) => {
-                    handleAddSequenceStep({
-                      x,
-                      y,
-                      name: label || `Navigate ${x},${y}`,
-                      action: "click",
-                    } as any);
-                    setAiThinking({
-                      x,
-                      y,
-                      action: `Navigate: ${label}`,
-                      confidence: 0.92,
-                      isThinking: true,
-                      targetLabel: label,
-                    });
-                  }}
-                  onTypeText={(x, y, text, act) => {
-                    handleAddSequenceStep({
-                      x,
-                      y,
-                      action: act || "clear_and_type",
-                      text,
-                      name: `Type: ${text.slice(0, 16)}`,
-                    } as any);
-                  }}
+                  onNavigate={(x, y, label) =>
+                    dispatchAiTarget({ x, y, name: label || `Navigate ${x},${y}` })
+                  }
+                  onTypeText={(x, y, text, act) =>
+                    dispatchAiTarget({ x, y, action: act || "clear_and_type", text, name: `Type: ${text.slice(0, 16)}` })
+                  }
                 />
               </div>
 
@@ -2184,13 +2240,6 @@ export default function Dashboard({
                           if (m) {
                             const x = parseInt(m[1]),
                               y = parseInt(m[2]);
-                            setAiThinking({
-                              x,
-                              y,
-                              action: collabInstruction.slice(0, 40),
-                              confidence: 0.93,
-                              isThinking: true,
-                            });
                             await executeHubTask("/api/execute-task", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
@@ -2353,44 +2402,14 @@ export default function Dashboard({
             <EntitiesRadarPanel
               userGoal={userObjective || "Submit workflow & advance"}
               onSelectEntity={(x, y, name) => {
-                handleAddSequenceStep(x, y);
-                setAiThinking({
-                  x,
-                  y,
-                  action: name.slice(0, 30),
-                  confidence: 0.96,
-                  isThinking: true,
-                  targetLabel: name,
-                });
+                if (!actionBusyRef.current) setAiThinking({ x, y, action: name.slice(0, 30), isThinking: false, targetLabel: name });
               }}
               onLockFocus={(x, y, name) =>
                 handleAddSequenceStep({ x, y, name: `Focus: ${name}` } as any)
               }
-              onDispatchAiMove={(entity) => {
-                handleAddSequenceStep(entity.position.x, entity.position.y);
-                executeHubTask("/api/execute-task", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    targetDevice,
-                    deviceId: selectedAdbDevice,
-                    task: {
-                      id: `entity_${Date.now()}`,
-                      name: entity.name,
-                      action: "click",
-                      targetPosition: entity.position,
-                    },
-                  }),
-                }).catch(() => {});
-                setAiThinking({
-                  x: entity.position.x,
-                  y: entity.position.y,
-                  action: entity.name.slice(0, 30),
-                  confidence: 0.97,
-                  isThinking: true,
-                  targetLabel: entity.name,
-                });
-              }}
+              onDispatchAiMove={(entity) =>
+                dispatchAiTarget({ x: entity.position.x, y: entity.position.y, name: entity.name })
+              }
             />
           </TabsContent>
           <TabsContent value="quantum" className="space-y-6">
@@ -2610,17 +2629,7 @@ export default function Dashboard({
               onTriggerDescribe={handleTriggerDescribeScreen}
               onTriggerPlanAndAct={handleTriggerPlanAndAct}
               onToggleAutonomousLoop={handleToggleAutonomousLoop}
-              onSelectElementTarget={(x, y, name) => {
-                handleAddSequenceStep(x, y);
-                setAiThinking({
-                  x,
-                  y,
-                  action: name,
-                  confidence: 0.93,
-                  isThinking: true,
-                  targetLabel: name,
-                });
-              }}
+              onSelectElementTarget={(x, y, name) => dispatchAiTarget({ x, y, name })}
             />
 
             {/* Auto-Actor Verification & Autonomous Sequence Trigger Studio */}
@@ -2922,13 +2931,6 @@ export default function Dashboard({
                           if (m) {
                             const x = parseInt(m[1]),
                               y = parseInt(m[2]);
-                            setAiThinking({
-                              x,
-                              y,
-                              action: collabInstruction.slice(0, 40),
-                              confidence: 0.93,
-                              isThinking: true,
-                            });
                             await executeHubTask("/api/execute-task", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },

@@ -186,52 +186,16 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
     }
   };
 
-  const handleExecuteType = async () => {
+  const handleExecuteType = () => {
     if (!typeText.trim()) {
       setStatus("Enter text to type first");
       return;
     }
-    setExecuting(true);
+    // The parent verifies the live screen before dispatching and records the step.
+    onTypeText?.(typeX, typeY, typeText, typeAction);
     setStatus(
-      `Typing "${typeText}" at (${typeX},${typeY}) via ${targetDevice}...`,
+      `Verifying screen, then typing "${typeText}" at (${typeX},${typeY}) via ${targetDevice}...`,
     );
-    try {
-      const res = await fetch("/api/execute-task", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetDevice,
-          deviceId,
-          task: {
-            id: `ai_type_${Date.now()}`,
-            name: `AI Type: ${typeText.slice(0, 20)}`,
-            action: typeAction,
-            targetPosition: { x: typeX, y: typeY },
-            textPayload: typeText,
-            text: typeText,
-          },
-        }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setStatus(`✗ Type failed: ${data.error || "Execution failed"}`);
-        return;
-      }
-      setStatus(`✓ Typed "${typeText}" @ (${typeX},${typeY})`);
-      onTypeText?.(typeX, typeY, typeText, typeAction);
-      // Also add as step for reusability
-      onAddStep?.({
-        x: typeX,
-        y: typeY,
-        action: typeAction,
-        text: typeText,
-        name: `AI Type: ${typeText.slice(0, 16)}`,
-      });
-    } catch (e) {
-      setStatus("Type error: " + String(e).slice(0, 60));
-    } finally {
-      setExecuting(false);
-    }
   };
 
   const handleExecuteSequence = async () => {
@@ -278,44 +242,12 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
     }
   };
 
-  const handleExecuteNavigate = async () => {
-    setExecuting(true);
+  const handleExecuteNavigate = () => {
+    // The parent verifies the live screen before dispatching and records the step.
+    onNavigate?.(navX, navY, navLabel);
     setStatus(
-      `Navigating to (${navX},${navY}) ${navLabel} via ${targetDevice}...`,
+      `Verifying screen, then navigating to (${navX},${navY}) ${navLabel} via ${targetDevice}...`,
     );
-    try {
-      const res = await fetch("/api/execute-task", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetDevice,
-          deviceId,
-          task: {
-            id: `ai_nav_${Date.now()}`,
-            name: `Navigate: ${navLabel}`,
-            action: "click",
-            targetPosition: { x: navX, y: navY },
-          },
-        }),
-      });
-      const data = await res.json();
-      setStatus(
-        data.success
-          ? `✓ Navigated to (${navX},${navY})`
-          : `✗ Navigate failed: ${data.error}`,
-      );
-      onNavigate?.(navX, navY, navLabel);
-      onAddStep?.({
-        x: navX,
-        y: navY,
-        action: "click",
-        name: `Navigate: ${navLabel}`,
-      });
-    } catch (e) {
-      setStatus("Navigate error: " + String(e).slice(0, 60));
-    } finally {
-      setExecuting(false);
-    }
   };
 
   return (
