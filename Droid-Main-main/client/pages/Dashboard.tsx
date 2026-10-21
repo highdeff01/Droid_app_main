@@ -494,7 +494,7 @@ export default function Dashboard({
         key: s.key || "",
         delayMs: s.delayMs || 400,
         status: "pending" as const,
-        confidence: s.confidence || 0.95,
+        confidence: typeof s.confidence === "number" ? s.confidence : undefined,
       };
     });
 

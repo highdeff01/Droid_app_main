@@ -38,7 +38,7 @@ Status values used below:
 | PAUSE SUBPROCESS / RESUME BRIDGE | `handleToggleBridgePause` | `POST /api/pyautogui/pause` or `/api/pyautogui/resume` | Awaited; local paused state set from the response; `toast` shows the server's message; `toast.error` on failure | real |
 | STOP ALL | `handleStopAllExecution` | `stopBridge()` → `POST /api/pyautogui/stop` | Awaited inside `try/catch`; `toast.info` with the server's real stop message, or `toast.error` with the failure reason — the former empty `catch {}` is gone | fixed (this PR) |
 | REPLAY DRIFT (FRAMES 1-10) | `handleReplayFrames1To10OnPC` | delegates to `onReplaySteps` → Dashboard `handleRunSequence` → verified `/api/replay` | Awaited by Dashboard; HUD only hands off the first 10 steps | delegated (UNB-8) |
-| AUTO DRAWING (DEMO) | `handleRepeatingDrawingWithAi` | `askQwen()` → `POST /api/hud/qwen/ask` between strokes; each stroke via `runGatedSteps` → `/api/execute-task` | Awaited; `qwenThinkingStatus` shows Qwen's real answer per stroke; strokes execute through the action gate and the toast reports success or the real failure point | fixed (this PR) — button copy now reads "AUTO DRAWING (DEMO)" since the shapes are fixed samples; the Qwen read and the gated dispatch are both real |
+| AUTO DRAWING (PREVIEW) | `handleRepeatingDrawingWithAi` | `askQwen()` → `POST /api/hud/qwen/ask` between strokes (no device dispatch) | Awaited; draws three fixed sample shapes (a rectangle and two polylines) on the drawing overlay only — `setFreehandRoutePoints` never reaches a hardware or gated-replay call, because the gated replay schema (`shared/replay.ts`) has no drag action to carry a stroke; between each stroke `askQwen()` really reads the current frame and `qwenThinkingStatus` shows its real answer; `toast.success` on completion states plainly that nothing was sent to the device | demo-labelled — button reads "AUTO DRAWING (PREVIEW)"; the overlay-only drawing is honestly a preview, and the Qwen read between strokes is real |
 | QWEN AGENT GUIDE (ON/OFF) | toggles `qwenGuideEnabled`; polling in `runQwenGuideTick` | `fetchQwenGuide()` → `POST /api/hud/qwen/guide` every 8s while on | Awaited each tick; `qwenLiveThought`/`qwenGuideIntention` show the real response; an incomplete-typing completion is dispatched via `runGatedSteps`; errors are shown in `qwenLiveThought` instead of silently stalling | fixed (this PR) |
 | ● RECORD WORKFLOW | `onToggleRecordMode` (Dashboard state) | none (client state) | `toast.info` describing the new mode | local-only |
 | EXECUTE ON PC | `handleExecuteAllOnActualPC` → `onRunSequence` → Dashboard `handleRunSequence` | verified `/api/replay` pipeline | Awaited by Dashboard; progress banner reflects live step status | real |
@@ -53,6 +53,28 @@ Status values used below:
 | Cancel (live replay) | `onReplayControl("cancel")` | `POST /api/replay/{id}/cancel` | Same as above | real |
 | Retry step N | `onRetryStep` → Dashboard `handleRunSequence([buildRetryStep(step)])` | verified `/api/replay` | Routed through the action gate like any other sequence run | real |
 | Prev / Next (step navigation) | `handleStepBack` / `handleStepForward` | none | Local selection/index state only | local-only |
+| Select All (steps) | `handleSelectAllSteps` | none | Toggles `selectedStepIds` between empty and the full set of step ids; purely local selection state, no toast needed | local-only |
+| Clear Selected (steps) | `handleClearSelectedSteps` | none | Synchronously removes the selected steps from `sequence` via `onDeleteStep`/`onReorderSteps` (or a `clear-selected-hud-steps` event when neither prop is supplied); `toast.success` with the real count removed, fired after the removal has happened | local-only |
+
+## Workflow / flow management controls
+
+| Control | Handler | API call | Return / feedback path | Status |
+|---|---|---|---|---|
+| ⚡ Qwen Orchestrate (auto-fix steps) | `handleQwenAutoFixAndOrchestrate` | `POST /api/ai/apply-suggestions-with-qwen` | Awaited; on a successful response with an `optimizedSteps` array, replaces the sequence via `onReorderSteps` and renders the real orchestrated trajectory on the trail overlay; `toast.success` names the real adjustment count and the server's own explanation text; `toast.error` when the response shape is unexpected or the request throws | real |
+| 📦 Create Flow Pack | `handleCreateFlowPack` | none | Builds a pack object from the currently scoped steps and saves it to `localStorage` (`flow_replay_packs`) and local `flowReplayPacks` state only — distinct from the server-persisted pack created by the agent panel's `handleCreatePack`/`POST /api/hud/packs`; `toast.success` names the real step count packed | local-only |
+| ▶ Play Flow (auto-play workflow) | `handleToggleAutoPlayWorkflow` | delegates to `onReplaySteps` → Dashboard `handleRunSequence` → verified `/api/replay` | Awaited by Dashboard once handed off; `toast.info` when there are no steps or no replay handler, otherwise the real step pool is passed straight into the real gated pipeline | real |
+| 💾 Save Workflow to Library | `handleSaveWorkflowToLibrary` | `POST /api/assistant/workflows`, and `POST /api/mobile-stream/workflows` when `isMobileMode` | Both requests are fire-and-forget: each is awaited but immediately followed by `.catch(() => {})`, so a failed save is swallowed; `toast.success(\`💾 Workflow "${name}" saved to library!\`)` fires unconditionally right after, regardless of whether either POST actually succeeded | remaining fake — success is reported even when the save failed |
+
+## Screen stream & recording controls
+
+| Control | Handler | API call | Return / feedback path | Status |
+|---|---|---|---|---|
+| DESKTOP MIRROR FALLBACK / ACTIVATE DESKTOP MIRROR | `handleStartSimulatedScreenStream` | `POST /api/sync-real-frame` (continuous, fire-and-forget background sync of the rendered canvas) | Synchronous; renders a canvas-drawn mock desktop (fixed, hardcoded panel text such as "CPU Load 18.4%", "60.0 FPS", "14 Elements Active" — cosmetic scene content, not a telemetry claim about the real machine) as the frame shown in place of real capture; `toast.success` only claims the mirror stream is active, which is true. The button copy itself ("FALLBACK" / "Instant 60FPS Fallback") and the function name already say this is simulated | demo-labelled |
+| START REAL DESKTOP STREAM (60 FPS) | `handleToggleRealScreenStream` | `navigator.mediaDevices.getDisplayMedia()`; background `POST /api/sync-real-frame` ticks | Awaited; real capture stream wired to the video element and to `onLiveStreamChange`; a denied/unsupported/iframe-blocked request sets `screenShareError` with the real browser error message instead of pretending to succeed | real |
+| ● Continuous Screen Recording | `handleToggleContinuousScreenRecording` | none (local 1s interval calling `handleCaptureFreshFrame`, which saves to `localStorage` only via `captureSnapshotWith10sBuffer`) | `toast.success(\"🔴 Screen Recording Active: Capturing 1 FPS stream & sending to AI across all apps!\")` — the "sending to AI" claim is untrue: frames are only written to local storage and `recordTemporalAction` is an empty no-op, nothing is sent to any AI endpoint; `toast.info` on stop reports the real elapsed duration | remaining fake — the toast claims frames are sent to AI when nothing is |
+| Execute Recorded Trail on PC | `handleExecuteRecordedTrailOnPC` | delegates to `onReplaySteps` → Dashboard `handleRunSequence` → verified `/api/replay` | Awaited by Dashboard once handed off; `toast.info` when there are no recorded clicks or no replay handler, otherwise the real click points are passed into the real gated pipeline | real |
+| Clear Recorded Trail | `handleClearRecordedTrail` | none | Clears `liveMouseTrail` and recording state; no toast, nothing to await | local-only |
+| Commit Record Step (popover "Save Step") | `handleCommitRecordStep` | none | Synchronously calls `onAddStep` with the popover's real field values (action, coordinates, text, delay, optional reference screenshot); appends to the sequence directly, no server round-trip needed for local authoring | local-only |
 
 ## Context menu (`InteractiveContextMenu`)
 
@@ -115,9 +137,29 @@ it honestly summarizes the real run rather than inventing a value, so it is not 
 | `onRetryStep` | `step => void handleRunSequence([buildRetryStep(step)])` | verified `/api/replay` | Same pipeline as `handleRunSequence` | real |
 | `onToggleCapture` | `toggleCapture` | starts/stops `/api/capture-screen` polling | Real poll loop; `captureError` state surfaces failures | real |
 
+Note: `handleLinkWorkflowToLiveVisionHud` (`client/pages/Dashboard.tsx` ~line 472) no longer
+defaults a step's missing `confidence` to `0.95`. It now maps
+`confidence: typeof s.confidence === "number" ? s.confidence : undefined`, leaving it
+`undefined` when the source step has no real confidence value. This means the Presentation
+modal built from a run linked this way shows a confidence figure only when one actually came
+from real analysis, instead of a fabricated 0.95 for every step.
+
 ## Known gaps
 
-No control examined in this audit still fabricates a result, uses `Math.random()` for
+Two rows above are marked **remaining fake**:
+
+- **💾 Save Workflow to Library** (`handleSaveWorkflowToLibrary`) — both the
+  `/api/assistant/workflows` and `/api/mobile-stream/workflows` calls are awaited but then
+  `.catch(() => {})`'d, and the `toast.success(\`💾 Workflow "${name}" saved to library!\`)`
+  fires unconditionally right after, so the user is told the save succeeded even when the
+  server rejected it or the request failed outright.
+- **● Continuous Screen Recording** (`handleToggleContinuousScreenRecording`) — the start
+  toast claims frames are "sending to AI across all apps", but each tick only writes the
+  captured frame to `localStorage` via `captureSnapshotWith10sBuffer`; `recordTemporalAction`
+  is an empty no-op function, so no frame is ever sent to any AI endpoint during the
+  recording.
+
+No other control examined in this audit fabricates a result, uses `Math.random()` for
 telemetry, or fires a success toast before its real outcome is known. All previously
 identified fake/no-op/fire-and-forget buttons listed in the task brief are either fixed in
 this PR (items 1–4, 6–8) or already delegated to UNB-8 / UNB-15 per the brief's explicit

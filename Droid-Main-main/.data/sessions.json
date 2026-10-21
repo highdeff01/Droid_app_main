@@ -124,5 +124,47 @@
     "id": "session_1792577076658_wvc02r8y",
     "createdAt": "2026-10-21T10:04:36.658Z",
     "updatedAt": "2026-10-21T10:04:36.658Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T10:07:17.226Z",
+      "updatedAt": "2026-10-21T10:07:17.226Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792577237226_nvedtfgr",
+    "createdAt": "2026-10-21T10:07:17.226Z",
+    "updatedAt": "2026-10-21T10:07:17.226Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T10:18:55.025Z",
+      "updatedAt": "2026-10-21T10:18:55.025Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792577935026_fqcc1huc",
+    "createdAt": "2026-10-21T10:18:55.026Z",
+    "updatedAt": "2026-10-21T10:18:55.026Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T10:19:34.962Z",
+      "updatedAt": "2026-10-21T10:19:34.962Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792577974962_ej6i50oj",
+    "createdAt": "2026-10-21T10:19:34.962Z",
+    "updatedAt": "2026-10-21T10:19:34.962Z"
   }
 ]

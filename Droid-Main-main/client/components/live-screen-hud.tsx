@@ -1789,8 +1789,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   /** The freshest frame the HUD holds, as a data URL, or null when nothing is captured. */
   const currentHudFrame = (): string | null => grabVideoFrame() || frozenSnapshotUrl || screenshotUrl || null;
 
-  // DEMO: draws three fixed sample shapes. Between strokes Qwen really reads the current frame;
-  // each stroke is awaited through the action gate and the demo stops at the first failure.
+  // PREVIEW: draws three fixed sample shapes on the overlay only. Between strokes Qwen really reads the
+  // current frame. No device dispatch: the gated replay pipeline has no drag action.
   const handleRepeatingDrawingWithAi = async () => {
     if (isRepeatingDrawing) return;
     setIsRepeatingDrawing(true);
@@ -1814,11 +1814,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           setQwenThinkingStatus(`Qwen: ${answer}`);
         }
         setFreehandRoutePoints(pts);
-        await runGatedSteps([
-          { id: `drawing_stroke_${sIdx}`, name: `Demo drawing stroke ${sIdx + 1}`, action: "drag", x: pts[pts.length - 1].x, y: pts[pts.length - 1].y },
-        ]);
       }
-      toast.success(`Demo drawing: ${sampleSegments.length} strokes executed through the action gate`);
+      toast.success(`Drawing preview: ${sampleSegments.length} strokes drawn on the overlay only`, {
+        description: "Nothing was sent to the device: the gated replay pipeline has no drag action.",
+      });
     } catch (err) {
       toast.error(`Demo drawing stopped: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -3603,10 +3602,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 ? "bg-pink-600 text-white animate-pulse ring-2 ring-pink-400 shadow-lg"
                 : "bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-md border border-pink-400/40"
             }`}
-            title="DEMO: draws three fixed sample shapes; Qwen reads the live frame between strokes and each stroke runs through the action gate"
+            title="PREVIEW: draws three fixed sample shapes on the overlay only (no device dispatch); Qwen reads the live frame between strokes"
           >
             <Sparkles className="w-3.5 h-3.5 mr-1.5 text-pink-300" />
-            {isRepeatingDrawing ? "DEMO DRAWING + QWEN..." : "AUTO DRAWING (DEMO)"}
+            {isRepeatingDrawing ? "PREVIEW DRAWING + QWEN..." : "AUTO DRAWING (PREVIEW)"}
           </Button>
 
           {/* Qwen AI Agent Guide (Adjusting, Assisting Movement & Completing Forgotten Typing) */}

@@ -115,5 +115,44 @@
     },
     "events": [],
     "stoppedAt": "2026-10-21T10:04:36.672Z"
+  },
+  {
+    "id": "recording_1792577237234_mi3e5jk",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T10:07:17.234Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T10:07:17.235Z"
+  },
+  {
+    "id": "recording_1792577935037_q3oj53w",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T10:18:55.037Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T10:18:55.037Z"
+  },
+  {
+    "id": "recording_1792577974977_inpbwl4",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T10:19:34.977Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T10:19:34.977Z"
   }
 ]
