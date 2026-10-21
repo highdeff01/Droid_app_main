@@ -15,6 +15,8 @@ import {
   type RunnableGoal,
 } from "@/lib/ai-intentions";
 import type { SequenceStep } from "@/components/live-screen-hud";
+import type { CheckupReport } from "@shared/overseer";
+import { CHECKUP_TEXT } from "@/lib/overseer-client";
 
 export interface AiIntentionsPanelProps {
   gateReport: GateReport | null;
@@ -34,6 +36,31 @@ export interface AiIntentionsPanelProps {
   onExecuteGoal?: (id: string) => void;
   /** Set the movement delay multiplier; null returns it to learning. */
   onAdjustDelay?: (multiplier: number | null) => void;
+  /** Latest overseer checkups of long-running operations; null when the overseer could not be reached. */
+  overseerCheckups?: OverseerCheckupItem[] | null;
+  /** Why the overseer could not be reached. */
+  overseerError?: string | null;
+}
+
+export type OverseerCheckupItem = CheckupReport & { goal: string };
+
+function OverseerCheckupSection({ overseerCheckups, overseerError }: Pick<AiIntentionsPanelProps, "overseerCheckups" | "overseerError">) {
+  if (overseerCheckups === undefined && !overseerError) return null;
+  return (
+    <section className="space-y-1">
+      <h5 className="text-[9px] uppercase text-cyan-400 font-bold">Overseer checkups</h5>
+      {overseerError && <p className="text-rose-300" role="alert">Overseer unavailable: {overseerError}</p>}
+      {overseerCheckups && overseerCheckups.length === 0 && <p className="text-slate-500">No checkups yet.</p>}
+      {(overseerCheckups ?? []).map((c) => (
+        <div key={`${c.operationId}_${c.at}`} data-checkup={c.outcome}>
+          <p className="text-slate-100">{c.goal}</p>
+          <p className={CHECKUP_TEXT[c.outcome].className}>
+            {CHECKUP_TEXT[c.outcome].label} after {Math.round(c.elapsedSeconds)}s — {c.summary}
+          </p>
+        </div>
+      ))}
+    </section>
+  );
 }
 
 const DELAY_STEP = 0.1;
@@ -186,6 +213,7 @@ export const AiIntentionsPanel: React.FC<AiIntentionsPanelProps> = (props) => {
           <IntentionSection {...props} />
           <GoalsSection {...props} />
           <LearningSection {...props} />
+          <OverseerCheckupSection {...props} />
         </div>
       )}
     </div>

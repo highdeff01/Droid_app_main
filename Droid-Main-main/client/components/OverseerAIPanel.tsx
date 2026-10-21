@@ -60,6 +60,7 @@ import {
   PixelDiffResult,
   PixelDiffOptions,
 } from "../utils/pixelDiffEngine";
+import { OverseerConsole } from "./overseer-console";
 
 
 export interface OverseerAIPanelProps {
@@ -229,7 +230,7 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
   onAdjustThrottle,
   className = "",
 }) => {
-  const [activeTab, setActiveTab] = useState<"pixel-diff" | "latency-monitor">("pixel-diff");
+  const [activeTab, setActiveTab] = useState<"overseer" | "pixel-diff" | "latency-monitor">("overseer");
 
   // Latency History State
   // Measured round trips to the automation bridge; empty until the first measurement lands
@@ -458,6 +459,13 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
           >
             <TabsList className="bg-slate-950 border border-slate-800 h-8 p-0.5">
               <TabsTrigger
+                value="overseer"
+                className="text-[11px] h-7 px-2.5 data-[state=active]:bg-emerald-500/20 data-[state=active]:text-emerald-300 text-slate-400 gap-1"
+              >
+                <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                Overseer Console
+              </TabsTrigger>
+              <TabsTrigger
                 value="pixel-diff"
                 className="text-[11px] h-7 px-2.5 data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-300 text-slate-400 gap-1"
               >
@@ -495,7 +503,9 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
         </div>
       </div>
 
-      {activeTab === "pixel-diff" ? (
+      {activeTab === "overseer" ? (
+        <OverseerConsole />
+      ) : activeTab === "pixel-diff" ? (
         /* TAB 1: FRAME-BY-FRAME CANVAS PIXEL-LEVEL VERIFICATION & DRIFT HEATMAP */
         <div className="p-4 space-y-4">
           {/* Top Scenario Selector & Controls Bar */}
