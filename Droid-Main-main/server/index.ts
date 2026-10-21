@@ -205,6 +205,8 @@ export function createServer() {
   app.use("/api/assistant/scheduling", requireApiAccess, schedulingRouter);
   app.use("/api/assistant/method-learning", requireApiAccess, methodLearningRouter);
   app.use("/api/method-learning", requireApiAccess, methodLearningRouter);
+  // Habit profile, outcome feedback and templates (client: HUD learning strip, squad, workflow library).
+  app.use("/api/learning", requireApiAccess, methodLearningRouter);
 
   // Global rate limiter for /api (master) - protect but don't block pyautogui in dev
   // Only apply to /api/assistant/* already covered; for others keep open

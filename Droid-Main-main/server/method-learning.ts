@@ -1,4 +1,6 @@
 import { assistantStateRepository } from "./assistant-state";
+import { HabitTracker } from "./habit-tracker";
+import type { UserHabitProfile } from "../shared/learning";
 import type { AssistantPlan, AssistantExecution, ScreenshotCapture } from "@shared/assistant";
 
 type MethodSignature = {
@@ -367,23 +369,8 @@ class MethodLearningSystem {
 
   // --- Real Working Method Templates ---
   private workingTemplates: Map<string, WorkingMethodTemplate> = new Map();
-  private userHabits: {
-    totalActions: number;
-    appUsage: Map<string, number>;
-    clickPositions: Array<{ x: number; y: number; label?: string; time: number }>;
-    recentActions: Array<{ type: string; x?: number; y?: number; text?: string; time: number }>;
-  } = {
-    totalActions: 0,
-    appUsage: new Map([
-      ["Google Chrome", 24],
-      ["System Calculator", 18],
-      ["Drive Workspace", 15],
-      ["Notes & Editor", 12],
-      ["Settings & Terminal", 8],
-    ]),
-    clickPositions: [],
-    recentActions: [],
-  };
+  /** Habits and verified-run outcomes; every profile number is computed from recorded data. */
+  readonly habits = new HabitTracker();
 
   initTemplates() {
     if (this.workingTemplates.size > 0) return;
@@ -531,81 +518,13 @@ class MethodLearningSystem {
     text?: string;
     success?: boolean;
   }) {
-    this.userHabits.totalActions++;
-    const now = Date.now();
-
-    if (action.app) {
-      const current = this.userHabits.appUsage.get(action.app) || 0;
-      this.userHabits.appUsage.set(action.app, current + 1);
-    }
-
-    if (action.x !== undefined && action.y !== undefined) {
-      this.userHabits.clickPositions.push({
-        x: action.x,
-        y: action.y,
-        label: action.type,
-        time: now,
-      });
-      if (this.userHabits.clickPositions.length > 50) this.userHabits.clickPositions.shift();
-    }
-
-    this.userHabits.recentActions.push({
-      type: action.type,
-      x: action.x,
-      y: action.y,
-      text: action.text,
-      time: now,
-    });
-    if (this.userHabits.recentActions.length > 20) this.userHabits.recentActions.shift();
+    this.habits.recordAction(action);
   }
 
   getUserHabitProfile(): UserHabitProfile {
-    const appFreqs: Record<string, number> = {};
-    for (const [app, count] of this.userHabits.appUsage.entries()) {
-      appFreqs[app] = count;
-    }
-
-    // Check for repetitive actions (e.g. 3+ clicks or typing within 50px radius or same action)
-    const recent = this.userHabits.recentActions.slice(-8);
-    let repetitionDetected = false;
-    let repeatedInfo: UserHabitProfile["repeatedPattern"] = undefined;
-
-    if (recent.length >= 3) {
-      const lastType = recent[recent.length - 1].type;
-      const matching = recent.filter((r) => r.type === lastType);
-      if (matching.length >= 3) {
-        repetitionDetected = true;
-        repeatedInfo = {
-          actionType: lastType,
-          count: matching.length,
-          coordinates: matching[matching.length - 1].x !== undefined ? { x: matching[matching.length - 1].x!, y: matching[matching.length - 1].y! } : undefined,
-          suggestedAutomation: `Automate repetitive ${lastType.toUpperCase()} routine across multiple cycles`,
-        };
-      }
-    }
-
-    return {
-      totalActionsRecorded: this.userHabits.totalActions,
-      appUsageFrequencies: appFreqs,
-      topClickZones: [
-        { x: 960, y: 540, count: 18, label: "Screen Center (Focus & CTA)" },
-        { x: 620, y: 180, count: 14, label: "Search & Address Bar" },
-        { x: 420, y: 720, count: 9, label: "Workspace Navigation List" },
-        { x: 1820, y: 80, count: 6, label: "Dismiss / Close Corner" },
-      ],
-      repetitiveActionDetected: repetitionDetected,
-      repeatedPattern: repeatedInfo,
-      preferredDevice: "desktop",
-      averageExecutionLatencyMs: 14,
-      adaptationAccuracyScore: 0.985,
-      habitsSummary: [
-        "Prefers browser search initiation from clean tab",
-        "Frequently verifies numeric formula computation",
-        "Auto-recalibrates when element drift is within 15px",
-        "Regularly executes document archival workflows",
-      ],
-    };
+    return this.habits.profile(this.methods.size);
   }
+
 
   getAllMethods(): MethodSignature[] {
     return Array.from(this.methods.values());
@@ -642,22 +561,6 @@ export interface WorkingMethodTemplate {
   }>;
 }
 
-export interface UserHabitProfile {
-  totalActionsRecorded: number;
-  appUsageFrequencies: Record<string, number>;
-  topClickZones: Array<{ x: number; y: number; count: number; label: string }>;
-  repetitiveActionDetected: boolean;
-  repeatedPattern?: {
-    actionType: string;
-    count: number;
-    coordinates?: { x: number; y: number };
-    suggestedAutomation: string;
-  };
-  preferredDevice: "desktop" | "android";
-  averageExecutionLatencyMs: number;
-  adaptationAccuracyScore: number;
-  habitsSummary: string[];
-}
 
 export const methodLearningSystem = new MethodLearningSystem();
-export type { MethodSignature, MethodComparison, LearningContext };
+export type { MethodSignature, MethodComparison, LearningContext, UserHabitProfile };

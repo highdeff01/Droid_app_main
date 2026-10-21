@@ -116,6 +116,38 @@ describe("handleDescribeScreen", () => {
     expect(res.body.confidence).toBe(0.8);
   });
 
+  it("reports the qwen3.5:2b vision model as the source and never the heuristic perception engine", async () => {
+    const { qwenVisionEngine } = await import("../ai-perception-engine");
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(VALID_CONTENT));
+    vi.stubGlobal("fetch", fetchMock);
+    const req: any = { body: { imageData: IMAGE_DATA_URL } };
+    const res = makeRes();
+
+    await handleDescribeScreen(req, res, (() => {}) as any);
+
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(sent.model).toBe("qwen3.5:2b");
+    expect(res.body.source).toMatchObject({
+      provider: "ollama-vision",
+      model: "qwen3.5:2b",
+      elementCount: 1,
+    });
+    expect(qwenVisionEngine.analyzeScreen).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty element list (not a mock) when the model detects nothing", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(JSON.stringify({ confidence: 0.2, elements: [] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = makeRes();
+
+    await handleDescribeScreen({ body: { imageData: IMAGE_DATA_URL } } as any, res, (() => {}) as any);
+
+    expect(res.body.report.elements).toEqual([]);
+    expect(res.body.source.elementCount).toBe(0);
+  });
+
   it("returns 502 with success false when the model reply is not parseable JSON", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse("garbage"));
     vi.stubGlobal("fetch", fetchMock);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gateTargetForAction, type GatePost } from "./action-gate";
+import { MAX_REINSPECTIONS, gateTargetForAction, type GatePost } from "./action-gate";
 import { gateFailure, runGatedSequence } from "./gated-dispatch";
 
 function makeElement(overrides: Record<string, unknown> = {}) {
@@ -189,7 +189,8 @@ describe("runGatedSequence", () => {
     );
 
     expect(result.status).toBe("blocked");
-    expect(captureCalls).toBe(2);
+    // Action 1 verifies on one capture; action 2 is re-inspected MAX_REINSPECTIONS times before blocking.
+    expect(captureCalls).toBe(1 + 1 + MAX_REINSPECTIONS);
     expect(dispatch1).toHaveBeenCalledTimes(1);
     expect(dispatch2).not.toHaveBeenCalled();
     expect(dispatch3).not.toHaveBeenCalled();

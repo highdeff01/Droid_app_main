@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   buildVisionMessage,
   parseModelJson,
+  resolveAiModel,
   sendQwenChatRequest,
 } from "../ai-endpoint";
 import { VISION_REPORT_PROMPT, normalizeVisionReport } from "../vision-report";
@@ -59,7 +60,14 @@ export const handleDescribeScreen: RequestHandler = async (req, res) => {
       source: "AI #1 Vision",
     });
     aiMonitorStore.setStatus({ status: "idle", currentAction: null });
-    res.json({ success: true, report, elements: report.elements, confidence: report.confidence });
+    // Provenance: elements come only from the vision model's reply — never a heuristic or mock list.
+    const source = {
+      provider: "ollama-vision",
+      model: resolveAiModel(model),
+      endpoint: response.endpoint,
+      elementCount: report.elements.length,
+    };
+    res.json({ success: true, report, elements: report.elements, confidence: report.confidence, source });
   } catch (err) {
     res.status(500).json({
       success: false,
