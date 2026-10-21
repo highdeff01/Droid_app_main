@@ -30,6 +30,9 @@ public class ScreenCaptureService extends Service {
     private volatile boolean closed, networkRevoked, screenshotPending;
     private int density, captureWidth, captureHeight;
     private boolean shuttingDown;
+    private volatile String connection = "connecting", aiState = "idle", replayText;
+    private String lastIndicator;
+    private int popupId;
     static boolean isRecording(String id) { return id.equals(activeRecordId); }
     static boolean isSharing() { return active != null; }
     static String status(Context context) { return PhoneApi.prefs(context).getString("status", "Disconnected"); }
@@ -39,6 +42,7 @@ public class ScreenCaptureService extends Service {
         super.onCreate(); active = this;
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel("capture", "Phone screen sharing and recording", NotificationManager.IMPORTANCE_LOW));
+        manager.createNotificationChannel(new NotificationChannel("events", "Workflow and AI events", NotificationManager.IMPORTANCE_HIGH));
         networkThread = new HandlerThread("phone-network"); networkThread.start(); network = new Handler(networkThread.getLooper());
     }
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -74,7 +78,9 @@ public class ScreenCaptureService extends Service {
         PendingIntent stop = PendingIntent.getService(this, 2, new Intent(this, ScreenCaptureService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification.Builder builder = new Notification.Builder(this, "capture").setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentTitle(recorder == null ? "Sightline screen sharing" : "Sightline recording full phone")
-            .setContentText(recorder == null ? "Paired server can view and control your screen. Tap Stop to disconnect." : "Video is saved on this phone. Recording continues across apps.")
+            .setContentText(indicatorText())
+            .setStyle(new Notification.BigTextStyle().bigText(indicatorText() + (recorder == null ? "\nPaired server can view and control your screen while sharing. Tap Stop to disconnect." : "\nVideo is saved on this phone. Recording continues across apps.")))
+            .setOnlyAlertOnce(true)
             .setContentIntent(open).setOngoing(true).addAction(new Notification.Action.Builder(null, "Stop", stop).build());
         if (recorder != null) {
             PendingIntent save = PendingIntent.getService(this, 3, new Intent(this, ScreenCaptureService.class).setAction(STOP_RECORD), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
@@ -154,16 +160,64 @@ public class ScreenCaptureService extends Service {
                         long deadline = SystemClock.elapsedRealtime() + command.optLong("ttlMs", 0);
                         main.post(() -> handleCommand(command, deadline));
                     }
+                    serverState(response);
                     if (!screenshotPending) main.post(() -> captureScreen());
                 }
             } catch (PhoneApi.RevokedException error) {
-                networkRevoked = true; status("Server connection revoked. A local recording continues until Stop or its limit.");
+                networkRevoked = true; connection = "revoked"; status("Server connection revoked. A local recording continues until Stop or its limit.");
                 // Stop sharing after revocation; preserve the local recording explicitly requested by the user.
                 main.post(() -> { if (recorder == null) stopSelf(); });
-            } catch (Exception error) { status("Server unavailable: " + error.getMessage() + ". Local recording continues."); }
+            } catch (Exception error) { connection = "offline, retrying"; status("Server unavailable: " + error.getMessage() + ". Retrying every second; local recording continues."); }
+            main.post(ScreenCaptureService.this::refreshIndicator);
             if (!closed && !networkRevoked) network.postDelayed(this, 1000);
         }
     };
+    /** Applies the server's real AI/replay state and posts each popup notice it hands out once. */
+    private void serverState(JSONObject response) {
+        if (!"connected".equals(connection)) status("Connected to server. Sharing is active; control continues while you use other apps.");
+        connection = "connected";
+        aiState = response.optString("aiState", "idle");
+        JSONObject replay = response.optJSONObject("replay");
+        String status = replay == null ? "" : replay.optString("status");
+        replayText = "running".equals(status) || "paused".equals(status)
+            ? "workflow " + status + " " + replay.optInt("completed") + "/" + replay.optInt("total") : null;
+        JSONArray notices = response.optJSONArray("notices");
+        for (int i = 0; notices != null && i < notices.length(); i++) {
+            JSONObject notice = notices.optJSONObject(i);
+            if (notice != null) { String text = notice.optString("message"); main.post(() -> popup(text)); }
+        }
+    }
+    static String aiLabel(String state) {
+        switch (state) {
+            case "thinking": return "AI thinking";
+            case "acting": return "AI acting";
+            case "waiting_approval": return "AI waiting for approval";
+            default: return "AI idle";
+        }
+    }
+    /** One line of real state shared by the ongoing notification and the optional overlay. */
+    private String indicatorText() {
+        return "Server " + connection + " · " + (recorder == null ? "sharing" : "recording")
+            + (ActionRecorder.isActive() ? " · recording actions (" + ActionRecorder.count() + ")" : "")
+            + " · " + aiLabel(aiState) + (replayText == null ? "" : " · " + replayText);
+    }
+    private void refreshIndicator() {
+        if (closed) return;
+        String text = indicatorText();
+        if (!text.equals(lastIndicator)) { lastIndicator = text; updateNotification(); }
+        PhoneAccessibilityService service = PhoneAccessibilityService.current();
+        if (service != null) service.showIndicator(PhoneApi.prefs(this).getBoolean("overlay", false) ? "Sightline · " + text : null);
+    }
+    /** Key-event popups on their own channel; Android 13+ shows them only when notifications are permitted. */
+    private void popup(String text) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            status(text); return;
+        }
+        PendingIntent open = PendingIntent.getActivity(this, 1, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        getSystemService(NotificationManager.class).notify(200 + (popupId++ % 50), new Notification.Builder(this, "events")
+            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Sightline").setContentText(text)
+            .setStyle(new Notification.BigTextStyle().bigText(text)).setContentIntent(open).setAutoCancel(true).build());
+    }
     private void captureScreen() {
         PhoneAccessibilityService service = PhoneAccessibilityService.current();
         if (service == null || screenshotPending || closed || networkRevoked) return;
@@ -199,18 +253,27 @@ public class ScreenCaptureService extends Service {
             }
         } catch (Exception error) { acknowledge(id, error.getMessage(), null); }
     }
+    /** Reports the real outcome; a failed delivery is retried, and a server that stopped waiting is reported as such. */
     private void acknowledge(String id, String error, JSONObject result) {
         network.post(() -> {
-            try {
-                JSONObject body = new JSONObject().put("id", id).put("success", error == null).put("result", result == null ? JSONObject.NULL : result);
-                if (error != null) body.put("error", error);
-                PhoneApi.post(this, "/native/result", body);
+            String failure = null;
+            for (int attempt = 1; attempt <= 3 && !closed; attempt++) {
+                try {
+                    JSONObject body = new JSONObject().put("id", id).put("success", error == null).put("result", result == null ? JSONObject.NULL : result);
+                    if (error != null) body.put("error", error);
+                    JSONObject reply = PhoneApi.post(this, "/native/result", body);
+                    if (!reply.optBoolean("accepted", false)) status("Operation " + (error == null ? "completed" : "failed: " + error) + ", but " + reply.optString("error", "the server no longer waits for it") + " Check the phone before retrying.");
+                    return;
+                } catch (PhoneApi.RevokedException revoked) { networkRevoked = true; failure = revoked.getMessage(); break; }
+                catch (Exception retry) { failure = retry.getMessage(); SystemClock.sleep(300L * attempt); }
             }
-            catch (Exception failure) { status("Operation completed but server acknowledgment failed. Check the phone before retrying."); }
+            status("Operation " + (error == null ? "completed" : "failed: " + error) + " but server acknowledgment failed after retries (" + failure + "). Check the phone before retrying.");
         });
     }
     public void onDestroy() {
         closed = true; shuttingDown = true;
+        PhoneAccessibilityService service = PhoneAccessibilityService.current();
+        if (service != null) service.showIndicator(null);
         stopRecording(null);
         if (display != null) { display.release(); display = null; }
         if (projection != null) { projection.stop(); projection = null; }

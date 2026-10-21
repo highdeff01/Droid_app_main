@@ -11,11 +11,36 @@ import java.util.function.Consumer;
 
 public class PhoneAccessibilityService extends AccessibilityService {
     private static volatile PhoneAccessibilityService instance;
+    private android.widget.TextView overlay;
     static PhoneAccessibilityService current() { return instance; }
     protected void onServiceConnected() { instance = this; }
-    public void onAccessibilityEvent(AccessibilityEvent event) { }
+    public void onAccessibilityEvent(AccessibilityEvent event) { ActionRecorder.onEvent(event, getPackageName()); }
+    protected boolean onKeyEvent(android.view.KeyEvent event) { ActionRecorder.onKey(event); return false; }
     public void onInterrupt() { }
-    public void onDestroy() { if (instance == this) instance = null; super.onDestroy(); }
+    public void onDestroy() { showIndicator(null); if (instance == this) instance = null; super.onDestroy(); }
+
+    /**
+     * Small on-screen status badge drawn as an accessibility overlay, which an enabled accessibility
+     * service may show over other apps without the "display over other apps" permission. Null hides it.
+     */
+    void showIndicator(String text) {
+        getMainExecutor().execute(() -> {
+            android.view.WindowManager windows = getSystemService(android.view.WindowManager.class);
+            if (text == null) { if (overlay != null) { windows.removeView(overlay); overlay = null; } return; }
+            if (overlay == null) {
+                overlay = new android.widget.TextView(this);
+                overlay.setBackgroundColor(0xCC0F172A); overlay.setTextColor(Color.WHITE); overlay.setTextSize(11); overlay.setPadding(16, 6, 16, 6);
+                android.view.WindowManager.LayoutParams params = new android.view.WindowManager.LayoutParams(
+                    android.view.WindowManager.LayoutParams.WRAP_CONTENT, android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+                    android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    PixelFormat.TRANSLUCENT);
+                params.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
+                windows.addView(overlay, params);
+            }
+            overlay.setText(text);
+        });
+    }
 
     void screenshot(Consumer<Bitmap> success, Consumer<String> failure) {
         takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
@@ -33,6 +58,7 @@ public class PhoneAccessibilityService extends AccessibilityService {
         });
     }
     void execute(JSONObject action, int width, int height, Consumer<String> done) {
+        ActionRecorder.markRemoteAction();
         try {
             String type = action.getString("type");
             if (type.equals("tap") || type.equals("swipe")) {
