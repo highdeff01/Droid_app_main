@@ -24,10 +24,13 @@ function hasValidApiKey(req: Request, expected: string): boolean {
 
 /** Public routes, relative to the /api mount: health, ping and the demo route. */
 const PUBLIC_API_PATHS = new Set(["/ping", "/demo", "/health"]);
+/** Routers that enforce their own scoped credentials (phone QR pairing tokens + admin key). */
+const SELF_AUTHENTICATED_PREFIXES = ["/phone/"];
 
 export const requireApiAccess: RequestHandler = (req, res, next) => {
   const reqPath = req.path || req.url || "";
   if (PUBLIC_API_PATHS.has(reqPath)) return next();
+  if (SELF_AUTHENTICATED_PREFIXES.some((prefix) => reqPath.startsWith(prefix))) return next();
   const expected = configuredApiKey();
   if (expected) {
     if (isLoopback(req) || hasValidApiKey(req, expected)) return next();

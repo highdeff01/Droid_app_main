@@ -73,6 +73,12 @@ describe("API authentication boundary", () => {
     },
   );
 
+  it("delegates /api/phone to the phone router's own scoped auth", async () => {
+    const res = await call("GET", "/api/phone/session", { headers: { Authorization: "Bearer phone-scoped-token" } });
+    const body = await res.json().catch(() => ({}));
+    expect(body).not.toEqual({ success: false, error: "Authentication required" });
+  });
+
   it("lets an authenticated request through to the handler", async () => {
     const res = await call("GET", "/api/logs", { auth: true });
     expect(res.status).toBe(200);

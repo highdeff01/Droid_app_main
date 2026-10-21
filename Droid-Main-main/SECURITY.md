@@ -30,7 +30,10 @@ All `/api` routes except the public health/demo routes (`GET /api/ping`,
 enforced once for the whole `/api` prefix in `createServer()`
 (`server/index.ts`). This includes screen capture, AI execution
 (`/api/execute-task`, `/api/ai/*`), the pyautogui bridge, replay, logs,
-assistant state, and ADB operations. ADB host/port and device identifiers are
+assistant state, and ADB operations. `/api/phone/*` is handed off to the
+phone router, which enforces its own credentials: a scoped QR pairing/bearer
+token for a paired phone, or the administrator key for management routes.
+ADB host/port and device identifiers are
 validated before being passed to the ADB process.
 
 Do not expose the service directly to the Internet or an untrusted LAN. API-key
