@@ -32,9 +32,42 @@ describe("native phone transport", () => {
     expect(bridge.acknowledge(invitation.id, command!.id, false, "Gesture cancelled")).toBe(true);
     await expect(work).rejects.toThrow("Gesture cancelled");
     const next = bridge.command(invitation.id, "record-start", { minutes: 1 });
-    const timeout = expect(next).rejects.toThrow("did not confirm");
+    const timeout = expect(next).rejects.toThrow("nothing was executed");
     await vi.advanceTimersByTimeAsync(12000); await timeout;
     expect(bridge.heartbeat(invitation.id, true, [])).toBeNull();
+  });
+  it("expires invitations after five minutes with a distinct message", async () => {
+    vi.useFakeTimers();
+    const bridge = new NativePhoneBridge();
+    const early = bridge.create(Date.now() + 3600000), late = bridge.create(Date.now() + 3600000);
+    await vi.advanceTimersByTimeAsync(299000);
+    expect(bridge.register(early.pairing, "Early").device).toBe(early.id);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(() => bridge.register(late.pairing, "Late")).toThrow("expired");
+    expect(() => bridge.register(early.pairing, "Again")).toThrow("already used");
+    expect(bridge.info(late.id)?.paired).toBe(false);
+  });
+  it("distinguishes undelivered from unconfirmed commands and refuses late acknowledgments", async () => {
+    vi.useFakeTimers();
+    const bridge = new NativePhoneBridge(), invitation = bridge.create(Date.now() + 3600000);
+    bridge.register(invitation.pairing, "Test");
+    bridge.heartbeat(invitation.id, true, []);
+    const undelivered = expect(bridge.command(invitation.id, "record-stop")).rejects.toThrow("nothing was executed");
+    await vi.advanceTimersByTimeAsync(12000); await undelivered;
+    bridge.heartbeat(invitation.id, true, []);
+    const work = bridge.command(invitation.id, "action", { action: { type: "tap", x: .2, y: .2 } });
+    const command = bridge.heartbeat(invitation.id, true, [])!;
+    const unconfirmed = expect(work).rejects.toThrow("did not confirm");
+    await vi.advanceTimersByTimeAsync(13000); await unconfirmed;
+    expect(bridge.acknowledge(invitation.id, command.id, true)).toBe(false);
+  });
+  it("hands the phone AI state and each popup notice once", () => {
+    const bridge = new NativePhoneBridge(), invitation = bridge.create(Date.now() + 3600000);
+    bridge.setAiState(invitation.id, "waiting_approval");
+    bridge.notify(invitation.id, { kind: "approval_needed", message: "Tap OK?" });
+    expect(bridge.phoneState(invitation.id)).toEqual({ aiState: "waiting_approval", notices: [{ kind: "approval_needed", message: "Tap OK?" }] });
+    expect(bridge.phoneState(invitation.id).notices).toEqual([]);
+    expect(bridge.info(invitation.id)?.aiState).toBe("waiting_approval");
   });
   it("rejects malformed frame uploads and bounds native invitations", () => {
     const bridge = new NativePhoneBridge(), invitation = bridge.create(Date.now() + 3600000);
