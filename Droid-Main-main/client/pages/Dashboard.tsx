@@ -498,7 +498,7 @@ export default function Dashboard({
         key: s.key || "",
         delayMs: s.delayMs || 400,
         status: "pending" as const,
-        confidence: s.confidence || 0.95,
+        confidence: typeof s.confidence === "number" ? s.confidence : undefined,
       };
     });
 
@@ -963,12 +963,17 @@ export default function Dashboard({
     return new Response(JSON.stringify({ success: true, verified: true }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
   // AI-driven single-target actions (navigate, entity, copilot element): record the step, then dispatch through the gate.
-  const dispatchAiTarget = (step: Partial<SequenceStep> & { x: number; y: number; name: string }) => {
+  const dispatchAiTarget = async (step: Partial<SequenceStep> & { x: number; y: number; name: string }) => {
     handleAddSequenceStep({ action: "click", ...step } as any);
-    void executeHubTask("/api/execute-task", {
-      method: "POST",
-      body: JSON.stringify({ targetDevice, deviceId: selectedAdbDevice, task: { id: `ai_${Date.now()}`, action: "click", targetOcrLabel: step.name, ...step } }),
-    }).catch(() => {});
+    try {
+      await executeHubTask("/api/execute-task", {
+        method: "POST",
+        body: JSON.stringify({ targetDevice, deviceId: selectedAdbDevice, task: { id: `ai_${Date.now()}`, action: "click", targetOcrLabel: step.name, ...step } }),
+      });
+      toast.success(`AI action "${step.name}" executed after screen verification`);
+    } catch (error) {
+      toast.error(`AI action "${step.name}" failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
   const applyCapturedFrame = (imageData: string, method?: string) => {
     if (method === "real_desktop_stream") {

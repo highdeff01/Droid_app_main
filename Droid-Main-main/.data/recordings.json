@@ -91,94 +91,146 @@
     "stoppedAt": "2026-10-21T07:13:28.873Z"
   },
   {
-    "id": "recording_1792575820365_3fhvp3k",
+    "id": "recording_1792577030531_kf2s89t",
     "sessionId": "session-1",
     "name": "Persistent recording",
     "status": "stopped",
-    "startedAt": "2026-10-21T09:43:40.365Z",
+    "startedAt": "2026-10-21T10:03:50.531Z",
     "source": {
       "source": "manual",
       "sensitiveInputCaptured": false
     },
     "events": [],
-    "stoppedAt": "2026-10-21T09:43:40.365Z"
+    "stoppedAt": "2026-10-21T10:03:50.531Z"
   },
   {
-    "id": "recording_1792575879497_tl412hd",
+    "id": "recording_1792577076672_15q38iy",
     "sessionId": "session-1",
     "name": "Persistent recording",
     "status": "stopped",
-    "startedAt": "2026-10-21T09:44:39.497Z",
+    "startedAt": "2026-10-21T10:04:36.672Z",
     "source": {
       "source": "manual",
       "sensitiveInputCaptured": false
     },
     "events": [],
-    "stoppedAt": "2026-10-21T09:44:39.497Z"
+    "stoppedAt": "2026-10-21T10:04:36.672Z"
   },
   {
-    "id": "recording_1792576086661_xl9bmqc",
+    "id": "recording_1792577237234_mi3e5jk",
     "sessionId": "session-1",
     "name": "Persistent recording",
     "status": "stopped",
-    "startedAt": "2026-10-21T09:48:06.661Z",
+    "startedAt": "2026-10-21T10:07:17.234Z",
     "source": {
       "source": "manual",
       "sensitiveInputCaptured": false
     },
     "events": [],
-    "stoppedAt": "2026-10-21T09:48:06.661Z"
+    "stoppedAt": "2026-10-21T10:07:17.235Z"
   },
   {
-    "id": "recording_1792576199482_vagvjy9",
+    "id": "recording_1792577935037_q3oj53w",
     "sessionId": "session-1",
     "name": "Persistent recording",
     "status": "stopped",
-    "startedAt": "2026-10-21T09:49:59.482Z",
+    "startedAt": "2026-10-21T10:18:55.037Z",
     "source": {
       "source": "manual",
       "sensitiveInputCaptured": false
     },
     "events": [],
-    "stoppedAt": "2026-10-21T09:49:59.482Z"
+    "stoppedAt": "2026-10-21T10:18:55.037Z"
   },
   {
-    "id": "recording_1792576322764_4havkxv",
+    "id": "recording_1792577974977_inpbwl4",
     "sessionId": "session-1",
     "name": "Persistent recording",
     "status": "stopped",
-    "startedAt": "2026-10-21T09:52:02.764Z",
+    "startedAt": "2026-10-21T10:19:34.977Z",
     "source": {
       "source": "manual",
       "sensitiveInputCaptured": false
     },
     "events": [],
-    "stoppedAt": "2026-10-21T09:52:02.764Z"
+    "stoppedAt": "2026-10-21T10:19:34.977Z"
   },
   {
-    "id": "recording_1792576401852_atmmvvo",
+    "id": "recording_1792578061317_kybozuy",
     "sessionId": "session-1",
     "name": "Persistent recording",
     "status": "stopped",
-    "startedAt": "2026-10-21T09:53:21.852Z",
+    "startedAt": "2026-10-21T10:21:01.317Z",
     "source": {
       "source": "manual",
       "sensitiveInputCaptured": false
     },
     "events": [],
-    "stoppedAt": "2026-10-21T09:53:21.853Z"
+    "stoppedAt": "2026-10-21T10:21:01.318Z"
   },
   {
-    "id": "recording_1792576440123_jwt2dpt",
+    "id": "recording_1792578212468_16n03pe",
     "sessionId": "session-1",
     "name": "Persistent recording",
     "status": "stopped",
-    "startedAt": "2026-10-21T09:54:00.123Z",
+    "startedAt": "2026-10-21T10:23:32.468Z",
     "source": {
       "source": "manual",
       "sensitiveInputCaptured": false
     },
     "events": [],
-    "stoppedAt": "2026-10-21T09:54:00.124Z"
+    "stoppedAt": "2026-10-21T10:23:32.468Z"
+  },
+  {
+    "id": "recording_1792578254055_1mmoluo",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T10:24:14.055Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T10:24:14.055Z"
+  },
+  {
+    "id": "recording_1792578329770_nndrxsm",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T10:25:29.770Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T10:25:29.770Z"
+  },
+  {
+    "id": "recording_1792578433303_x8f1r0k",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T10:27:13.303Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T10:27:13.303Z"
+  },
+  {
+    "id": "recording_1792578473846_3h5fm4c",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T10:27:53.846Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T10:27:53.847Z"
   }
 ]

@@ -49,7 +49,7 @@ import { toast } from "sonner";
 import { runVerifiedReplay, toReplaySteps } from "@/lib/verified-replay";
 import { useActionGate } from "@/hooks/use-action-gate";
 import { gateFailure } from "@/lib/gated-dispatch";
-import { retrySegmentPlan, stepSequencePlan } from "@/lib/gated-plans";
+import { stepSequencePlan, retrySegmentPlan } from "@/lib/gated-plans";
 
 interface WorkflowDebuggerPanelProps {
   initialSteps?: WorkflowStep[];
