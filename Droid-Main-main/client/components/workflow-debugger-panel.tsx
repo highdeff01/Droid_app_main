@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useActionGate } from "@/hooks/use-action-gate";
-import { retrySegmentPlan, stepSequencePlan } from "@/lib/gated-plans";
 import { gateFailure } from "@/lib/gated-dispatch";
+import { retrySegmentPlan, stepSequencePlan } from "@/lib/gated-plans";
 import {
   Play,
   Pause,

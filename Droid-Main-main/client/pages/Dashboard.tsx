@@ -75,6 +75,8 @@ import type { WorkflowStepDraft } from "@shared/companion";
 import { CompanionChatPanel } from "@/components/companion-chat-panel";
 import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import { buildRetryStep, toReplayStepPayload } from "@/lib/step-replay";
+import { GoalWorkflowPanel } from "@/components/goal-workflow-panel";
+import { GOAL_PHASE_BADGE, type GoalLoopEvent } from "@/lib/goal-loop-runner";
 import {
   LiveScreenHUD,
   SequenceStep,
@@ -897,6 +899,15 @@ export default function Dashboard({
   };
   const releaseSequence = () => {
     sequenceRunningRef.current = false; setIsSequenceRunning(false); setIsAutonomousRunning(false);
+  };
+  // Goal-loop phases drive the HUD truthfully: thinking/analyzing/verifying/acting/awaiting approval.
+  const handleGoalLoopEvent = (event: GoalLoopEvent) => {
+    setVerificationBadge({ status: GOAL_PHASE_BADGE[event.phase], message: event.message });
+    if (event.phase === "completed" || event.phase === "failed") { setAiThinking(null); return; }
+    setAiThinking((prev) => ({
+      x: event.x ?? prev?.x ?? 0, y: event.y ?? prev?.y ?? 0, action: event.message,
+      confidence: event.confidence, isThinking: event.phase !== "acting", targetLabel: event.label ?? prev?.targetLabel,
+    }));
   };
   const handleRunSequence = async (stepsToRun?: SequenceStep[], iterations = 1) => {
     if (actionBusyRef.current || sequenceRunningRef.current) { toast.info("An action is already being verified or running. Press Stop to cancel it."); return; }
@@ -2443,6 +2454,11 @@ export default function Dashboard({
             />
           </TabsContent>
           <TabsContent value="goal-agent" className="space-y-6">
+            <GoalWorkflowPanel
+              device={{ targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined }}
+              onLoopEvent={handleGoalLoopEvent}
+              onReplay={(steps) => void handleRunSequence(steps)}
+            />
             <AutonomousGoalAgentStudio currentLiveScreenshot={screenshotUrl} />
           </TabsContent>
 
