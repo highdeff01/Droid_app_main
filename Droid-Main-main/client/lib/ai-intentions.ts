@@ -150,7 +150,8 @@ export function runSummary(run: ReplayRun | null): string | null {
 
 const RUN_TO_GOAL: Record<ReplayRun["status"], ComplexGoal["status"]> = {
   running: "in_progress",
-  paused: "in_progress",
+  // A paused run is a paused goal: the HUD's pause sets "blocked" and Resume is offered from there.
+  paused: "blocked",
   completed: "completed",
   failed: "failed",
   cancelled: "blocked",

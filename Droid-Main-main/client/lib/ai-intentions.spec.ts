@@ -260,7 +260,7 @@ describe("goalStatusFromRun", () => {
     ["failed", "failed"],
     ["cancelled", "blocked"],
     ["running", "in_progress"],
-    ["paused", "in_progress"],
+    ["paused", "blocked"],
   ] as const)("maps run status %s to goal status %s", (runStatus, goalStatus) => {
     expect(goalStatusFromRun(makeRun({ status: runStatus }))).toBe(goalStatus);
   });
@@ -313,6 +313,13 @@ describe("syncGoalsWithRun", () => {
 
     expect(result.find((g) => g.id === "g1")?.status).toBe("completed");
     expect(result.find((g) => g.id === "g2")).toBe(unlinked);
+  });
+
+  it("keeps a HUD-paused goal blocked while its run is paused, so Resume stays reachable", () => {
+    const goals = [makeGoal({ id: "g1", status: "blocked" })];
+    const run = makeRun({ id: "r1", status: "paused" });
+
+    expect(syncGoalsWithRun(goals, { g1: "r1" }, run)[0].status).toBe("blocked");
   });
 
   it("returns the same array reference when no goal is linked to the run", () => {
