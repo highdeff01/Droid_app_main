@@ -54,5 +54,12 @@
     "id": "progress_1792575852477_m5auutu8",
     "sessionId": "session_1792575852473_qq2fsjn8",
     "createdAt": "2026-10-21T09:44:12.477Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792575895666_2v7v88vx",
+    "sessionId": "session_1792575895661_r03m42xd",
+    "createdAt": "2026-10-21T09:44:55.666Z"
   }
 ]
