@@ -348,7 +348,8 @@ export class OverseerSupervisor {
   }
 
   private applyPlan(op: SupervisedOperation, plan: InterventionPlan | null) {
-    if (!plan) return;
+    // A run that finished while its verification or checkup was in flight gets no new intervention.
+    if (!plan || op.finishedAt) return;
     // One open proposal per kind: repeated misses never stack identical replan requests.
     if (requiresApproval(plan.kind) && this.hasPending(op.id, plan.kind)) return;
     this.intervene(op, this.executablePlan(op, plan));

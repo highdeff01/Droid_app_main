@@ -104,6 +104,21 @@ describe("OverseerSupervisor interventions", () => {
     expect(pause).toHaveBeenCalled();
   });
 
+  it("adds no intervention when the run finishes while its checkup is in flight", async () => {
+    const { supervisor, analyzer } = setup();
+    let reply!: (value: unknown) => void;
+    analyzer.checkup.mockReturnValue(new Promise((resolve) => (reply = resolve)));
+    supervisor.register({ id: "r", kind: "goal_run", source: "t", goal: "save" });
+    const pending = supervisor.runCheckup("r");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    supervisor.finish("r", "completed");
+    reply({ ok: true, provider: "qwen", value: { isFinished: false, onTrack: false, summary: "wrong screen" } });
+    const report = await pending;
+    expect(report.outcome).toBe("off_track");
+    expect(supervisor.get("r")!.status).toBe("completed");
+    expect(supervisor.snapshot().interventions).toEqual([]);
+  });
+
   it("never revives a finished operation", async () => {
     const { supervisor } = setup();
     supervisor.register({ id: "op", kind: "replay", source: "t", goal: "save" });
