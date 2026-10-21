@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-export const DEFAULT_MODEL_URL = "https://quantumclaw.net/ollama/api/chat";
+export const DEFAULT_MODEL_URL = "http://192.168.1.100:11434/api/chat";
 export const DEFAULT_MODEL_NAME = "qwen3.5:2b";
 
 export interface GlobalSettingsModalProps {
@@ -255,14 +255,25 @@ export function GlobalSettingsModal({
               <div className="flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setModelUrl("https://quantumclaw.net/ollama/api/chat")}
+                  onClick={() => setModelUrl(DEFAULT_MODEL_URL)}
                   className={`text-[11px] px-2.5 py-1 rounded-md border font-bold transition-all ${
+                    modelUrl === DEFAULT_MODEL_URL
+                      ? "bg-cyan-950 text-cyan-300 border-cyan-500 shadow-sm"
+                      : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
+                  }`}
+                >
+                  🏠 LAN Ollama 192.168.1.100 (Default)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModelUrl("https://quantumclaw.net/ollama/api/chat")}
+                  className={`text-[11px] px-2.5 py-1 rounded-md border transition-all ${
                     modelUrl === "https://quantumclaw.net/ollama/api/chat"
                       ? "bg-cyan-950 text-cyan-300 border-cyan-500 shadow-sm"
                       : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
                   }`}
                 >
-                  ⚡ QuantumClaw Remote (Default)
+                  ⚡ QuantumClaw Remote (Fallback)
                 </button>
                 <button
                   type="button"

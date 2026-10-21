@@ -83,6 +83,7 @@ import {
   getConfiguredAiModel,
   setConfiguredAiModel,
   DEFAULT_OLLAMA_ENDPOINT,
+  DEFAULT_LOCAL_OLLAMA_ENDPOINT,
   DEFAULT_QWEN_MODEL,
 } from "./ai-endpoint";
 import {
@@ -394,7 +395,7 @@ export function createServer() {
       res.status(500).json({
         success: false,
         latencyMs: 0,
-        endpoint: req.body?.endpoint || DEFAULT_OLLAMA_ENDPOINT,
+        endpoint: req.body?.endpoint || getConfiguredAiEndpoint(),
         model: req.body?.model || DEFAULT_QWEN_MODEL,
         error: err instanceof Error ? err.message : String(err),
         message: err instanceof Error ? err.message : "Failed to test endpoint",
@@ -408,7 +409,8 @@ export function createServer() {
       settings: {
         modelUrl: getConfiguredAiEndpoint(),
         model: getConfiguredAiModel(),
-        defaultModelUrl: DEFAULT_OLLAMA_ENDPOINT,
+        defaultModelUrl: DEFAULT_LOCAL_OLLAMA_ENDPOINT,
+        fallbackModelUrl: DEFAULT_OLLAMA_ENDPOINT,
         defaultModel: DEFAULT_QWEN_MODEL,
       },
     });

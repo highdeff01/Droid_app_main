@@ -321,6 +321,7 @@ export type AnalysisStatus =
 export type AnalysisProvider =
   | "tesseract"
   | "remote-ocr"
+  | "qwen-vision"
   | "local-ocr"
   | "deterministic-fallback";
 

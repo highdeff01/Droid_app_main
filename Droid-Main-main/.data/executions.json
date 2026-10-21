@@ -50,11 +50,11 @@
         "id": "event_1790120077488_dccmza7",
         "timestamp": "2026-09-22T23:34:37.488Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was not found.",
+        "message": "Expected text “Done” was not found.",
         "stepId": "step-1",
         "result": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790120077488_l7tv29x"
@@ -85,11 +85,11 @@
         "id": "event_1790120077488_y19jdry",
         "timestamp": "2026-09-22T23:34:37.488Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was found.",
+        "message": "Expected text “Done” was found.",
         "stepId": "step-1",
         "result": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790120077488_hv8esnr"
@@ -132,7 +132,7 @@
         },
         "verification": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         }
       },
@@ -160,7 +160,7 @@
         },
         "verification": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         }
       }
@@ -273,11 +273,11 @@
         "id": "event_1790711249997_qvrod8y",
         "timestamp": "2026-09-29T19:47:29.997Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was not found.",
+        "message": "Expected text “Done” was not found.",
         "stepId": "step-1",
         "result": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790711249997_q8u5sys"
@@ -308,11 +308,11 @@
         "id": "event_1790711249997_yml8igm",
         "timestamp": "2026-09-29T19:47:29.997Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was found.",
+        "message": "Expected text “Done” was found.",
         "stepId": "step-1",
         "result": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790711249997_azjgekv"
@@ -355,7 +355,7 @@
         },
         "verification": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         }
       },
@@ -383,7 +383,7 @@
         },
         "verification": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         }
       }
@@ -485,11 +485,11 @@
         "id": "event_1790711916917_1tpaaz2",
         "timestamp": "2026-09-29T19:58:36.917Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was not found.",
+        "message": "Expected text “Done” was not found.",
         "stepId": "step-1",
         "result": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790711916917_6gz3p4c"
@@ -520,11 +520,11 @@
         "id": "event_1790711916917_pvmkx6b",
         "timestamp": "2026-09-29T19:58:36.917Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was found.",
+        "message": "Expected text “Done” was found.",
         "stepId": "step-1",
         "result": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790711916917_30iidae"
@@ -567,7 +567,7 @@
         },
         "verification": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         }
       },
@@ -595,7 +595,7 @@
         },
         "verification": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         }
       }
@@ -697,11 +697,11 @@
         "id": "event_1790726049524_zjleiau",
         "timestamp": "2026-09-29T23:54:09.524Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was not found.",
+        "message": "Expected text “Done” was not found.",
         "stepId": "step-1",
         "result": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790726049524_eul0klq"
@@ -732,11 +732,11 @@
         "id": "event_1790726049525_pjzlckp",
         "timestamp": "2026-09-29T23:54:09.525Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was found.",
+        "message": "Expected text “Done” was found.",
         "stepId": "step-1",
         "result": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790726049525_xy0q22o"
@@ -779,7 +779,7 @@
         },
         "verification": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         }
       },
@@ -807,7 +807,7 @@
         },
         "verification": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         }
       }
@@ -909,11 +909,11 @@
         "id": "event_1790726074129_bryiguh",
         "timestamp": "2026-09-29T23:54:34.129Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was not found.",
+        "message": "Expected text “Done” was not found.",
         "stepId": "step-1",
         "result": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790726074129_dwe947h"
@@ -944,11 +944,11 @@
         "id": "event_1790726074129_c8x7909",
         "timestamp": "2026-09-29T23:54:34.129Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was found.",
+        "message": "Expected text “Done” was found.",
         "stepId": "step-1",
         "result": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790726074129_484o3g6"
@@ -991,7 +991,7 @@
         },
         "verification": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         }
       },
@@ -1019,7 +1019,7 @@
         },
         "verification": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         }
       }
@@ -1121,11 +1121,11 @@
         "id": "event_1790744738734_zqfourw",
         "timestamp": "2026-09-30T05:05:38.734Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was not found.",
+        "message": "Expected text “Done” was not found.",
         "stepId": "step-1",
         "result": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790744738734_w8yl812"
@@ -1156,11 +1156,11 @@
         "id": "event_1790744738734_8fl9hkm",
         "timestamp": "2026-09-30T05:05:38.734Z",
         "status": "verification",
-        "message": "Expected text \u201cDone\u201d was found.",
+        "message": "Expected text “Done” was found.",
         "stepId": "step-1",
         "result": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         },
         "evidenceId": "evidence_1790744738734_vbv2nxj"
@@ -1203,7 +1203,7 @@
         },
         "verification": {
           "status": "failed",
-          "reason": "Expected text \u201cDone\u201d was not found.",
+          "reason": "Expected text “Done” was not found.",
           "confidence": 0.9
         }
       },
@@ -1231,7 +1231,7 @@
         },
         "verification": {
           "status": "passed",
-          "reason": "Expected text \u201cDone\u201d was found.",
+          "reason": "Expected text “Done” was found.",
           "confidence": 0.9
         }
       }
@@ -1270,5 +1270,217 @@
     ],
     "evidence": [],
     "startedAt": "2026-09-30T05:05:38.741Z"
+  },
+  {
+    "id": "execution_1792563871276_3nvk8xx",
+    "planId": "plan-1",
+    "sessionId": "session-1",
+    "status": "completed",
+    "currentStep": 1,
+    "totalSteps": 1,
+    "timeline": [
+      {
+        "id": "event_1792563871277_uadnhi9",
+        "timestamp": "2026-10-21T06:24:31.277Z",
+        "status": "started",
+        "message": "Execution started"
+      },
+      {
+        "id": "event_1792563871278_yx7eqgk",
+        "timestamp": "2026-10-21T06:24:31.278Z",
+        "status": "started",
+        "message": "Running step 1",
+        "stepId": "step-1"
+      },
+      {
+        "id": "event_1792563871281_2un1vmu",
+        "timestamp": "2026-10-21T06:24:31.281Z",
+        "status": "completed",
+        "message": "safe",
+        "stepId": "step-1",
+        "result": {
+          "actionType": "click",
+          "success": true,
+          "message": "safe"
+        }
+      },
+      {
+        "id": "event_1792563871281_z7bop9i",
+        "timestamp": "2026-10-21T06:24:31.281Z",
+        "status": "capture",
+        "message": "Requesting fresh capture for attempt 1.",
+        "stepId": "step-1"
+      },
+      {
+        "id": "event_1792563871281_5crf4de",
+        "timestamp": "2026-10-21T06:24:31.281Z",
+        "status": "analysis",
+        "message": "Fresh capture analysis received.",
+        "stepId": "step-1"
+      },
+      {
+        "id": "event_1792563871282_1sr2wj6",
+        "timestamp": "2026-10-21T06:24:31.282Z",
+        "status": "verification",
+        "message": "Expected text “Done” was not found.",
+        "stepId": "step-1",
+        "result": {
+          "status": "failed",
+          "reason": "Expected text “Done” was not found.",
+          "confidence": 0.9
+        },
+        "evidenceId": "evidence_1792563871281_fk5cq3m"
+      },
+      {
+        "id": "event_1792563871282_hlcmm0d",
+        "timestamp": "2026-10-21T06:24:31.282Z",
+        "status": "retry",
+        "message": "Verification failed; retrying step 1 (attempt 2/2).",
+        "stepId": "step-1",
+        "evidenceId": "evidence_1792563871281_fk5cq3m"
+      },
+      {
+        "id": "event_1792563871282_ih26bs3",
+        "timestamp": "2026-10-21T06:24:31.282Z",
+        "status": "capture",
+        "message": "Requesting fresh capture for attempt 2.",
+        "stepId": "step-1"
+      },
+      {
+        "id": "event_1792563871282_c3sqclk",
+        "timestamp": "2026-10-21T06:24:31.282Z",
+        "status": "analysis",
+        "message": "Fresh capture analysis received.",
+        "stepId": "step-1"
+      },
+      {
+        "id": "event_1792563871282_52dl99f",
+        "timestamp": "2026-10-21T06:24:31.282Z",
+        "status": "verification",
+        "message": "Expected text “Done” was found.",
+        "stepId": "step-1",
+        "result": {
+          "status": "passed",
+          "reason": "Expected text “Done” was found.",
+          "confidence": 0.9
+        },
+        "evidenceId": "evidence_1792563871282_5puwwom"
+      },
+      {
+        "id": "event_1792563871282_z4dtdl4",
+        "timestamp": "2026-10-21T06:24:31.282Z",
+        "status": "completed",
+        "message": "Execution completed"
+      }
+    ],
+    "results": [
+      {
+        "actionType": "click",
+        "success": true,
+        "message": "safe"
+      },
+      {
+        "actionType": "click",
+        "success": true,
+        "message": "safe"
+      }
+    ],
+    "evidence": [
+      {
+        "id": "evidence_1792563871281_fk5cq3m",
+        "stepId": "step-1",
+        "attempt": 1,
+        "capturedAt": "2026-10-21T06:24:31.281Z",
+        "analysis": {
+          "id": "analysis-1",
+          "status": "completed",
+          "provider": "local-ocr",
+          "confidence": 0.9,
+          "ocrText": [],
+          "detectedElements": [],
+          "regionsOfInterest": [],
+          "notes": [],
+          "analyzedAt": "2026-10-21T06:24:31.281Z"
+        },
+        "verification": {
+          "status": "failed",
+          "reason": "Expected text “Done” was not found.",
+          "confidence": 0.9
+        }
+      },
+      {
+        "id": "evidence_1792563871282_5puwwom",
+        "stepId": "step-1",
+        "attempt": 2,
+        "capturedAt": "2026-10-21T06:24:31.282Z",
+        "analysis": {
+          "id": "analysis-2",
+          "status": "completed",
+          "provider": "local-ocr",
+          "confidence": 0.9,
+          "ocrText": [
+            {
+              "id": "text",
+              "text": "Done",
+              "confidence": 0.9
+            }
+          ],
+          "detectedElements": [],
+          "regionsOfInterest": [],
+          "notes": [],
+          "analyzedAt": "2026-10-21T06:24:31.282Z"
+        },
+        "verification": {
+          "status": "passed",
+          "reason": "Expected text “Done” was found.",
+          "confidence": 0.9
+        }
+      }
+    ],
+    "startedAt": "2026-10-21T06:24:31.277Z",
+    "completedAt": "2026-10-21T06:24:31.282Z"
+  },
+  {
+    "id": "execution_1792563871284_77lbfto",
+    "planId": "plan-1",
+    "sessionId": "session-1",
+    "status": "running",
+    "currentStep": 1,
+    "totalSteps": 1,
+    "timeline": [
+      {
+        "id": "event_1792563871286_d6jcrh7",
+        "timestamp": "2026-10-21T06:24:31.286Z",
+        "status": "started",
+        "message": "Execution started"
+      },
+      {
+        "id": "event_1792563871286_drbetwo",
+        "timestamp": "2026-10-21T06:24:31.286Z",
+        "status": "started",
+        "message": "Running step 1",
+        "stepId": "step-1"
+      }
+    ],
+    "results": [
+      {
+        "actionType": "click",
+        "success": true,
+        "message": "safe"
+      }
+    ],
+    "evidence": [],
+    "startedAt": "2026-10-21T06:24:31.286Z"
+  },
+  {
+    "id": "execution_1792563871445_z8vz0ps",
+    "planId": "plan-1",
+    "sessionId": "session-1",
+    "status": "pending",
+    "currentStep": 0,
+    "totalSteps": 0,
+    "timeline": [],
+    "results": [],
+    "evidence": []
   }
 ]

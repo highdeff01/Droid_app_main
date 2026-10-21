@@ -4,7 +4,12 @@
  * detects UI elements with precise (X,Y,W,H) bounding boxes, and provides focus positioning.
  */
 
-import { resolveAiEndpoint, resolveAiModel, DEFAULT_QWEN_MODEL } from "./ai-endpoint";
+import {
+  buildVisionMessage,
+  parseModelJson,
+  sendQwenChatRequest,
+} from "./ai-endpoint";
+import { normalizeVisionReport } from "./vision-report";
 import { detectScreenElementsAndSteps } from "./ai-gemini-service";
 import type { AiMonitorBrowserContext } from "./ai-monitor-store";
 
@@ -48,16 +53,9 @@ export class QwenVisionPerceptionEngine {
   async analyzeScreen(
     imageData: string,
     endpoint?: string,
-    model = DEFAULT_QWEN_MODEL,
+    model?: string,
     browserContext?: AiMonitorBrowserContext | null,
   ): Promise<ScreenPerceptionReport> {
-    const resolvedEndpoint = resolveAiEndpoint(endpoint);
-    const resolvedModel = resolveAiModel(model);
-
-    const base64Image = imageData.includes(",")
-      ? imageData.split(",")[1]
-      : imageData;
-
     const systemPrompt = `You are an expert Computer Vision Perception AI specialized in GUI and Game Automation.
 Analyze the provided screenshot with high precision.
 Return a STRICT valid JSON object matching this schema:
@@ -89,52 +87,26 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
       : systemPrompt;
 
     try {
-      const payload = {
-        model: resolvedModel,
-        messages: [
+      const response = await sendQwenChatRequest(
+        [
           { role: "system", content: systemPromptWithBrowser },
-          {
-            role: "user",
-            content:
-              "Perform complete visual breakdown of this screen, identify all interactive UI elements with bounding boxes and coordinates, and suggest the key visual focus point.",
-            images: [base64Image],
-          },
+          buildVisionMessage(
+            "Perform complete visual breakdown of this screen, identify all interactive UI elements with bounding boxes and coordinates, and suggest the key visual focus point.",
+            imageData,
+          ),
         ],
-        stream: false,
-        format: "json",
-      };
-
-      const response = await fetch(resolvedEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30000),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Ollama Vision API returned ${response.statusText}`);
+        { endpoint, model, format: "json" },
+      );
+      if (!response.success) {
+        throw new Error(response.error || "Qwen vision unavailable");
       }
 
-      const data = await response.json();
-      const rawContent = data.message?.content || "{}";
-
-      let parsed: any;
-      try {
-        const cleaned = rawContent
-          .replace(/```json/g, "")
-          .replace(/```/g, "")
-          .trim();
-        parsed = JSON.parse(cleaned);
-      } catch (parseErr) {
-        console.warn(
-          "Failed to parse pure JSON from vision response, using fallback heuristic",
-          parseErr,
-        );
-        parsed = this.fallbackExtraction(rawContent);
-      }
-
+      const parsed = normalizeVisionReport(
+        parseModelJson(response.content),
+        response.content,
+      );
       const report: ScreenPerceptionReport = {
-        timestamp: Date.now(),
+        ...parsed,
         screenDescription:
           parsed.screenDescription ||
           "Active workspace display with interactive elements.",
@@ -142,34 +114,7 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
         visualStateChange:
           parsed.visualStateChange ||
           (this.lastDescription ? "State updated" : "Initial frame"),
-        elements: this.mergeBrowserElements(
-          Array.isArray(parsed.elements) && parsed.elements.length > 0
-            ? parsed.elements.map((el: any, idx: number) => ({
-                id: el.id || `elem_${idx + 1}`,
-                name: el.name || `Element ${idx + 1}`,
-                type: el.type || "button",
-                boundingBox: el.boundingBox || {
-                  x: el.center?.x || 960,
-                  y: el.center?.y || 540,
-                  width: 80,
-                  height: 35,
-                },
-                center: el.center || { x: 960, y: 540 },
-                confidence:
-                  typeof el.confidence === "number" ? el.confidence : 0.85,
-                interactive: el.interactive !== false,
-                textValue: el.textValue || "",
-              }))
-            : this.generateDefaultElements(),
-          browserContext,
-        ),
-        feedbackPosition: parsed.feedbackPosition || { x: 960, y: 540 },
-        primarySuggestion:
-          parsed.primarySuggestion ||
-          "Inspect interactive targets and execute planned sequence.",
-        confidence:
-          typeof parsed.confidence === "number" ? parsed.confidence : 0.88,
-        rawAnalysis: rawContent,
+        elements: this.mergeBrowserElements(parsed.elements, browserContext),
       };
 
       this.lastDescription = report.screenDescription;
@@ -343,18 +288,6 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
       default:
         return "other";
     }
-  }
-
-  private fallbackExtraction(raw: string): any {
-    return {
-      screenDescription: raw.slice(0, 200) || "Active interface detected.",
-      activeWindow: "Desktop Window",
-      visualStateChange: "Screen refreshed",
-      feedbackPosition: { x: 960, y: 540 },
-      primarySuggestion: "Proceed with UI interaction",
-      confidence: 0.75,
-      elements: this.generateDefaultElements(),
-    };
   }
 
   private generateDefaultElements(): DetectedUIElement[] {
