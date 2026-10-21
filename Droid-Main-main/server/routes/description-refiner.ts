@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
+import { sendQwenChatRequest, parseModelJson } from "../ai-endpoint";
 
 let genAiClient: GoogleGenAI | null = null;
 
@@ -29,6 +30,43 @@ export function ensureUnderWordLimit(text: string, limit: number = 20): { text: 
   return { text: cleaned, wordCount: countWords(cleaned) };
 }
 
+/** Shared post-processing for a parsed refine-description model reply (Gemini or Qwen). */
+function finalizeRefinedDescription(
+  parsed: any,
+  rawText: string,
+  wordLimit: number,
+  constraintMode: string,
+  originalWordCount: number,
+  originalCharCount: number,
+  source: "gemini" | "qwen",
+) {
+  const safeRefined = ensureUnderWordLimit(parsed.refinedDescription || rawText, wordLimit);
+  const safeVariations = (Array.isArray(parsed.variations) ? parsed.variations : []).map((v: any) => {
+    const safe = ensureUnderWordLimit(v.text || "", wordLimit);
+    return {
+      text: safe.text,
+      wordCount: safe.wordCount,
+      charCount: safe.text.length,
+      style: v.style || "Alternative",
+    };
+  });
+
+  return {
+    success: true,
+    refinedDescription: safeRefined.text,
+    wordCount: safeRefined.wordCount,
+    charCount: safeRefined.text.length,
+    targetWordLimit: wordLimit,
+    constraintMode,
+    keyPropositions: Array.isArray(parsed.keyPropositions) ? parsed.keyPropositions : ["Core Automation", "Vision Hub"],
+    rationale: parsed.rationale || `Refined to ${safeRefined.wordCount} words (${safeRefined.text.length} chars) matching the ${constraintMode} constraint.`,
+    variations: safeVariations,
+    originalWordCount,
+    originalCharCount,
+    source,
+  };
+}
+
 export interface RefinedResult {
   refinedDescription: string;
   wordCount: number;
@@ -40,7 +78,7 @@ export interface RefinedResult {
   variations: Array<{ text: string; wordCount: number; charCount: number; style: string }>;
   originalWordCount: number;
   originalCharCount: number;
-  source: "gemini" | "heuristic-engine";
+  source: "gemini" | "qwen" | "heuristic-engine";
 }
 
 /**
@@ -218,23 +256,53 @@ Respond ONLY with a valid JSON object matching this exact TypeScript structure:
             };
           });
 
-          return res.json({
-            success: true,
-            refinedDescription: safeRefined.text,
-            wordCount: safeRefined.wordCount,
-            charCount: safeRefined.text.length,
-            targetWordLimit: wordLimit,
-            constraintMode,
-            keyPropositions: Array.isArray(parsed.keyPropositions) ? parsed.keyPropositions : ["Core Automation", "Vision Hub"],
-            rationale: parsed.rationale || `Refined to ${safeRefined.wordCount} words (${safeRefined.text.length} chars) matching the ${constraintMode} constraint.`,
-            variations: safeVariations,
-            originalWordCount,
-            originalCharCount,
-            source: "gemini",
-          });
+          return res.json(
+            finalizeRefinedDescription(parsed, rawText, wordLimit, constraintMode, originalWordCount, originalCharCount, "gemini"),
+          );
         }
       } catch (geminiError) {
         console.warn("[Description Refiner] Gemini API error, falling back to heuristic engine:", geminiError);
+      }
+    } else {
+      try {
+        const qwenPrompt = `You are an elite product copywriter, App Store copy strategist, and social media copy editor.
+Rewrite the following rough app description into a punchy, crystal-clear description that is ${constraintDescription}.
+It MUST maintain the application's core value propositions, target audience, and primary functionality without marketing fluff.
+
+Rough app description:
+"${rawText}"
+
+Tone: ${tone}
+Constraint Mode: ${constraintMode}
+Max Word Limit: ${wordLimit}
+
+Strict constraints:
+1. Output MUST be strictly under ${wordLimit} words. NEVER exceed ${wordLimit} words.
+2. Maintain core value propositions accurately.
+3. Eliminate fillers like "this app allows you to" or "a tool that helps".
+
+Respond ONLY with a valid JSON object matching this exact TypeScript structure:
+{
+  "refinedDescription": "string (strictly <= ${wordLimit} words)",
+  "keyPropositions": ["string", "string"],
+  "rationale": "string (brief note on how constraint and value were balanced)",
+  "variations": [
+    { "text": "string (strictly <= ${wordLimit} words)", "style": "Action-Driven" },
+    { "text": "string (strictly <= ${wordLimit} words)", "style": "Minimalist" }
+  ]
+}`;
+        const qwenResult = await sendQwenChatRequest(
+          [{ role: "user", content: qwenPrompt }],
+          { format: "json" },
+        );
+        if (qwenResult.success) {
+          const parsed = parseModelJson<any>(qwenResult.content);
+          return res.json(
+            finalizeRefinedDescription(parsed, rawText, wordLimit, constraintMode, originalWordCount, originalCharCount, "qwen"),
+          );
+        }
+      } catch (qwenError) {
+        console.warn("[Description Refiner] Qwen error, falling back to heuristic engine:", qwenError);
       }
     }
 

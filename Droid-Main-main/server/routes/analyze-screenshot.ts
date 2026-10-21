@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { gameStateManager } from "../state-manager";
 import { autoTaskGenerator } from "../auto-task-generator";
 import { multiAgentExecutor } from "../multi-agent-executor";
-import { DEFAULT_QWEN_MODEL, resolveAiEndpoint } from "../ai-endpoint";
+import { buildVisionMessage, sendQwenChatRequest } from "../ai-endpoint";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,14 +56,8 @@ export const handleAnalyzeScreenshot: RequestHandler = async (req, res) => {
     // Step 4: Execute high-priority tasks via multi-agent system
     const executionResults = multiAgentExecutor.processAndExecuteTasks();
 
-    // Step 5: Analyze with the configured AI endpoint for natural language
-    // understanding (with offline fallback). No endpoint is hardcoded: it comes
-    // from the request or the OLLAMA_ENDPOINT environment variable.
-    const ollamaEndpoint = resolveAiEndpoint(endpoint);
-    const base64Image = imageData.includes(",")
-      ? imageData.split(",")[1]
-      : imageData;
-
+    // Step 5: Analyze with Qwen vision (local Ollama first, quantumclaw
+    // fallback) for natural language understanding, with heuristic fallback.
     let detection =
       "Live desktop frame captured - interactive workspace detected";
     let suggestion = "Inspect UI elements and execute next planned action";
@@ -84,48 +78,24 @@ export const handleAnalyzeScreenshot: RequestHandler = async (req, res) => {
       }
     };
 
-    if (!ollamaEndpoint) {
-      applyHeuristicFallback();
-    } else try {
-      const payload = {
-        model: DEFAULT_QWEN_MODEL,
-        messages: [
-          {
-            role: "user",
-            content:
-              "Analyze this game/app screenshot. Describe what you see, identify UI elements, and suggest the next action. Be concise.",
-            images: [base64Image],
-          },
-        ],
-        stream: false,
-      };
-
-      const response = await fetch(ollamaEndpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(8000),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const content = data.message?.content || "";
-        if (content) {
-          detection = extractDetection(content);
-          suggestion = extractSuggestion(content);
-          confidence = calculateConfidence(content);
-          ollamaOnline = true;
-        }
-      } else {
-        throw new Error(`Ollama API error: ${response.statusText}`);
-      }
-    } catch (ollamaErr) {
-      // Offline fallback: generate heuristic detection from entities & game state
+    const visionReply = await sendQwenChatRequest(
+      [
+        buildVisionMessage(
+          "Analyze this game/app screenshot. Describe what you see, identify UI elements, and suggest the next action. Be concise.",
+          imageData,
+        ),
+      ],
+      { endpoint },
+    );
+    if (visionReply.success && visionReply.content) {
+      detection = extractDetection(visionReply.content);
+      suggestion = extractSuggestion(visionReply.content);
+      confidence = calculateConfidence(visionReply.content);
+      ollamaOnline = true;
+    } else {
       console.warn(
         "AI endpoint unavailable, using heuristic fallback:",
-        ollamaErr instanceof Error ? ollamaErr.message : ollamaErr,
+        visionReply.error,
       );
       applyHeuristicFallback();
     }

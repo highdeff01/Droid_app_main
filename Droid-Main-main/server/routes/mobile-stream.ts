@@ -4,6 +4,7 @@ import os from "os";
 import { spawn } from "child_process";
 import { setLatestSyncedRealFrame, getLatestSyncedRealFrame } from "./screen-capture";
 import { detectScreenElementsAndSteps, getGenAIClient } from "../ai-gemini-service";
+import { sendQwenChatRequest, parseModelJson, toBase64Image } from "../ai-endpoint";
 import { centralLogHub } from "../log-hub";
 import { aiMonitorStore } from "../ai-monitor-store";
 

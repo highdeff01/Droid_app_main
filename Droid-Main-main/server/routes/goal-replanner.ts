@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
+import { sendQwenChatRequest, buildVisionMessage, parseModelJson } from "../ai-endpoint";
 
 export interface ReplanStepItem {
   id: string;
@@ -91,6 +92,35 @@ Analyze the live screen and propose an optimal healed step sequence. Return conc
         geminiAnalysis = response.text || null;
       } catch (aiErr) {
         console.warn("[GoalReplan] Gemini vision call skipped/failed:", aiErr);
+      }
+    } else if (screenshotUrl && screenshotUrl.startsWith("data:image")) {
+      const prompt = `You are an expert AI Robotic Process Automation (RPA) Goal Re-Planner.
+A workflow automation step sequence has encountered continuous coordinate drift (${currentDriftDistancePx}px > ${driftThreshold}px threshold) or step failure.
+Workflow Goal: "${targetGoal}"
+Workflow Steps: ${JSON.stringify(steps.map((s: any) => ({ name: s.name, action: s.action, x: s.x, y: s.y, delayMs: s.delayMs })))}
+Failed Step ID: ${failedStepId || "Step with highest drift"}
+Consecutive Drifts: ${consecutiveDriftCount}
+
+Analyze the live screen and propose an optimal healed step sequence. Return concise recommendations in JSON:
+{
+  "summary": "Brief explanation of drift cause and re-planning fix",
+  "confidence": 0.95,
+  "mitigations": ["Strategy 1", "Strategy 2"],
+  "suggestedStepAdjustments": [
+    { "index": 0, "action": "click", "deltaX": 15, "deltaY": -8, "addedDelayMs": 200, "reason": "Adjusted to newly positioned button centroid" }
+  ]
+}`;
+      try {
+        const qwenResult = await sendQwenChatRequest(
+          [buildVisionMessage(prompt, screenshotUrl)],
+          { format: "json" },
+        );
+        if (qwenResult.success) {
+          const parsed = parseModelJson<{ summary?: string }>(qwenResult.content);
+          geminiAnalysis = parsed.summary || qwenResult.content;
+        }
+      } catch (qwenErr) {
+        console.warn("[GoalReplan] Qwen vision call skipped/failed:", qwenErr);
       }
     }
 

@@ -8,6 +8,7 @@ import {
   ScreenPerceptionReport,
   DetectedUIElement,
 } from "./ai-perception-engine";
+import { parseModelJson, sendQwenChatRequest } from "./ai-endpoint";
 
 export interface AIThinkingChain {
   observation: string;
@@ -114,8 +115,8 @@ export class AIPlannerActorEngine {
   async planAndFormulateAction(
     perception: ScreenPerceptionReport,
     userObjective?: string,
-    endpoint = "https://remote.quantumpass.io/ollama/api/chat",
-    model = "qwen2.5vl:7b",
+    endpoint?: string,
+    model?: string,
   ): Promise<PlannerActDecision> {
     const systemPrompt = `You are an elite Autonomous AI Planner and Action Synthesizer.
 You receive a Vision Perception Report of the active user desktop/application screen.
@@ -192,37 +193,21 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
 - Current Active Goals: ${JSON.stringify(this.activeGoals.map((g) => ({ title: g.title, status: g.status })))}`;
 
     try {
-      const payload = {
-        model,
-        messages: [
+      const response = await sendQwenChatRequest(
+        [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        stream: false,
-        format: "json",
-      };
-
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30000),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Planner API returned ${response.statusText}`);
+        { endpoint, model, format: "json" },
+      );
+      if (!response.success) {
+        throw new Error(response.error || "Planner model unavailable");
       }
-
-      const data = await response.json();
-      const rawContent = data.message?.content || "{}";
+      const rawContent = response.content || "{}";
 
       let parsed: any;
       try {
-        const cleaned = rawContent
-          .replace(/```json/g, "")
-          .replace(/```/g, "")
-          .trim();
-        parsed = JSON.parse(cleaned);
+        parsed = parseModelJson(rawContent);
       } catch {
         parsed = this.fallbackPlan(perception);
       }

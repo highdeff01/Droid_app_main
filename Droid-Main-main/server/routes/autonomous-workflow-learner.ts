@@ -1,5 +1,6 @@
 import { RequestHandler } from "express";
 import { GoogleGenAI } from "@google/genai";
+import { sendQwenChatRequest, parseModelJson } from "../ai-endpoint";
 
 interface WorkflowAction {
   id: string;
@@ -62,26 +63,8 @@ const learnedWorkflowsStore: LearnedWorkflow[] = [
 const apiKey = process.env.GEMINI_API_KEY || "";
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
-/**
- * Detect similar actions from workflow history, save them, and create new automatic workflows
- */
-export const handleLearnWorkflows: RequestHandler = async (req, res) => {
-  try {
-    const { historySteps = [], mouseTrails = [], liveContext = "" } = req.body;
-
-    if (!historySteps.length && !mouseTrails.length) {
-      return res.json({
-        success: true,
-        learnedWorkflows: learnedWorkflowsStore,
-        message: "No new trace data provided; returned existing learned workflow library."
-      });
-    }
-
-    let synthesizedWorkflow: LearnedWorkflow | null = null;
-
-    if (ai) {
-      try {
-        const prompt = `You are an Autonomous AI Workflow Learning Engine.
+function buildLearnWorkflowPrompt(historySteps: any[], liveContext: string): string {
+  return `You are an Autonomous AI Workflow Learning Engine.
 Analyze the following recorded user actions and mouse trails:
 History steps: ${JSON.stringify(historySteps.slice(0, 25))}
 Live context: ${liveContext}
@@ -102,7 +85,55 @@ Return ONLY a JSON object:
     { "action": "click|type|key|hover", "name": "Step description", "x": 500, "y": 300, "text": "", "key": "" }
   ]
 }`;
+}
 
+/** Shared post-processing: turns a parsed { name, steps, ... } object into a LearnedWorkflow. */
+function buildSynthesizedWorkflow(parsed: any): LearnedWorkflow | null {
+  if (!parsed || !parsed.name || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+    return null;
+  }
+  return {
+    id: `lw_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    name: parsed.name,
+    description: parsed.description || "Autonomously learned from recent user trace history",
+    confidenceScore: parsed.confidenceScore || 0.91,
+    triggerCondition: parsed.triggerCondition || "Manual or contextual auto-trigger",
+    patternType: parsed.patternType || "custom",
+    steps: parsed.steps.map((s: any, idx: number) => ({
+      id: `step_${idx + 1}`,
+      action: s.action || "click",
+      name: s.name || `Action #${idx + 1}`,
+      x: s.x ?? 960,
+      y: s.y ?? 540,
+      text: s.text || "",
+      key: s.key || "",
+      dwellMs: 400
+    })),
+    createdAt: Date.now(),
+    executionCount: 0
+  };
+}
+
+/**
+ * Detect similar actions from workflow history, save them, and create new automatic workflows
+ */
+export const handleLearnWorkflows: RequestHandler = async (req, res) => {
+  try {
+    const { historySteps = [], mouseTrails = [], liveContext = "" } = req.body;
+
+    if (!historySteps.length && !mouseTrails.length) {
+      return res.json({
+        success: true,
+        learnedWorkflows: learnedWorkflowsStore,
+        message: "No new trace data provided; returned existing learned workflow library."
+      });
+    }
+
+    let synthesizedWorkflow: LearnedWorkflow | null = null;
+
+    if (ai) {
+      try {
+        const prompt = buildLearnWorkflowPrompt(historySteps, liveContext);
         const model = "gemini-2.5-flash";
         const response = await ai.models.generateContent({
           model,
@@ -111,33 +142,24 @@ Return ONLY a JSON object:
         });
 
         const raw = response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-        const parsed = JSON.parse(raw);
-
-        if (parsed.name && Array.isArray(parsed.steps) && parsed.steps.length > 0) {
-          synthesizedWorkflow = {
-            id: `lw_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            name: parsed.name,
-            description: parsed.description || "Autonomously learned from recent user trace history",
-            confidenceScore: parsed.confidenceScore || 0.91,
-            triggerCondition: parsed.triggerCondition || "Manual or contextual auto-trigger",
-            patternType: parsed.patternType || "custom",
-            steps: parsed.steps.map((s: any, idx: number) => ({
-              id: `step_${idx + 1}`,
-              action: s.action || "click",
-              name: s.name || `Action #${idx + 1}`,
-              x: s.x ?? 960,
-              y: s.y ?? 540,
-              text: s.text || "",
-              key: s.key || "",
-              dwellMs: 400
-            })),
-            createdAt: Date.now(),
-            executionCount: 0
-          };
-          learnedWorkflowsStore.unshift(synthesizedWorkflow);
-        }
+        synthesizedWorkflow = buildSynthesizedWorkflow(JSON.parse(raw));
+        if (synthesizedWorkflow) learnedWorkflowsStore.unshift(synthesizedWorkflow);
       } catch (geminiErr) {
         console.warn("Gemini pattern learning error, falling back to heuristic clustering:", geminiErr);
+      }
+    } else {
+      try {
+        const prompt = buildLearnWorkflowPrompt(historySteps, liveContext);
+        const qwenResult = await sendQwenChatRequest(
+          [{ role: "user", content: prompt }],
+          { format: "json" },
+        );
+        if (qwenResult.success) {
+          synthesizedWorkflow = buildSynthesizedWorkflow(parseModelJson(qwenResult.content));
+          if (synthesizedWorkflow) learnedWorkflowsStore.unshift(synthesizedWorkflow);
+        }
+      } catch (qwenErr) {
+        console.warn("Qwen pattern learning error, falling back to heuristic clustering:", qwenErr);
       }
     }
 

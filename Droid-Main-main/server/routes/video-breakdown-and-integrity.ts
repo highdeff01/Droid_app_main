@@ -5,8 +5,15 @@
 import { RequestHandler } from "express";
 import { GoogleGenAI } from "@google/genai";
 import { addBridgeLog } from "./pyautogui-bridge";
+import { sendQwenChatRequest, buildVisionMessage, parseModelJson } from "../ai-endpoint";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let genAIClient: GoogleGenAI | null = null;
+function getGenAI(): GoogleGenAI | null {
+  if (!genAIClient && process.env.GEMINI_API_KEY) {
+    genAIClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+  return genAIClient;
+}
 
 export interface ExtractedVideoStep {
   id: string;
@@ -25,6 +32,28 @@ export interface ExtractedVideoStep {
   confidence: number;
   uiTargetName?: string;
   reasoning?: string;
+}
+
+/** Shared post-processing: turns a parsed steps array into ExtractedVideoStep[]. */
+function buildAnalyzedSteps(parsed: any, videoFrames: string[]): ExtractedVideoStep[] {
+  if (!Array.isArray(parsed) || parsed.length === 0) return [];
+  return parsed.map((item: any, idx: number) => ({
+    id: `video_step_${Date.now()}_${idx + 1}`,
+    stepNumber: idx + 1,
+    name: item.name || `Step #${idx + 1}`,
+    action: item.action || "click",
+    x: Number(item.x) || 960,
+    y: Number(item.y) || 540,
+    toX: item.toX ? Number(item.toX) : undefined,
+    toY: item.toY ? Number(item.toY) : undefined,
+    text: item.text || "",
+    keyPayload: item.keyPayload || "",
+    delayMs: Number(item.delayMs) || 450,
+    confidence: 0.96,
+    uiTargetName: item.uiTargetName || item.name,
+    reasoning: item.reasoning || "Detected visual user action in recording frame.",
+    screenshotUrl: videoFrames[idx % videoFrames.length] || undefined,
+  }));
 }
 
 /**
@@ -55,14 +84,13 @@ export const handleBreakdownVideoSteps: RequestHandler = async (req, res) => {
     // If frames and mouse events provided, we use Gemini or visual-spatial perception analysis
     let analyzedSteps: ExtractedVideoStep[] = [];
 
-    if (process.env.GEMINI_API_KEY && videoFrames.length > 0) {
-      try {
-        const sampleFrame = videoFrames[0];
-        const mouseSummary = Array.isArray(mouseEvents) && mouseEvents.length > 0
-          ? `Recorded Mouse Events:\n${JSON.stringify(mouseEvents.slice(0, 15), null, 2)}`
-          : "No discrete mouse event payload provided.";
+    if (videoFrames.length > 0) {
+      const sampleFrame = videoFrames[0];
+      const mouseSummary = Array.isArray(mouseEvents) && mouseEvents.length > 0
+        ? `Recorded Mouse Events:\n${JSON.stringify(mouseEvents.slice(0, 15), null, 2)}`
+        : "No discrete mouse event payload provided.";
 
-        const prompt = `You are an expert robotic process automation (RPA) and computer vision engineer.
+      const prompt = `You are an expert robotic process automation (RPA) and computer vision engineer.
 Analyze these UI video recording frames and tracked mouse movement data to break down the exact sequence of actions performed by the user.
 Goal: "${workflowGoal}".
 ${mouseSummary}
@@ -88,47 +116,44 @@ Respond strictly in valid JSON format matching this array:
   }
 ]`;
 
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: [
-            prompt,
-            sampleFrame.startsWith("data:")
-              ? {
-                  inlineData: {
-                    mimeType: "image/jpeg",
-                    data: sampleFrame.split(",")[1],
-                  },
-                }
-              : { text: "UI Screen Recording Analysis" },
-          ],
-          config: {
-            responseMimeType: "application/json",
-          },
-        });
+      const ai = getGenAI();
+      if (ai) {
+        try {
+          const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: [
+              prompt,
+              sampleFrame.startsWith("data:")
+                ? {
+                    inlineData: {
+                      mimeType: "image/jpeg",
+                      data: sampleFrame.split(",")[1],
+                    },
+                  }
+                : { text: "UI Screen Recording Analysis" },
+            ],
+            config: {
+              responseMimeType: "application/json",
+            },
+          });
 
-        const rawText = response.text || "[]";
-        const parsed = JSON.parse(rawText);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          analyzedSteps = parsed.map((item, idx) => ({
-            id: `video_step_${Date.now()}_${idx + 1}`,
-            stepNumber: idx + 1,
-            name: item.name || `Step #${idx + 1}`,
-            action: item.action || "click",
-            x: Number(item.x) || 960,
-            y: Number(item.y) || 540,
-            toX: item.toX ? Number(item.toX) : undefined,
-            toY: item.toY ? Number(item.toY) : undefined,
-            text: item.text || "",
-            keyPayload: item.keyPayload || "",
-            delayMs: Number(item.delayMs) || 450,
-            confidence: 0.96,
-            uiTargetName: item.uiTargetName || item.name,
-            reasoning: item.reasoning || "Detected visual user action in recording frame.",
-            screenshotUrl: videoFrames[idx % videoFrames.length] || undefined,
-          }));
+          const rawText = response.text || "[]";
+          analyzedSteps = buildAnalyzedSteps(JSON.parse(rawText), videoFrames);
+        } catch (geminiErr: any) {
+          console.warn("Gemini breakdown error, falling back to algorithmic vision decomposition:", geminiErr.message);
         }
-      } catch (geminiErr: any) {
-        console.warn("Gemini breakdown error, falling back to algorithmic vision decomposition:", geminiErr.message);
+      } else {
+        try {
+          const message = sampleFrame.startsWith("data:")
+            ? buildVisionMessage(prompt, sampleFrame)
+            : { role: "user" as const, content: prompt };
+          const qwenResult = await sendQwenChatRequest([message], { format: "json" });
+          if (qwenResult.success) {
+            analyzedSteps = buildAnalyzedSteps(parseModelJson(qwenResult.content), videoFrames);
+          }
+        } catch (qwenErr: any) {
+          console.warn("Qwen breakdown error, falling back to algorithmic vision decomposition:", qwenErr.message);
+        }
       }
     }
 
