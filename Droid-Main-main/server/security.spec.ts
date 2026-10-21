@@ -35,6 +35,19 @@ describe("production security boundaries", () => {
     expect(result.status).toBe(401);
   });
 
+  it("lets the public health/demo paths through without a key", () => {
+    process.env.NODE_ENV = "production";
+    process.env.ASSISTANT_API_KEY = "test-secret";
+    for (const path of ["/ping", "/health", "/demo"]) {
+      let passed = false;
+      const result = response();
+      requireApiAccess({ ...(request() as object), path } as never, result.res, () => {
+        passed = true;
+      });
+      expect(passed).toBe(true);
+    }
+  });
+
   it("validates ADB endpoints", () => {
     expect(validateAdbEndpoint("192.168.1.20", 5555)).toBe("192.168.1.20:5555");
     expect(() => validateAdbEndpoint("not-an-ip", 5555)).toThrow();

@@ -147,48 +147,9 @@ export const AICanvasScreenManager: React.FC<AICanvasScreenManagerProps> = ({
         throw new Error(data.error || "Detection returned incomplete results");
       }
     } catch (err) {
-      // Heuristic fallback
-      const fallback: DetectedCanvasElement[] = [
-        {
-          id: `elem_1`,
-          name: "Primary Action Button",
-          type: "button",
-          x: 960,
-          y: 650,
-          width: 140,
-          height: 42,
-          suggestedAction: "click",
-          confidence: 0.94,
-          description: "Primary confirmation target",
-        },
-        {
-          id: `elem_2`,
-          name: "Search Input Field",
-          type: "input",
-          x: 960,
-          y: 220,
-          width: 320,
-          height: 40,
-          suggestedAction: "clear_and_type",
-          suggestedTextPayload: "search query",
-          confidence: 0.91,
-          description: "Text entry input field",
-        },
-        {
-          id: `elem_3`,
-          name: "Navigation Header Tab",
-          type: "tab",
-          x: 480,
-          y: 160,
-          width: 110,
-          height: 36,
-          suggestedAction: "click",
-          confidence: 0.88,
-          description: "Top navigation link",
-        },
-      ];
-      setDetectedElements(fallback);
-      setDetectionSummary("Fallback heuristic detected 3 standard interactive targets.");
+      const reason = err instanceof Error ? err.message : String(err);
+      setDetectedElements([]);
+      setDetectionSummary(`Element detection failed: ${reason}`);
     } finally {
       setIsDetecting(false);
     }

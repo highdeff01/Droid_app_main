@@ -27,6 +27,20 @@ export async function safeFetchJson<T = any>(
   }
 }
 
+/**
+ * Parses a response body as JSON; a non-JSON body is a failure, never a success.
+ * Throws with the HTTP status and the start of the body so callers can surface it.
+ */
+export async function readJsonResponse<T = any>(res: Response): Promise<SafeApiResponse<T>> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as SafeApiResponse<T>;
+  } catch {
+    const snippet = text.trim().slice(0, 120) || "empty body";
+    throw new Error(`HTTP ${res.status}: expected JSON but received ${snippet}`);
+  }
+}
+
 export async function safePostJson<T = any>(
   url: string,
   body: any = {},

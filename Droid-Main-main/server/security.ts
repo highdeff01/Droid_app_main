@@ -22,9 +22,15 @@ function hasValidApiKey(req: Request, expected: string): boolean {
   return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
 }
 
+/** Public routes, relative to the /api mount: health, ping and the demo route. */
+const PUBLIC_API_PATHS = new Set(["/ping", "/demo", "/health"]);
+/** Routers that enforce their own scoped credentials (phone QR pairing tokens + admin key). */
+const SELF_AUTHENTICATED_PREFIXES = ["/phone/"];
+
 export const requireApiAccess: RequestHandler = (req, res, next) => {
   const reqPath = req.path || req.url || "";
-  if (reqPath === "/ping" || reqPath === "/demo" || reqPath === "/health") return next();
+  if (PUBLIC_API_PATHS.has(reqPath)) return next();
+  if (SELF_AUTHENTICATED_PREFIXES.some((prefix) => reqPath.startsWith(prefix))) return next();
   const expected = configuredApiKey();
   if (expected) {
     if (isLoopback(req) || hasValidApiKey(req, expected)) return next();
@@ -40,25 +46,15 @@ export const requireApiAccess: RequestHandler = (req, res, next) => {
   return next();
 };
 
+/** CORS is an explicit allowlist from CORS_ORIGINS; empty (the default) enables no cross-origin access. */
 export function createCorsMiddleware(): RequestHandler {
   const configuredOrigins = (process.env.CORS_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  if (configuredOrigins.length > 0) {
-    return cors({
-      origin: (origin, callback) => {
-        if (!origin || configuredOrigins.includes(origin))
-          return callback(null, true);
-        return callback(null, true);
-      },
-      credentials: true,
-    });
-  }
-
   return cors({
-    origin: true,
+    origin: configuredOrigins.length > 0 ? configuredOrigins : false,
     credentials: true,
   });
 }
@@ -70,8 +66,8 @@ export function createApiRateLimiter(
   const requests = new Map<string, { count: number; resetAt: number }>();
 
   return (req: Request, res: Response, next: NextFunction) => {
-    // Whitelist high-frequency streaming and polling routes
-    const reqPath = req.path || req.url || "";
+    // Whitelist high-frequency streaming and polling routes (full path, independent of mount point)
+    const reqPath = req.originalUrl || req.path || req.url || "";
     if (
       reqPath.startsWith("/api/mobile-stream") ||
       reqPath.startsWith("/api/screen") ||
