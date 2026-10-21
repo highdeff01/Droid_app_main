@@ -96,7 +96,7 @@ function buildSynthesizedWorkflow(parsed: any): LearnedWorkflow | null {
     id: `lw_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     name: parsed.name,
     description: parsed.description || "Autonomously learned from recent user trace history",
-    confidenceScore: parsed.confidenceScore || 0.91,
+    confidenceScore: parsed.confidenceScore ?? 0.91,
     triggerCondition: parsed.triggerCondition || "Manual or contextual auto-trigger",
     patternType: parsed.patternType || "custom",
     steps: parsed.steps.map((s: any, idx: number) => ({

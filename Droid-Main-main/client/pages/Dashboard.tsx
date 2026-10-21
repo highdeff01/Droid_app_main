@@ -1376,16 +1376,6 @@ export default function Dashboard({
                       return;
                     }
                     try {
-                      const safeFetchJson = async (url: string, options?: RequestInit) => {
-                        try {
-                          const res = await fetch(url, options);
-                          const text = await res.text();
-                          return JSON.parse(text);
-                        } catch {
-                          return { success: true, simulated: true, devices: ["192.168.1.50:5555 (WiFi Phone)"] };
-                        }
-                      };
-
                       let devId = selectedAdbDevice || adbDevices[0];
                       // Check for real mobile stream first
                       const mobileCheck = await safeFetchJson("/api/mobile-stream/frame");
@@ -1458,8 +1448,11 @@ export default function Dashboard({
                         );
                       } else {
                         // If no phone stream or physical ADB is active yet, trigger browser screen share or prompt
+                        if (capData.error) toast.error(`Phone capture failed: ${capData.error}`);
                         window.dispatchEvent(new CustomEvent("trigger-hud-share"));
-                        setWifiStatus("Scan QR code below with phone to beam screen, or select phone window in screen share");
+                        setWifiStatus(
+                          `${capData.error ? `Phone capture failed: ${capData.error}. ` : ""}Scan QR code below with phone to beam screen, or select phone window in screen share`,
+                        );
                       }
                     } catch (e) {
                       setWifiStatus("Mobile stream: " + String(e));

@@ -272,11 +272,11 @@ export async function resolveStuckState(params: {
       isStuck: true,
       reason: "Execution time limit or element timeout reached.",
       obstacleType: "unresponsive",
+      // No capture means no visual evidence: never recommend a positional action blindly.
       recommendedActions: [
         { action: "wait", delayMs: 1000, reason: "Allow UI to stabilize" },
-        { action: "click", x: 960, y: 540, reason: "Focus window" },
       ],
-      aiExplanation: "Standard recovery heuristic applied.",
+      aiExplanation: "No screen capture available; only a non-positional wait is recommended until a fresh capture can be analyzed.",
     };
   }
 

@@ -58,6 +58,83 @@ function healClickStep(step: any, idx: number, origX: number, origY: number, con
   };
 }
 
+interface ReplanPromptInput {
+  targetGoal: string;
+  steps: any[];
+  failedStepId?: string;
+  consecutiveDriftCount: number;
+  currentDriftDistancePx: number;
+  driftThreshold: number;
+}
+
+function buildReplanPrompt(input: ReplanPromptInput): string {
+  const { targetGoal, steps, failedStepId, consecutiveDriftCount, currentDriftDistancePx, driftThreshold } = input;
+  return `You are an expert AI Robotic Process Automation (RPA) Goal Re-Planner.
+A workflow automation step sequence has encountered continuous coordinate drift (${currentDriftDistancePx}px > ${driftThreshold}px threshold) or step failure.
+Workflow Goal: "${targetGoal}"
+Workflow Steps: ${JSON.stringify(steps.map((s: any) => ({ name: s.name, action: s.action, x: s.x, y: s.y, delayMs: s.delayMs })))}
+Failed Step ID: ${failedStepId || "Step with highest drift"}
+Consecutive Drifts: ${consecutiveDriftCount}
+
+Analyze the live screen and propose an optimal healed step sequence. Return concise recommendations in JSON:
+{
+  "summary": "Brief explanation of drift cause and re-planning fix",
+  "confidence": 0.95,
+  "mitigations": ["Strategy 1", "Strategy 2"],
+  "suggestedStepAdjustments": [
+    { "index": 0, "action": "click", "deltaX": 15, "deltaY": -8, "addedDelayMs": 200, "reason": "Adjusted to newly positioned button centroid" }
+  ]
+}`;
+}
+
+/** A model's re-plan analysis text plus the model's own confidence figure. */
+interface ReplanInsight {
+  analysis: string;
+  confidence: number | null;
+}
+
+/** Gemini vision analysis; returns null when unconfigured, failed, or empty. */
+async function requestGeminiAnalysis(prompt: string, screenshotUrl: string): Promise<ReplanInsight | null> {
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  if (!geminiApiKey || geminiApiKey.length <= 5) return null;
+  try {
+    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+    const base64Data = screenshotUrl.split(",")[1] || screenshotUrl;
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Data } }],
+        },
+      ],
+    });
+    const text = response.text;
+    return text ? { analysis: text, confidence: readModelConfidence(text) } : null;
+  } catch (aiErr) {
+    console.warn("[GoalReplan] Gemini vision call failed, falling back to Qwen:", aiErr);
+    return null;
+  }
+}
+
+/** Qwen/Ollama vision analysis; returns null on failure. */
+async function requestQwenAnalysis(prompt: string, screenshotUrl: string): Promise<ReplanInsight | null> {
+  try {
+    const qwenResult = await sendQwenChatRequest([buildVisionMessage(prompt, screenshotUrl)], { format: "json" });
+    if (!qwenResult.success) return null;
+    const parsed = parseModelJson<{ summary?: string }>(qwenResult.content);
+    return { analysis: parsed.summary || qwenResult.content, confidence: readModelConfidence(qwenResult.content) };
+  } catch (qwenErr) {
+    console.warn("[GoalReplan] Qwen vision call skipped/failed:", qwenErr);
+    return null;
+  }
+}
+
+/** Gemini first when configured; any Gemini failure falls through to Qwen. */
+async function requestReplanInsights(prompt: string, screenshotUrl: string): Promise<ReplanInsight | null> {
+  return (await requestGeminiAnalysis(prompt, screenshotUrl)) ?? (await requestQwenAnalysis(prompt, screenshotUrl));
+}
+
 export async function handleGoalReplan(req: Request, res: Response) {
   try {
     const {
@@ -74,84 +151,15 @@ export async function handleGoalReplan(req: Request, res: Response) {
 
     const steps = Array.isArray(currentSteps) ? currentSteps : [];
 
-    // Check if Gemini API key exists
-    let geminiApiKey = process.env.GEMINI_API_KEY;
-    let geminiAnalysis: string | null = null;
-    let modelConfidence: number | null = null;
-
-    if (geminiApiKey && geminiApiKey.length > 5 && screenshotUrl && screenshotUrl.startsWith("data:image")) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-        const base64Data = screenshotUrl.split(",")[1] || screenshotUrl;
-        const prompt = `You are an expert AI Robotic Process Automation (RPA) Goal Re-Planner.
-A workflow automation step sequence has encountered continuous coordinate drift (${currentDriftDistancePx}px > ${driftThreshold}px threshold) or step failure.
-Workflow Goal: "${targetGoal}"
-Workflow Steps: ${JSON.stringify(steps.map((s: any) => ({ name: s.name, action: s.action, x: s.x, y: s.y, delayMs: s.delayMs })))}
-Failed Step ID: ${failedStepId || "Step with highest drift"}
-Consecutive Drifts: ${consecutiveDriftCount}
-
-Analyze the live screen and propose an optimal healed step sequence. Return concise recommendations in JSON:
-{
-  "summary": "Brief explanation of drift cause and re-planning fix",
-  "confidence": 0.95,
-  "mitigations": ["Strategy 1", "Strategy 2"],
-  "suggestedStepAdjustments": [
-    { "index": 0, "action": "click", "deltaX": 15, "deltaY": -8, "addedDelayMs": 200, "reason": "Adjusted to newly positioned button centroid" }
-  ]
-}`;
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    mimeType: "image/jpeg",
-                    data: base64Data,
-                  },
-                },
-              ],
-            },
-          ],
-        });
-        geminiAnalysis = response.text || null;
-        modelConfidence = readModelConfidence(geminiAnalysis);
-      } catch (aiErr) {
-        console.warn("[GoalReplan] Gemini vision call skipped/failed:", aiErr);
-      }
-    } else if (screenshotUrl && screenshotUrl.startsWith("data:image")) {
-      const prompt = `You are an expert AI Robotic Process Automation (RPA) Goal Re-Planner.
-A workflow automation step sequence has encountered continuous coordinate drift (${currentDriftDistancePx}px > ${driftThreshold}px threshold) or step failure.
-Workflow Goal: "${targetGoal}"
-Workflow Steps: ${JSON.stringify(steps.map((s: any) => ({ name: s.name, action: s.action, x: s.x, y: s.y, delayMs: s.delayMs })))}
-Failed Step ID: ${failedStepId || "Step with highest drift"}
-Consecutive Drifts: ${consecutiveDriftCount}
-
-Analyze the live screen and propose an optimal healed step sequence. Return concise recommendations in JSON:
-{
-  "summary": "Brief explanation of drift cause and re-planning fix",
-  "confidence": 0.95,
-  "mitigations": ["Strategy 1", "Strategy 2"],
-  "suggestedStepAdjustments": [
-    { "index": 0, "action": "click", "deltaX": 15, "deltaY": -8, "addedDelayMs": 200, "reason": "Adjusted to newly positioned button centroid" }
-  ]
-}`;
-      try {
-        const qwenResult = await sendQwenChatRequest(
-          [buildVisionMessage(prompt, screenshotUrl)],
-          { format: "json" },
-        );
-        if (qwenResult.success) {
-          const parsed = parseModelJson<{ summary?: string }>(qwenResult.content);
-          geminiAnalysis = parsed.summary || qwenResult.content;
-          modelConfidence = readModelConfidence(qwenResult.content);
-        }
-      } catch (qwenErr) {
-        console.warn("[GoalReplan] Qwen vision call skipped/failed:", qwenErr);
-      }
-    }
+    const insight =
+      typeof screenshotUrl === "string" && screenshotUrl.startsWith("data:image")
+        ? await requestReplanInsights(
+            buildReplanPrompt({ targetGoal, steps, failedStepId, consecutiveDriftCount, currentDriftDistancePx, driftThreshold }),
+            screenshotUrl,
+          )
+        : null;
+    const geminiAnalysis = insight?.analysis ?? null;
+    const modelConfidence = insight?.confidence ?? null;
 
     // Heuristic & rule-based adaptive re-planner engine
     const suggestedSteps: ReplanStepItem[] = [];
