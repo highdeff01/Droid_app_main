@@ -193,5 +193,18 @@
     },
     "events": [],
     "stoppedAt": "2026-10-21T23:16:00.915Z"
+  },
+  {
+    "id": "recording_1792624953101_w9gpm3f",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T23:22:33.101Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T23:22:33.102Z"
   }
 ]

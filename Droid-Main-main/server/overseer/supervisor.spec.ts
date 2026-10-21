@@ -65,9 +65,12 @@ describe("OverseerSupervisor interventions", () => {
   it("retries a missed step twice, then proposes a replan for approval", async () => {
     const { supervisor, analyzer } = setup();
     analyzer.assessStep.mockResolvedValue(answer({ status: "missed" }));
-    supervisor.register({ id: "op", kind: "replay", source: "t", goal: "save", caps: { maxRepeats: null } });
+    const retry = vi.fn();
+    supervisor.register({ id: "op", kind: "replay", source: "t", goal: "save", caps: { maxRepeats: null } }, { retry });
     await supervisor.reportStep("op", step());
     expect(supervisor.get("op")!.directive).toBe("retry");
+    expect(retry).toHaveBeenCalledTimes(1);
+    await supervisor.reportStep("op", step());
     await supervisor.reportStep("op", step());
     await supervisor.reportStep("op", step());
     const kinds = supervisor.snapshot().interventions.map((i) => [i.kind, i.status]).reverse();
@@ -76,7 +79,41 @@ describe("OverseerSupervisor interventions", () => {
       ["retry", "applied"],
       ["replan", "pending_approval"],
     ]);
+    expect(retry).toHaveBeenCalledTimes(2);
     expect(supervisor.get("op")!.status).toBe("running");
+  });
+
+  it("pauses for the user when the executor cannot retry on request", async () => {
+    const { supervisor, analyzer } = setup();
+    analyzer.assessStep.mockResolvedValue(answer({ status: "missed" }));
+    const pause = vi.fn();
+    supervisor.register({ id: "op", kind: "assistant_execution", source: "t", goal: "save" }, { pause });
+    await supervisor.reportStep("op", step());
+    expect(supervisor.snapshot().interventions[0]).toMatchObject({ kind: "pause", status: "applied" });
+    expect(supervisor.get("op")!.status).toBe("paused");
+    expect(pause).toHaveBeenCalled();
+  });
+
+  it("an approved replan pauses the run for the user to re-plan", async () => {
+    const { supervisor } = setup();
+    const pause = vi.fn();
+    supervisor.register({ id: "op", kind: "goal_run", source: "t", goal: "save" }, { pause });
+    const replan = supervisor.propose("op", "replan", "drift", "new plan");
+    supervisor.decide(replan.id, true);
+    expect(supervisor.get("op")).toMatchObject({ status: "paused", directive: "replan" });
+    expect(pause).toHaveBeenCalled();
+  });
+
+  it("never revives a finished operation", () => {
+    const { supervisor } = setup();
+    supervisor.register({ id: "op", kind: "replay", source: "t", goal: "save" });
+    const queue = supervisor.propose("op", "queue", "busy");
+    supervisor.finish("op", "completed");
+    expect(() => supervisor.pauseOperation("op", "x")).toThrow(/already completed/);
+    expect(() => supervisor.resumeOperation("op")).toThrow(/already completed/);
+    expect(() => supervisor.propose("op", "replan", "x")).toThrow(/already completed/);
+    expect(supervisor.decide(queue.id, true).status).toBe("approved");
+    expect(supervisor.get("op")!.status).toBe("completed");
   });
 
   it("pauses an obstructed operation through its control", async () => {

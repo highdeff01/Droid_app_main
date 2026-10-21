@@ -19,6 +19,7 @@ import {
   decideIntervention,
   interventionForCheckup,
   interventionForVerdict,
+  requiresApproval,
   type InterventionPlan,
 } from "./interventions";
 import { measureFrameDrift, type OverseerAnalyzer } from "./analyzer";
@@ -53,10 +54,15 @@ const EFFECTS: Record<InterventionKind, Effect> = {
     op.status = "paused";
     control?.pause?.();
   },
-  retry: (op) => {
+  retry: (op, control) => {
     op.retriesUsed += 1;
+    control?.retry?.();
   },
-  replan: () => undefined,
+  replan: (op, control) => {
+    // The executor has no replanner the overseer can drive; an approved replan stops the run for the user to re-plan it.
+    op.status = "paused";
+    control?.pause?.();
+  },
   queue: (op, control) => {
     op.status = "queued";
     control?.pause?.();
@@ -147,11 +153,11 @@ export class OverseerSupervisor {
 
   /** User or overseer pause; applied immediately. */
   pauseOperation(operationId: string, reason: string): OverseerIntervention {
-    return this.intervene(this.require(operationId), { kind: "pause", reason });
+    return this.intervene(this.requireActive(operationId), { kind: "pause", reason });
   }
 
   resumeOperation(operationId: string): SupervisedOperation {
-    const op = this.require(operationId);
+    const op = this.requireActive(operationId);
     if (op.status !== "paused" && op.status !== "queued") throw new Error(`Operation is ${op.status}`);
     op.status = "running";
     op.directive = "continue";
@@ -163,7 +169,7 @@ export class OverseerSupervisor {
 
   /** User asks the overseer to queue or deprioritize an operation; both need approval. */
   propose(operationId: string, kind: "queue" | "deprioritize" | "replan", reason: string, proposal?: string) {
-    return this.intervene(this.require(operationId), { kind, reason }, proposal);
+    return this.intervene(this.requireActive(operationId), { kind, reason }, proposal);
   }
 
   decide(interventionId: string, approved: boolean): OverseerIntervention {
@@ -172,7 +178,8 @@ export class OverseerSupervisor {
     const decided = decideIntervention(this.interventions[index], approved, this.now());
     this.interventions[index] = decided;
     const op = this.operations.get(decided.operationId);
-    if (approved && op) this.applyEffect(op, decided.kind);
+    // A run that already ended keeps its recorded status; approving a stale proposal changes nothing.
+    if (approved && op && !op.finishedAt) this.applyEffect(op, decided.kind);
     this.deps.audit(approved ? "INFO" : "WARN", `User ${decided.status} ${decided.kind}: ${decided.reason}`, {
       operationId: decided.operationId,
       interventionId,
@@ -268,6 +275,13 @@ export class OverseerSupervisor {
     return op;
   }
 
+  /** An operation that has not finished; a finished run cannot be paused, resumed or re-planned. */
+  private requireActive(operationId: string): SupervisedOperation {
+    const op = this.require(operationId);
+    if (op.finishedAt) throw new Error(`Operation already ${op.status}`);
+    return op;
+  }
+
   private running(): SupervisedOperation[] {
     return [...this.operations.values()].filter((op) => op.status === "running");
   }
@@ -334,7 +348,16 @@ export class OverseerSupervisor {
   }
 
   private applyPlan(op: SupervisedOperation, plan: InterventionPlan | null) {
-    if (plan) this.intervene(op, plan);
+    if (!plan) return;
+    // One open proposal per kind: repeated misses never stack identical replan requests.
+    if (requiresApproval(plan.kind) && this.hasPending(op.id, plan.kind)) return;
+    this.intervene(op, this.executablePlan(op, plan));
+  }
+
+  /** A retry only an executor with a retry hook can perform; any other executor is paused for the user instead. */
+  private executablePlan(op: SupervisedOperation, plan: InterventionPlan): InterventionPlan {
+    if (plan.kind !== "retry" || this.controls.get(op.id)?.retry) return plan;
+    return { kind: "pause", reason: `${plan.reason} This executor cannot retry on request; paused for you to retry or resume.` };
   }
 
   private intervene(op: SupervisedOperation, plan: InterventionPlan, proposal?: string): OverseerIntervention {

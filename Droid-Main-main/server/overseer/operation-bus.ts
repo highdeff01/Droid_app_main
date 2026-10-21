@@ -9,6 +9,8 @@ export interface OperationControl {
   pause?: () => void;
   resume?: () => void;
   cancel?: () => void;
+  /** Re-runs the operation's last step through the executor's own gated path. */
+  retry?: () => void;
   /** Fresh capture of the device this operation drives (data URL); null when none is available. */
   capture?: () => Promise<string | null>;
 }
