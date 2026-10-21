@@ -715,6 +715,7 @@ export function UniversalDeviceBridgeHub({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
+      if (!res.ok) throw new Error(`mobile-stream action returned HTTP ${res.status}`);
 
       // 2. If key action (HOME, BACK, etc.), also send ADB key event if device connected
       if (action.type === "key" && action.key) {
@@ -750,9 +751,9 @@ export function UniversalDeviceBridgeHub({
           .catch(() => {});
       }
     } catch (e) {
-      // Optimistic simulated completion if transient network blip
-      setRecentActionBadge(`Executed (Simulated): ${desc}`);
-      toast.success(`Action queued: ${desc}`);
+      const reason = e instanceof Error ? e.message : String(e);
+      setRecentActionBadge(`Failed: ${desc}`);
+      toast.error(`Action failed to reach ${mobileDeviceName}: ${reason}`);
       setTimeout(() => setRecentActionBadge(null), 2500);
     }
   };

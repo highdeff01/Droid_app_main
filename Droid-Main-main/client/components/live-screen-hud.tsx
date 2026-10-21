@@ -102,6 +102,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
+import { readJsonResponse } from "@/lib/api-helper";
 import {
   frameBoxAsPercent,
   frameBoxContains,
@@ -5577,14 +5578,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
               },
             }),
           })
-            .then(async (r) => {
-              try {
-                const text = await r.text();
-                return JSON.parse(text);
-              } catch {
-                return { success: r.ok, simulated: true };
-              }
-            })
+            .then((r) => readJsonResponse(r))
             .then((d) => {
               if (d.success) {
                 toast.success(`Executed "${step.name}" on PC!`);
@@ -5654,14 +5648,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 },
               }),
             })
-              .then(async (r) => {
-                try {
-                  const text = await r.text();
-                  return JSON.parse(text);
-                } catch {
-                  return { success: r.ok, simulated: true };
-                }
-              })
+              .then((r) => readJsonResponse(r))
               .then((d) => {
                 setIsExecutingTrailOnPC(false);
                 if (d.success) {
