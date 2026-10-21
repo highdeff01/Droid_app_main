@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -24,16 +25,35 @@ import {
   Settings,
   ListChecks,
 } from "lucide-react";
+import type { SequenceStep } from "@/components/live-screen-hud";
+import type { AIReviewResult } from "@/components/ai-workflow-review-modal";
+import {
+  TERMINAL_REPLAY_STATUSES,
+  captureScreenFrame,
+  fetchReplay,
+  generateAutomationSteps,
+  reviewAutomationSteps,
+  startReplay,
+  stopAutomationRun,
+  type ReplayRunSnapshot,
+} from "@/lib/automation-runner";
+
+const REPLAY_POLL_MS = 1000;
 
 interface Task {
   id: string;
   title: string;
   description: string;
   status: "pending" | "in-progress" | "completed" | "failed";
-  steps: string[];
+  steps: SequenceStep[];
+  review: AIReviewResult | null;
+  reviewError: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 export default function AutomationPage() {
   const navigate = useNavigate();
@@ -41,109 +61,168 @@ export default function AutomationPage() {
   const [objective, setObjective] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [agentNotes, setAgentNotes] = useState("");
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const runAbortRef = useRef<AbortController | null>(null);
+  const generateAbortRef = useRef<AbortController | null>(null);
+  const replayIdRef = useRef<string | null>(null);
+  const lastLoggedStepRef = useRef(-1);
+
+  const activeTask = tasks.find((t) => t.id === activeTaskId) ?? null;
+
+  const addLog = (message: string) => setLogs((prev) => [...prev, message]);
+
+  const updateTask = (id: string, patch: Partial<Task>) =>
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: new Date() } : t)),
+    );
+
+  const clearRunTimers = () => {
+    clearTimeout(pollTimerRef.current);
+    runAbortRef.current?.abort();
+    runAbortRef.current = null;
+  };
+
+  useEffect(
+    () => () => {
+      clearRunTimers();
+      generateAbortRef.current?.abort();
+      if (replayIdRef.current) void stopAutomationRun(replayIdRef.current);
+    },
+    [],
+  );
+
+  const reviewTask = async (task: Task, screenshot: string, signal: AbortSignal) => {
+    addLog("Requesting AI review of generated steps...");
+    try {
+      const review = await reviewAutomationSteps(task.steps, screenshot, task.title, signal);
+      updateTask(task.id, { review, reviewError: null });
+      addLog(`AI review: ${review.overallScore}% (${review.overallStatus}) — ${review.summary}`);
+    } catch (error) {
+      if (signal.aborted) return;
+      updateTask(task.id, { reviewError: errorMessage(error) });
+      addLog(`AI review failed: ${errorMessage(error)}`);
+      toast.error(`AI review failed: ${errorMessage(error)}`);
+    }
+  };
 
   const generateTasks = async () => {
-    if (!objective.trim()) return;
-
+    const goal = objective.trim();
+    if (!goal) return;
+    const controller = new AbortController();
+    generateAbortRef.current = controller;
     setIsGenerating(true);
-    setLogs((prev) => [...prev, "Analyzing objective and generating tasks..."]);
-
+    addLog("Capturing screen and asking the AI planner for steps...");
     try {
-      // Simulate API call to generate tasks
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      const generatedTasks: Task[] = [
-        {
-          id: "1",
-          title: "Initial Setup",
-          description: "Configure initial game settings and environment",
-          status: "pending",
-          steps: [
-            "Check game resolution",
-            "Set graphics settings to optimal",
-            "Verify controller/keyboard mapping",
-          ],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        {
-          id: "2",
-          title: "Complete Tutorial",
-          description: "Finish the in-game tutorial",
-          status: "pending",
-          steps: [
-            "Follow tutorial prompts",
-            "Learn basic controls",
-            "Complete tutorial quests",
-          ],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ];
-
-      setTasks(generatedTasks);
-      setActiveTask(generatedTasks[0]);
-      setLogs((prev) => [...prev, "Tasks generated successfully!"]);
+      const screenshot = await captureScreenFrame(controller.signal);
+      const steps = await generateAutomationSteps(goal, screenshot, controller.signal);
+      const task: Task = {
+        id: crypto.randomUUID(),
+        title: goal,
+        description: `${steps.length} AI-generated step(s)`,
+        status: "pending",
+        steps,
+        review: null,
+        reviewError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      setTasks((prev) => [...prev, task]);
+      setActiveTaskId(task.id);
+      setObjective("");
+      addLog(`Generated ${steps.length} step(s) for "${goal}"`);
+      await reviewTask(task, screenshot, controller.signal);
     } catch (error) {
-      console.error("Error generating tasks:", error);
-      setLogs((prev) => [...prev, "Error generating tasks. Please try again."]);
+      if (controller.signal.aborted) return;
+      addLog(`Error generating tasks: ${errorMessage(error)}`);
+      toast.error(`Task generation failed: ${errorMessage(error)}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const startAutomation = () => {
-    if (!activeTask) return;
-
-    setIsRunning(true);
-    setLogs((prev) => [...prev, `Starting task: ${activeTask.title}`]);
-
-    // Simulate task execution
-    const interval = setInterval(() => {
-      setLogs((prev) => [...prev, `Executing step: ${activeTask.steps[0]}`]);
-      // Simulate step completion
-      setTimeout(() => {
-        setLogs((prev) => [...prev, `Completed step: ${activeTask.steps[0]}`]);
-
-        // Move to next task if all steps are done
-        if (activeTask.steps.length > 1) {
-          setActiveTask((prev) => ({
-            ...prev!,
-            steps: prev!.steps.slice(1),
-            status: "in-progress",
-          }));
-        } else {
-          // Task completed
-          setTasks((prev) =>
-            prev.map((task) =>
-              task.id === activeTask.id
-                ? { ...task, status: "completed", updatedAt: new Date() }
-                : task,
-            ),
-          );
-
-          // Move to next task
-          const currentIndex = tasks.findIndex((t) => t.id === activeTask.id);
-          if (currentIndex < tasks.length - 1) {
-            setActiveTask(tasks[currentIndex + 1]);
-          } else {
-            setLogs((prev) => [...prev, "All tasks completed!"]);
-            setIsRunning(false);
-          }
-        }
-      }, 2000);
-
-      clearInterval(interval);
-    }, 5000);
+  const finishRun = (taskId: string, status: "completed" | "failed", detail?: string) => {
+    clearRunTimers();
+    replayIdRef.current = null;
+    setIsRunning(false);
+    updateTask(taskId, { status });
+    addLog(status === "completed" ? "Task completed" : `Task failed: ${detail || "replay stopped"}`);
   };
 
-  const stopAutomation = () => {
+  const applyRun = (taskId: string, steps: SequenceStep[], run: ReplayRunSnapshot) => {
+    updateTask(taskId, {
+      steps: steps.map((step) => ({
+        ...step,
+        status: (run.steps.find((s) => s.id === step.id)?.status as SequenceStep["status"]) || step.status,
+      })),
+    });
+    if (run.currentStep !== lastLoggedStepRef.current && steps[run.currentStep]) {
+      lastLoggedStepRef.current = run.currentStep;
+      addLog(`Executing step ${run.currentStep + 1}: ${steps[run.currentStep].name}`);
+    }
+  };
+
+  const pollReplay = (taskId: string, steps: SequenceStep[], replayId: string, signal: AbortSignal) => {
+    pollTimerRef.current = setTimeout(async () => {
+      let run: ReplayRunSnapshot;
+      try {
+        run = await fetchReplay(replayId, signal);
+      } catch (error) {
+        if (!signal.aborted) finishRun(taskId, "failed", `Monitor disconnected: ${errorMessage(error)}`);
+        return;
+      }
+      if (signal.aborted) return;
+      applyRun(taskId, steps, run);
+      if (!TERMINAL_REPLAY_STATUSES.includes(run.status)) {
+        pollReplay(taskId, steps, replayId, signal);
+        return;
+      }
+      finishRun(taskId, run.status === "completed" ? "completed" : "failed", run.error || run.status);
+    }, REPLAY_POLL_MS);
+  };
+
+  const startAutomation = async () => {
+    if (!activeTask || isRunning) return;
+    if (!activeTask.review) {
+      toast.error("This task has no successful AI review; generate it again before running.");
+      return;
+    }
+    const task = activeTask;
+    clearRunTimers();
+    const controller = new AbortController();
+    runAbortRef.current = controller;
+    lastLoggedStepRef.current = -1;
+    setIsRunning(true);
+    updateTask(task.id, { status: "in-progress" });
+    addLog(`Starting task: ${task.title}`);
+    try {
+      const run = await startReplay(task.steps, controller.signal);
+      if (controller.signal.aborted) {
+        void stopAutomationRun(run.id);
+        return;
+      }
+      replayIdRef.current = run.id;
+      addLog(`Replay ${run.id} started`);
+      applyRun(task.id, task.steps, run);
+      pollReplay(task.id, task.steps, run.id, controller.signal);
+    } catch (error) {
+      if (!controller.signal.aborted) finishRun(task.id, "failed", errorMessage(error));
+    }
+  };
+
+  const stopAutomation = async () => {
+    const replayId = replayIdRef.current;
+    clearRunTimers();
+    replayIdRef.current = null;
     setIsRunning(false);
-    setLogs((prev) => [...prev, "Automation stopped by user"]);
+    if (activeTaskId) updateTask(activeTaskId, { status: "failed" });
+    addLog("Automation stopped by user");
+    const failures = await stopAutomationRun(replayId);
+    failures.forEach((failure) => addLog(`Stop request failed: ${failure}`));
+    if (failures.length) toast.error(`Stop may be incomplete: ${failures.join("; ")}`);
   };
 
   const addNote = () => {
@@ -192,13 +271,11 @@ export default function AutomationPage() {
                   placeholder="Enter your automation objective..."
                   value={objective}
                   onChange={(e) => setObjective(e.target.value)}
-                  disabled={isGenerating || tasks.length > 0}
+                  disabled={isGenerating || isRunning}
                 />
                 <Button
                   onClick={generateTasks}
-                  disabled={
-                    !objective.trim() || isGenerating || tasks.length > 0
-                  }
+                  disabled={!objective.trim() || isGenerating || isRunning}
                 >
                   {isGenerating ? "Generating..." : "Generate Tasks"}
                 </Button>
@@ -230,7 +307,7 @@ export default function AutomationPage() {
                               ? "bg-muted"
                               : "hover:bg-muted/50"
                           }`}
-                          onClick={() => setActiveTask(task)}
+                          onClick={() => !isRunning && setActiveTaskId(task.id)}
                         >
                           <div className="flex justify-between items-start">
                             <h4 className="font-medium">{task.title}</h4>
@@ -283,7 +360,7 @@ export default function AutomationPage() {
                       <Button
                         size="sm"
                         onClick={startAutomation}
-                        disabled={!activeTask || isRunning}
+                        disabled={!activeTask?.review || isRunning}
                       >
                         <Play className="w-4 h-4 mr-2" />
                         Start
@@ -294,15 +371,48 @@ export default function AutomationPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
+                  {activeTask && (
+                    <div>
+                      <h4 className="font-medium mb-2">AI Review</h4>
+                      {activeTask.review ? (
+                        <p className="text-sm">
+                          <Badge variant="secondary" className="mr-2">
+                            {activeTask.review.overallScore}% ·{" "}
+                            {activeTask.review.overallStatus}
+                          </Badge>
+                          {activeTask.review.summary}
+                        </p>
+                      ) : (
+                        <p role="alert" className="text-sm text-destructive">
+                          {activeTask.reviewError
+                            ? `Review failed: ${activeTask.reviewError}. Start is disabled.`
+                            : "Review pending..."}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <h4 className="font-medium mb-2">Steps</h4>
                     <div className="space-y-2">
-                      {activeTask?.steps.map((step, index) => (
-                        <div key={index} className="flex items-start space-x-2">
+                      {activeTask?.steps.map((step) => (
+                        <div key={step.id} className="flex items-start space-x-2">
                           <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5 flex-shrink-0">
-                            <Check className="w-3 h-3 text-primary" />
+                            {step.status === "failed" ? (
+                              <X className="w-3 h-3 text-destructive" />
+                            ) : step.status === "running" ? (
+                              <RefreshCw className="w-3 h-3 text-primary animate-spin" />
+                            ) : step.status === "completed" ? (
+                              <Check className="w-3 h-3 text-primary" />
+                            ) : (
+                              <Bot className="w-3 h-3 text-muted-foreground" />
+                            )}
                           </div>
-                          <p className="text-sm">{step}</p>
+                          <p className="text-sm">
+                            {step.stepNumber}. {step.name}{" "}
+                            <span className="text-muted-foreground font-mono">
+                              ({step.action} @ {step.x},{step.y})
+                            </span>
+                          </p>
                         </div>
                       ))}
                     </div>

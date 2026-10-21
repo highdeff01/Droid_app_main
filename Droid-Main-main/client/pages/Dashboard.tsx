@@ -151,11 +151,18 @@ import { InteractiveDeviceControlDeck } from "@/components/interactive-device-co
 import { GlobalSettingsModal, DEFAULT_MODEL_URL } from "@/components/global-settings-modal";
 import { CoordinateCalibrationModal } from "@/components/coordinate-calibration-modal";
 import { ThreeAiAgentsSquad } from "@/components/three-ai-agents-squad";
+const CAPTURE_POLL_MS = 600;
+const CAPTURE_POLLING_KEY = "dashboard-capture-polling";
 export default function Dashboard({
   initialTab,
 }: { initialTab?: string } = {}) {
   const navigate = useNavigate();
-  const [isCapturing, setIsCapturing] = useState(true);
+  const [isCapturing, setIsCapturing] = useState(
+    () =>
+      typeof window === "undefined" ||
+      localStorage.getItem(CAPTURE_POLLING_KEY) !== "false",
+  );
+  const [captureError, setCaptureError] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isCalibrationModalOpen, setIsCalibrationModalOpen] = useState(false);
@@ -394,7 +401,7 @@ export default function Dashboard({
       window.removeEventListener("open-calibration", handleOpenCalibrationModal);
     };
   }, []);
-  const captureIntervalRef = useRef<number>();
+  const captureFailureNotifiedRef = useRef(false);
   const aiLiveUrlRef = useRef<string | null>(null);
   const prevLiveRef = useRef(false);
   const mobileIntervalRef = useRef<number | null>(null);
@@ -854,41 +861,53 @@ export default function Dashboard({
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   };
-  const captureScreen = async () => {
-    try {
-      const data = await safeFetchJson<{
-        imageData?: string;
-        method?: string;
-      }>("/api/capture-screen");
-      if (data.success && data.imageData) {
-        const isReal = data.method === "real_desktop_stream";
-        const wasLive = prevLiveRef.current;
-        if (isReal) {
-          if (!wasLive) {
-            setFrozenLiveSnapshot(data.imageData);
-            prevLiveRef.current = true;
-          }
-          setIsLiveDesktopActive(true);
-        }
-        aiLiveUrlRef.current = data.imageData;
-        setAiLiveUrl(data.imageData);
-        setLiveHistory30((prev) => [data.imageData!, ...prev].slice(0, 30));
-        setScreenshotUrl(data.imageData);
-      }
-    } catch (e) {
-      console.warn("Screen capture note:", e);
+  const applyCapturedFrame = (imageData: string, method?: string) => {
+    if (method === "real_desktop_stream") {
+      prevLiveRef.current = true;
+      setFrozenLiveSnapshot(imageData);
+      setIsLiveDesktopActive(true);
     }
+    aiLiveUrlRef.current = imageData;
+    setAiLiveUrl(imageData);
+    setLiveHistory30((prev) => [imageData, ...prev].slice(0, 30));
+    setScreenshotUrl(imageData);
+  };
+  const reportCaptureFailure = (message: string) => {
+    setCaptureError(message);
+    if (captureFailureNotifiedRef.current) return;
+    captureFailureNotifiedRef.current = true;
+    toast.error(`Live screen capture failed: ${message}`);
+  };
+  const captureScreen = async (signal?: AbortSignal) => {
+    const data = await safeFetchJson<{ imageData?: string; method?: string }>(
+      "/api/capture-screen",
+      { signal, cache: "no-store" },
+    );
+    if (signal?.aborted) return;
+    if (data.success && data.imageData) {
+      captureFailureNotifiedRef.current = false;
+      setCaptureError(null);
+      applyCapturedFrame(data.imageData, data.method);
+      return;
+    }
+    reportCaptureFailure(
+      data.error || data.message || "/api/capture-screen returned no frame",
+    );
   };
   useEffect(() => {
-    captureScreen();
-    if (isCapturing) {
-      captureIntervalRef.current = window.setInterval(
-        () => captureScreen(),
-        600,
-      );
-    }
+    localStorage.setItem(CAPTURE_POLLING_KEY, String(isCapturing));
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      await captureScreen(controller.signal);
+      if (isCapturing && !controller.signal.aborted) {
+        timer = setTimeout(poll, CAPTURE_POLL_MS);
+      }
+    };
+    void poll();
     return () => {
-      if (captureIntervalRef.current) clearInterval(captureIntervalRef.current);
+      controller.abort();
+      clearTimeout(timer);
     };
   }, [isCapturing]);
   useEffect(() => {
@@ -1257,6 +1276,14 @@ export default function Dashboard({
               >
                 {isLiveDesktopActive ? "● LIVE" : "○ fallback"}
               </span>
+              {captureError && (
+                <span
+                  role="alert"
+                  className="px-2 py-1 rounded text-[10px] font-mono font-bold border bg-red-950 text-red-300 border-red-800"
+                >
+                  Capture error: {captureError}
+                </span>
+              )}
             </div>
           </div>
           {targetDevice === "android" && (
@@ -1797,7 +1824,8 @@ export default function Dashboard({
               activeCanvasSourceId={activeCanvasSourceId}
               onSelectCanvasSource={(sourceId, url) => {
                 setActiveCanvasSourceId(sourceId);
-                setActiveCanvasUrl(url);
+                // "live" follows the polled stream; pinning its URL would freeze the HUD on one frame.
+                setActiveCanvasUrl(sourceId === "live" ? "" : url);
               }}
               selectedTab={currentTab}
               onTabChange={handleTabSwitch}
