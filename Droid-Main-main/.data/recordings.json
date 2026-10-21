@@ -167,5 +167,18 @@
     },
     "events": [],
     "stoppedAt": "2026-10-21T16:47:35.986Z"
+  },
+  {
+    "id": "recording_1792624089665_gf6jhr3",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T23:08:09.665Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T23:08:09.665Z"
   }
 ]

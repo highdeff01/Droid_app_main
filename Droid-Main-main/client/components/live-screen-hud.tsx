@@ -137,6 +137,23 @@ import { useBufferedFrame } from "@/hooks/use-buffered-frame";
 import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
 import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
+import type { HudSuggestedAction } from "@shared/api";
+import {
+  askQwen,
+  completionStep,
+  dispatchInteractiveAction,
+  fetchQwenGuide,
+  inspectOcrAtPoint,
+  postHudJson,
+  stopBridge,
+  tagEntityAtPoint,
+  verifyIntegrityAtPoint,
+  type HudStepLike,
+} from "@/lib/hud-actions";
+import { HudAgentPanel } from "./hud-agent-panel";
+
+/** How often the Qwen guide re-reads the live frame while enabled. */
+const QWEN_GUIDE_POLL_MS = 8000;
 
 /** Footprint of the record popover, used to keep it inside the viewport. */
 const RECORD_POPOVER_SIZE = { width: 288, height: 420 };

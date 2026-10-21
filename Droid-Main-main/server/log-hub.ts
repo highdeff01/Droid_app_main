@@ -24,6 +24,7 @@ export interface SystemLogEntry {
     | "PC-PyAutoGUI"
     | "AI-FileSummary"
     | "Main AI Executive"
+    | "Overseer"
     | "System";
   level: "INFO" | "WARN" | "ERROR" | "SUCCESS";
   message: string;

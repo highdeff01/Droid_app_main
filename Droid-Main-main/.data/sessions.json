@@ -180,5 +180,19 @@
     "id": "session_1792601255975_0fneph58",
     "createdAt": "2026-10-21T16:47:35.975Z",
     "updatedAt": "2026-10-21T16:47:35.975Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T23:08:09.652Z",
+      "updatedAt": "2026-10-21T23:08:09.652Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792624089652_8zicsiip",
+    "createdAt": "2026-10-21T23:08:09.652Z",
+    "updatedAt": "2026-10-21T23:08:09.652Z"
   }
 ]

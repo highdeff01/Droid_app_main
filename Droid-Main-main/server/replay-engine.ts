@@ -14,6 +14,8 @@ import { type ReplayAdapter, createReplayAdapter } from "./replay-adapter";
 import { sendQwenChatRequest } from "./ai-endpoint";
 import { aiMonitorStore } from "./ai-monitor-store";
 import { companionEvents } from "./companion-events";
+import { operationBus } from "./overseer/operation-bus";
+import type { FinishedStatus } from "../shared/overseer";
 
 const decisionSchema = z.object({
   certain: z.boolean(),
@@ -140,8 +142,28 @@ export class ReplayEngine {
     };
     this.runs.set(run.id, item);
     this.locks.add(target);
+    this.announce(item);
     void this.execute(item);
     return this.get(run.id)!;
+  }
+  /** Registers the run with the overseer; repeats are user-declared, so the repeat cap is off. */
+  private announce(item: InternalRun) {
+    const { run, request } = item;
+    operationBus.started(
+      {
+        id: run.id,
+        kind: "replay",
+        source: `replay-engine / ${run.target}`,
+        goal: request.steps.map((s) => s.expectedOutcome || s.name).join(" → ").slice(0, 2000),
+        caps: { maxIterations: run.total, maxDurationMs: 15 * 60000, maxRepeats: null },
+      },
+      {
+        pause: () => void this.control(run.id, "pause"),
+        resume: () => void this.control(run.id, "resume"),
+        cancel: () => void this.control(run.id, "cancel"),
+        capture: async () => (await item.adapter.capture()).image,
+      },
+    );
   }
   private event(
     item: InternalRun,
@@ -253,6 +275,7 @@ export class ReplayEngine {
       this.locks.delete(run.target);
       aiMonitorStore.setStatus({ status: "idle", currentAction: null });
       this.publishOutcome(item);
+      operationBus.finished(run.id, run.status as FinishedStatus, run.error);
     }
   }
   /** Tells the companion layer how the run ended, with the last evidence frame. */
@@ -385,6 +408,17 @@ export class ReplayEngine {
       throw new Error(
         "Outcome not confirmed. Inspect the evidence before retrying; the action may already have taken effect.",
       );
+    operationBus.step(item.run.id, {
+      stepId: step.id,
+      name: step.name,
+      action: step.action,
+      x: planned.x,
+      y: planned.y,
+      text: step.text,
+      expectation: step.expectedOutcome,
+      executorVerified: true,
+      beforeImage: before.image,
+    });
   }
 }
 export const replayEngine = new ReplayEngine();

@@ -69,6 +69,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
+import { companionApi } from "@/lib/companion-api";
+import type { WorkflowStepDraft } from "@shared/companion";
+import { CompanionChatPanel } from "@/components/companion-chat-panel";
+import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import { applyUserOverride, canUserOverride, gateTargetForSteps, runActionGate, USER_VERIFIED_OVERRIDE, type GateResult } from "@/lib/action-gate";
 import {
   correctionOutcomes, fetchLearningProfile, gateOutcome, gateReportFromResult, gateStepLabel, goalExecutionSteps,
@@ -2938,8 +2942,8 @@ export default function Dashboard({
                 }
                 setGoalsState((prev) =>
                   prev.map((g) => (g.id === id ? { ...g, ...upd } : g)),
-                )
-              }
+                );
+              }}
               onDeleteGoal={deleteGoal}
               onExecuteGoal={(id) => { void executeGoal(id); }}
               onSelectTargetCoordinates={(x, y) => handleAddSequenceStep(x, y)}

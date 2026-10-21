@@ -11,6 +11,7 @@ import type { DurableStore } from "./durable-store";
 import { CompanionCollection, createCompanionId, nowIso } from "./companion-store";
 import type { ErrorBus } from "./error-bus";
 import type { NotesStore } from "./notes-store";
+import { operationBus } from "./overseer/operation-bus";
 
 export const MIN_TRIGGER_INTERVAL_MS = 5000;
 
@@ -205,7 +206,23 @@ export class TriggerEngine {
   private fire(trigger: CompanionTrigger, obs: TriggerObservation): TriggerFiring {
     this.triggers.update(trigger.id, { lastFiredAt: new Date(obs.at).toISOString() });
     const result = this.actionHandlers[trigger.action.kind](trigger, obs);
+    this.reportToOverseer(trigger, obs);
     return { triggerId: trigger.id, action: trigger.action.kind, ...result };
+  }
+
+  /** Lets the overseer independently check the screen after a trigger fired. */
+  private reportToOverseer(trigger: CompanionTrigger, obs: TriggerObservation) {
+    const operationId = `trigger_${trigger.id}_${obs.at}`;
+    const goal = trigger.action.message || `Trigger "${trigger.name}"`;
+    operationBus.started({ id: operationId, kind: "trigger_action", source: "trigger-engine", goal });
+    operationBus.step(operationId, {
+      stepId: trigger.id,
+      name: `Trigger fired: ${trigger.name}`,
+      action: trigger.action.kind,
+      expectation: trigger.action.message,
+      executorVerified: null,
+    });
+    operationBus.finished(operationId, "completed", `Trigger action ${trigger.action.kind} recorded`);
   }
 
   private recordFired(
