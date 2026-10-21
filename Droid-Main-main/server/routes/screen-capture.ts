@@ -1,0 +1,191 @@
+import { spawn } from "child_process";
+import path from "path";
+import { fileURLToPath } from "url";
+import type { Request, Response } from "express";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+export interface FrameMetadata {
+  width: number;
+  height: number;
+  format?: string;
+  source?: string;
+  deviceName?: string;
+}
+
+export interface DesktopFrameHistoryItem {
+  id: string;
+  imageData: string;
+  timestamp: number;
+  note?: string;
+  metadata?: FrameMetadata;
+}
+
+const recentDesktopFrames: DesktopFrameHistoryItem[] = [];
+const MAX_DESKTOP_FRAMES = 30;
+
+let latestSyncedRealFrame: {
+  imageData: string;
+  metadata?: FrameMetadata;
+} | null = null;
+
+export const setLatestSyncedRealFrame = (
+  imageData: string,
+  metadata?: FrameMetadata,
+  note?: string,
+) => {
+  latestSyncedRealFrame = { imageData, metadata };
+  const item: DesktopFrameHistoryItem = {
+    id: `desktop_snap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    imageData,
+    timestamp: Date.now(),
+    note,
+    metadata,
+  };
+  recentDesktopFrames.unshift(item);
+  if (recentDesktopFrames.length > MAX_DESKTOP_FRAMES) {
+    recentDesktopFrames.pop();
+  }
+};
+
+export const getLatestSyncedRealFrame = () => latestSyncedRealFrame;
+export const getRecentDesktopFrames = () => recentDesktopFrames;
+
+export const captureDesktopFrame = async (): Promise<{
+  success: boolean;
+  imageData?: string;
+  method?: string;
+  metadata?: FrameMetadata;
+  error?: string;
+}> => {
+  if (latestSyncedRealFrame) {
+    return {
+      success: true,
+      imageData: latestSyncedRealFrame.imageData,
+      method: "real_desktop_stream",
+      metadata: latestSyncedRealFrame.metadata,
+    };
+  }
+
+  const pythonScript = path.join(__dirname, "../../python-service/capture.py");
+  const pythonCmd =
+    process.env.PYTHON_CMD ||
+    (process.platform === "win32" ? "python" : "python3");
+
+  return new Promise((resolve) => {
+    const python = spawn(pythonCmd, [pythonScript], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdoutData = "";
+    let stderrData = "";
+    let settled = false;
+
+    const finish = (result: {
+      success: boolean;
+      imageData?: string;
+      method?: string;
+      error?: string;
+    }) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    python.stdout.on("data", (data) => {
+      stdoutData += data.toString();
+    });
+
+    python.stderr.on("data", (data) => {
+      stderrData += data.toString();
+    });
+
+    python.on("error", (error) =>
+      finish({
+        success: false,
+        error: `Failed to spawn python (${pythonCmd}): ${error.message}`,
+      }),
+    );
+
+    python.on("close", (code) => {
+      if (settled) return;
+      if (code === 0 && stdoutData) {
+        try {
+          finish(JSON.parse(stdoutData.trim()));
+          return;
+        } catch {
+          finish({
+            success: false,
+            error: "Failed to parse screen capture response",
+          });
+          return;
+        }
+      }
+      finish({
+        success: false,
+        error: stderrData || "Python screen capture service exited with error",
+      });
+    });
+
+    setTimeout(() => {
+      if (!settled) {
+        if (!python.killed) python.kill();
+        finish({ success: false, error: "Screen capture timeout (5s)" });
+      }
+    }, 5000);
+  });
+};
+
+export const handleGetScreenCapture = async (
+  _req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const result = await captureDesktopFrame();
+    if (result.success && result.imageData) {
+      res.json(result);
+    } else {
+      res.status(503).json(result);
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown capture error",
+    });
+  }
+};
+
+export const handleCaptureScreen = handleGetScreenCapture;
+
+export const handleSyncScreenFrame = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { imageData, metadata, note } = req.body;
+    if (!imageData || typeof imageData !== "string") {
+      res.status(400).json({ success: false, error: "Invalid frame data" });
+      return;
+    }
+    setLatestSyncedRealFrame(imageData, metadata, note);
+    res.json({ success: true, message: "Frame synchronized successfully" });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to sync frame",
+    });
+  }
+};
+
+export const handleSyncRealFrame = handleSyncScreenFrame;
+
+export const handleGetScreenCaptureHistory = async (
+  _req: Request,
+  res: Response,
+): Promise<void> => {
+  res.json({
+    success: true,
+    count: recentDesktopFrames.length,
+    frames: recentDesktopFrames,
+  });
+};
