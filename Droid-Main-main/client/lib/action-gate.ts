@@ -42,6 +42,31 @@ export interface GateRequest {
   apiKey?: string;
   target: GateTarget;
   signal: AbortSignal;
+  /** The step being verified, for the blocked reason. */
+  stepLabel?: string;
+}
+
+/** Extra capture+analysis rounds after a "target not found" (docs/verified-replay.md: at most twice). */
+export const MAX_REINSPECTIONS = 2;
+
+/** Where the gate stopped: no frame, no usable analysis, or no element at the target. */
+export type GateStage = "capture" | "analysis" | "target_not_found";
+
+/** Everything the HUD/toast needs to say precisely why an action was blocked. */
+export interface GateBlockDetail {
+  stage: GateStage;
+  stepLabel?: string;
+  targetLabel?: string;
+  x: number;
+  y: number;
+  /** Elements in the last analysis; null when no analysis completed. */
+  elementsDetected: number | null;
+  /** Capture+analysis rounds performed (1 + reinspections). */
+  attempts: number;
+  error: string;
+  /** Last analyzed frame and report; present only for target_not_found. */
+  frame?: string;
+  report?: ScreenPerceptionReport;
 }
 
 export type GateResult =
@@ -51,8 +76,64 @@ export type GateResult =
       report: ScreenPerceptionReport;
       element?: DetectedUIElement;
       confidence?: number;
+      attempts?: number;
     }
-  | { status: "blocked" | "cancelled"; reason: string };
+  | { status: "blocked"; reason: string; detail?: GateBlockDetail }
+  | { status: "cancelled"; reason: string };
+
+const STAGE_LABEL: Record<GateStage, string> = {
+  capture: "screen capture failed",
+  analysis: "screen analysis failed",
+  target_not_found: "target not found",
+};
+
+/** One actionable sentence: which step, target, coordinates, elements detected and failing stage. */
+export function formatBlockedReason(detail: GateBlockDetail): string {
+  const step = detail.stepLabel ? `Step "${detail.stepLabel}"` : "Action";
+  const target = detail.targetLabel ? ` target "${detail.targetLabel}"` : " target";
+  const elements =
+    detail.elementsDetected === null
+      ? "no elements analyzed"
+      : `${detail.elementsDetected} element${detail.elementsDetected === 1 ? "" : "s"} detected`;
+  const tries = `${detail.attempts} inspection${detail.attempts === 1 ? "" : "s"}`;
+  return `${step}:${target} at (${detail.x}, ${detail.y}) — ${STAGE_LABEL[detail.stage]} after ${tries}, ${elements}. ${detail.error}`;
+}
+
+/** Only a target-not-found block (a real frame and analysis exist) may be overridden by the user. */
+export function canUserOverride(result: GateResult): result is {
+  status: "blocked";
+  reason: string;
+  detail: GateBlockDetail & { frame: string; report: ScreenPerceptionReport };
+} {
+  return (
+    result.status === "blocked" &&
+    result.detail?.stage === "target_not_found" &&
+    !!result.detail.frame &&
+    !!result.detail.report
+  );
+}
+
+/** Label every override dispatch carries; never applied without an explicit user confirmation. */
+export const USER_VERIFIED_OVERRIDE = "user-verified override";
+
+/**
+ * Turn a target-not-found block into a verified result after the user explicitly confirmed it.
+ * Returns undefined for any other result: capture/analysis failures can never be overridden.
+ */
+export function applyUserOverride(
+  result: GateResult,
+  userConfirmed: boolean,
+): (GateResult & { status: "verified"; override: true }) | undefined {
+  if (!userConfirmed || !canUserOverride(result)) return undefined;
+  return {
+    status: "verified",
+    frame: result.detail.frame,
+    report: result.detail.report,
+    confidence: undefined,
+    attempts: result.detail.attempts,
+    override: true,
+  };
+}
 
 export type GatePost = (
   url: string,
@@ -134,13 +215,30 @@ export function analysisConfidence(
     : undefined;
 }
 
-function failure(error: unknown, signal: AbortSignal): GateResult {
-  if (signal.aborted) {
-    return { status: "cancelled", reason: "Action cancelled before dispatch" };
+const CANCELLED: GateResult = {
+  status: "cancelled",
+  reason: "Action cancelled before dispatch",
+};
+
+/** A failure tagged with the gate stage it happened in. */
+class GateStageError extends Error {
+  constructor(
+    readonly stage: GateStage,
+    message: string,
+    readonly inspection?: Inspection,
+  ) {
+    super(message);
   }
-  const reason =
-    error instanceof Error ? error.message : "Screen analysis failed";
-  return { status: "blocked", reason };
+}
+
+interface Inspection {
+  frame: string;
+  report: ScreenPerceptionReport;
+  point: { x: number; y: number };
+}
+
+function messageOf(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 /** The target point in frame pixels; relative (0–1) targets are scaled by the captured frame's size. */
@@ -157,55 +255,105 @@ export function toFramePoint(
   return { x: Math.round(target.x * width), y: Math.round(target.y * height) };
 }
 
-/**
- * Capture a fresh frame, analyze it, and confirm the target is on screen.
- * Never falls back to a stale frame: any capture or analysis failure blocks the action.
- */
-export async function runActionGate(
+/** One fresh capture + analysis; throws a GateStageError naming the stage that failed. */
+async function inspectOnce(
   request: GateRequest,
-  post: GatePost = postGateJson,
-): Promise<GateResult> {
+  post: GatePost,
+): Promise<Inspection> {
   const { target, signal, apiKey } = request;
+  let frame: string;
+  let point: { x: number; y: number };
   try {
     const capture = await post(
       "/api/replay/capture",
       { targetDevice: request.targetDevice, deviceId: request.deviceId },
       { apiKey, signal },
     );
-    const frame: string | undefined = capture.frame?.image;
+    frame = capture.frame?.image;
     if (!frame) throw new Error("Screen capture returned no frame");
-    const point = toFramePoint(target, capture.frame);
+    point = toFramePoint(target, capture.frame);
+  } catch (error) {
+    throw new GateStageError("capture", messageOf(error, "Screen capture failed"));
+  }
+  try {
     const data = await post(
       "/api/ai/describe-screen",
       { imageData: frame },
       { apiKey, signal },
     );
-    if (signal.aborted) return failure(null, signal);
     const report: ScreenPerceptionReport | undefined = data.report;
     if (!report) throw new Error("Screen analysis returned no report");
+    return { frame, report, point };
+  } catch (error) {
+    throw new GateStageError("analysis", messageOf(error, "Screen analysis failed"));
+  }
+}
+
+function blocked(
+  request: GateRequest,
+  error: GateStageError,
+  attempts: number,
+): GateResult {
+  const point = error.inspection?.point ?? { x: request.target.x, y: request.target.y };
+  const detail: GateBlockDetail = {
+    stage: error.stage,
+    stepLabel: request.stepLabel,
+    targetLabel: request.target.label,
+    x: point.x,
+    y: point.y,
+    elementsDetected: error.inspection ? (error.inspection.report.elements ?? []).length : null,
+    attempts,
+    error: error.message,
+    frame: error.inspection?.frame,
+    report: error.inspection?.report,
+  };
+  return { status: "blocked", reason: formatBlockedReason(detail), detail };
+}
+
+/**
+ * Capture a fresh frame, analyze it, and confirm the target is on screen.
+ * A missed target is re-captured and re-analyzed up to MAX_REINSPECTIONS times;
+ * capture or analysis failures block at once. Never falls back to a stale frame.
+ */
+export async function runActionGate(
+  request: GateRequest,
+  post: GatePost = postGateJson,
+): Promise<GateResult> {
+  const { target, signal } = request;
+  let attempts = 0;
+  for (;;) {
+    attempts++;
+    let inspection: Inspection;
+    try {
+      inspection = await inspectOnce(request, post);
+    } catch (error) {
+      if (signal.aborted) return CANCELLED;
+      return blocked(request, error as GateStageError, attempts);
+    }
+    if (signal.aborted) return CANCELLED;
+    const { frame, report, point } = inspection;
     if (!target.needsTarget) {
+      return { status: "verified", frame, report, confidence: analysisConfidence(report), attempts };
+    }
+    const element = findTargetElement(report, point.x, point.y);
+    if (element) {
       return {
         status: "verified",
         frame,
         report,
-        confidence: analysisConfidence(report),
+        element,
+        confidence: analysisConfidence(report, element),
+        attempts,
       };
     }
-    const element = findTargetElement(report, point.x, point.y);
-    if (!element) {
+    if (attempts > MAX_REINSPECTIONS) {
       const name = target.label ? `"${target.label}" ` : "";
-      throw new Error(
+      const miss = new GateStageError(
+        "target_not_found",
         `Target ${name}not found at (${point.x}, ${point.y}) in the analyzed screen`,
+        inspection,
       );
+      return blocked(request, miss, attempts);
     }
-    return {
-      status: "verified",
-      frame,
-      report,
-      element,
-      confidence: analysisConfidence(report, element),
-    };
-  } catch (error) {
-    return failure(error, signal);
   }
 }

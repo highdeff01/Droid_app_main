@@ -1,6 +1,7 @@
 import { Request, Response, Router } from "express";
 import { z } from "zod";
 import { methodLearningSystem, type LearningContext, type WorkingMethodTemplate } from "../method-learning";
+import { LEARNING_OUTCOME_KINDS, type LearningOutcome } from "../../shared/learning";
 import { executionStateRepository } from "../execution-state";
 import { assistantStateRepository } from "../assistant-state";
 import { centralLogHub } from "../log-hub";
@@ -249,6 +250,30 @@ router.post("/record-action", async (req: Request, res: Response) => {
   } catch (error) {
     res.status(500).json({ success: false, error: String(error) });
   }
+});
+
+// Verified-run outcomes (gate results, step results, calibration corrections) feed the profile.
+router.post("/record-outcome", (req: Request, res: Response) => {
+  const outcomes: unknown[] = Array.isArray(req.body?.outcomes) ? req.body.outcomes : [req.body];
+  const valid = outcomes.filter(
+    (o): o is LearningOutcome =>
+      !!o && LEARNING_OUTCOME_KINDS.includes((o as LearningOutcome).kind),
+  );
+  if (valid.length === 0) {
+    return res.status(400).json({ success: false, error: `kind must be one of ${LEARNING_OUTCOME_KINDS.join(", ")}` });
+  }
+  valid.forEach((o) => methodLearningSystem.habits.recordOutcome(o));
+  res.json({ success: true, recorded: valid.length, profile: methodLearningSystem.getUserHabitProfile() });
+});
+
+// User adjustment from the HUD: { delayMultiplier: number } locks it, { delayMultiplier: null } resumes learning.
+router.post("/movement", (req: Request, res: Response) => {
+  const value = req.body?.delayMultiplier;
+  if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
+    return res.status(400).json({ success: false, error: "delayMultiplier must be a number or null" });
+  }
+  methodLearningSystem.habits.setDelayMultiplier(value);
+  res.json({ success: true, profile: methodLearningSystem.getUserHabitProfile() });
 });
 
 // --- Real Working Method Templates ---

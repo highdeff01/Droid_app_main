@@ -239,7 +239,8 @@ export function createServer() {
   app.use("/api/assistant/scheduling", requireApiAccess, schedulingRouter);
   app.use("/api/assistant/method-learning", requireApiAccess, methodLearningRouter);
   app.use("/api/method-learning", requireApiAccess, methodLearningRouter);
-  app.use("/api/companion", requireApiAccess, companionRouter);
+  // Habit profile, outcome feedback and templates (client: HUD learning strip, squad, workflow library).
+  app.use("/api/learning", requireApiAccess, methodLearningRouter);
 
   // === Master assistant routes ===
   app.use("/api/assistant", assistantRouter);

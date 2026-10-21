@@ -69,11 +69,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
-import { gateTargetForSteps, runActionGate } from "@/lib/action-gate";
-import { companionApi } from "@/lib/companion-api";
-import type { WorkflowStepDraft } from "@shared/companion";
-import { CompanionChatPanel } from "@/components/companion-chat-panel";
-import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
+import { applyUserOverride, canUserOverride, gateTargetForSteps, runActionGate, USER_VERIFIED_OVERRIDE, type GateResult } from "@/lib/action-gate";
+import {
+  correctionOutcomes, fetchLearningProfile, gateOutcome, gateReportFromResult, gateStepLabel, goalExecutionSteps,
+  goalFromSequence, isLiveRun, newStepOutcomes, postDelayMultiplier, postLearningOutcomes, syncGoalsWithRun,
+  verifyingGateReport, type GateReport, type RunnableGoal,
+} from "@/lib/ai-intentions";
+import { applyDelayMultiplier, type LearningOutcome, type UserHabitProfile } from "@shared/learning";
 import { buildRetryStep, toReplayStepPayload } from "@/lib/step-replay";
 import { GoalWorkflowPanel } from "@/components/goal-workflow-panel";
 import { GOAL_PHASE_BADGE, type GoalLoopEvent } from "@/lib/goal-loop-runner";
@@ -302,6 +304,11 @@ export default function Dashboard({
     },
   ]);
   const [goalsState, setGoalsState] = useState<any[]>([]);
+  /** Goal id → the replay run executing it; drives automatic checkoff. */
+  const goalRunsRef = useRef<Record<string, string>>({});
+  const [gateReport, setGateReport] = useState<GateReport | null>(null);
+  const [learningProfile, setLearningProfile] = useState<UserHabitProfile | null>(null);
+  const [learningError, setLearningError] = useState<string | null>(null);
   const [globalCursorState, setGlobalCursorState] = useState<GlobalAICursorState | null>(null);
   const [isApkModalOpen, setIsApkModalOpen] = useState(false);
   const [isMobileSettingsModalOpen, setIsMobileSettingsModalOpen] = useState(false);
@@ -829,47 +836,88 @@ export default function Dashboard({
     }).catch(() => {});
     return () => { disposed = true; };
   }, [replayApiKey]);
+  const reportedStepsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!replayRun) return;
+    setGoalsState((prev) => syncGoalsWithRun(prev, goalRunsRef.current, replayRun));
+    reportOutcomes(newStepOutcomes(replayRun, sequence, reportedStepsRef.current));
+  }, [replayRun]);
+  useEffect(() => {
+    let disposed = false;
+    const load = () => fetchLearningProfile()
+      .then((profile) => { if (!disposed) { setLearningProfile(profile); setLearningError(null); } })
+      .catch((error) => { if (!disposed) setLearningError(error instanceof Error ? error.message : String(error)); });
+    void load();
+    const timer = setInterval(load, 5000);
+    const onCalibrated = (event: Event) => reportOutcomes(correctionOutcomes((event as CustomEvent).detail?.calibratedSteps ?? []));
+    window.addEventListener("workflow-auto-calibrated", onCalibrated);
+    return () => { disposed = true; clearInterval(timer); window.removeEventListener("workflow-auto-calibrated", onCalibrated); };
+  }, []);
   const gateAbortRef = useRef<AbortController | null>(null);
   const actionBusyRef = useRef(false);
-  // Gate blocks become companion fix tasks (with the last real frame as context).
-  const reportGateBlock = (step: SequenceStep, reason: string) => {
-    const frame = aiLiveUrl || screenshotUrl;
-    void companionApi.reportError({
-      source: "action_gate",
-      message: reason,
-      failedStep: { id: step.id, name: step.name, action: step.action, x: step.x, y: step.y },
-      screenshot: /^data:image\/(png|jpeg);base64,/.test(frame) ? frame : undefined,
-    }).catch(() => {});
+  const reportOutcomes = (outcomes: LearningOutcome[]) => {
+    if (!outcomes.length) return;
+    void postLearningOutcomes(outcomes)
+      .then((profile) => { setLearningProfile(profile); setLearningError(null); })
+      .catch((error) => setLearningError(error instanceof Error ? error.message : String(error)));
+  };
+  // Never automatic: resolves true only when the user clicks the override action on the toast.
+  const confirmOverride = (reason: string) =>
+    new Promise<boolean>((resolve) => {
+      toast.error(`Action blocked: ${reason}`, {
+        duration: 20000,
+        action: { label: "Dispatch anyway (user-verified override)", onClick: () => resolve(true) },
+        onDismiss: () => resolve(false),
+        onAutoClose: () => resolve(false),
+      });
+    });
+  const finishGateBlocked = async (result: Exclude<GateResult, { status: "verified" }>, steps: SequenceStep[], target: ReturnType<typeof gateTargetForSteps>, stepLabel: string) => {
+    const reason = result.status === "cancelled" ? "Screen analysis timed out (45s); action not dispatched" : result.reason;
+    setAiThinking(null);
+    setVerificationBadge({ status: "failed", message: reason });
+    setGateReport({ ...gateReportFromResult(result, target, stepLabel), reason });
+    if (!canUserOverride(result)) {
+      toast.error(`Action blocked: ${reason}`);
+      return false;
+    }
+    const overridden = applyUserOverride(result, await confirmOverride(reason));
+    if (!overridden) return false;
+    reportOutcomes([{ kind: "user_override", x: target.x, y: target.y, label: target.label }]);
+    setPerceptionReport(overridden.report);
+    setGateReport(gateReportFromResult(overridden, target, stepLabel, true));
+    setVerificationBadge({ status: "verified", message: `${USER_VERIFIED_OVERRIDE}: ${stepLabel}` });
+    setAiThinking({ x: target.x, y: target.y, action: `${USER_VERIFIED_OVERRIDE}: ${target.label || steps[0].action}`, isThinking: false, targetLabel: target.label });
+    toast.warning(`Dispatching ${stepLabel} as a ${USER_VERIFIED_OVERRIDE}`);
+    return true;
   };
   // The single guard every device dispatch passes through: fresh capture → analysis → verified target.
   const verifyBeforeDispatch = async (steps: SequenceStep[]) => {
     const target = gateTargetForSteps(steps);
+    const stepLabel = gateStepLabel(steps, target);
     const controller = new AbortController();
     gateAbortRef.current = controller;
     setIsPerceiving(true);
     setAiThinking({ x: target.x, y: target.y, action: `Analyzing screen: ${target.label || steps[0].action}`, isThinking: true, targetLabel: target.label });
     setVerificationBadge({ status: "verifying", message: "Capturing and analyzing screen before acting" });
+    setGateReport(verifyingGateReport(target, stepLabel));
     try {
       const result = await runActionGate({
-        targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined, target,
+        targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined, target, stepLabel,
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
       });
       if (controller.signal.aborted) {
         setAiThinking(null);
+        setGateReport(null);
         setVerificationBadge({ status: "failed", message: "Action cancelled before dispatch" });
         return false;
       }
-      if (result.status !== "verified") {
-        const reason = result.status === "cancelled" ? "Screen analysis timed out (45s); action not dispatched" : result.reason;
-        setAiThinking(null);
-        setVerificationBadge({ status: "failed", message: reason });
-        toast.error(`Action blocked: ${reason}`);
-        if (result.status === "blocked") reportGateBlock(steps[0], reason);
-        return false;
-      }
+      const outcome = gateOutcome(result, target);
+      if (outcome) reportOutcomes([outcome]);
+      if (result.status !== "verified") return finishGateBlocked(result, steps, target, stepLabel);
       setScreenshotUrl(result.frame);
       setAiLiveUrl(result.frame);
       setPerceptionReport(result.report);
+      setGateReport(gateReportFromResult(result, target, stepLabel));
       setAiThinking({ x: target.x, y: target.y, action: target.label || steps[0].action, confidence: result.confidence, isThinking: false, targetLabel: result.element?.name ?? target.label });
       setVerificationBadge({ status: "verified", message: target.needsTarget ? `Target verified: ${result.element?.name}` : "Screen analyzed" });
       return true;
@@ -887,10 +935,13 @@ export default function Dashboard({
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   };
+  // Learned (or user-set) movement pacing scales every step delay.
+  const scaleStepDelay = (step: SequenceStep): SequenceStep =>
+    learningProfile ? { ...step, delayMs: applyDelayMultiplier(step.delayMs, learningProfile.movement.delayMultiplier) } : step;
   const dispatchVerifiedReplay = async (steps: SequenceStep[]) => {
     if (!(await verifyBeforeDispatch(steps)) || replayStopRequested.current) return undefined;
     const data = await replayRequest("/api/replay", { targetDevice, deviceId: selectedAdbDevice || undefined,
-      steps: steps.map(toReplayStepPayload), iterations: 1, confirmation: true });
+      steps: steps.map(scaleStepDelay).map(toReplayStepPayload), iterations: 1, confirmation: true });
     replayIdRef.current = data.run.id;
     sessionStorage.setItem("screen-replay-id", data.run.id);
     applyReplay(data.run);
@@ -960,6 +1011,52 @@ export default function Dashboard({
     }
     await handleReplayControl("cancel");
     toast.info("Stop requested. In-flight device actions cannot be undone; the monitor confirms when replay stops.");
+  };
+  const updateGoal = (id: string, updates: Partial<RunnableGoal>) =>
+    setGoalsState((prev) => prev.map((g) => (g.id === id ? { ...g, ...updates } : g)));
+  const goalRunIsLive = (id: string) => isLiveRun(replayRun) && goalRunsRef.current[id] === replayRun.id;
+  const executeGoal = async (id: string) => {
+    const goal = goalsState.find((g) => g.id === id) as RunnableGoal | undefined;
+    if (!goal) return;
+    const steps = goalExecutionSteps(goal);
+    if (!steps) { toast.error(`Goal "${goal.title}" has no steps or target to execute.`); return; }
+    const previous = goal.status;
+    updateGoal(id, { status: "in_progress" });
+    const runId = await handleRunSequence(steps);
+    if (!runId) { updateGoal(id, { status: previous }); return; }
+    goalRunsRef.current[id] = runId;
+  };
+  const pauseGoal = (id: string) => {
+    if (goalRunIsLive(id)) void handleReplayControl("pause");
+    updateGoal(id, { status: "blocked" });
+  };
+  const resumeGoal = (id: string) => {
+    const live = goalRunIsLive(id);
+    if (live) void handleReplayControl("resume");
+    updateGoal(id, { status: live ? "in_progress" : "pending" });
+  };
+  const deleteGoal = (id: string) => {
+    delete goalRunsRef.current[id];
+    setGoalsState((prev) => prev.filter((g) => g.id !== id));
+  };
+  const createGoalFromHud = (title: string) => {
+    setGoalsState((prev) => [...prev, goalFromSequence(`goal_${Date.now()}`, title, sequence)]);
+  };
+  const adjustMovementDelay = (multiplier: number | null) => {
+    void postDelayMultiplier(multiplier)
+      .then((profile) => { setLearningProfile(profile); setLearningError(null); })
+      .catch((error) => toast.error(`Could not update movement delay: ${error instanceof Error ? error.message : error}`));
+  };
+  const runHabitRoutine = async (x: number, y: number, repeatCount: number) => {
+    const routine: SequenceStep = { id: crypto.randomUUID(), stepNumber: 1, name: "Habit Routine Loop", action: "click", x, y, delayMs: 400, status: "pending", targetOcrLabel: "Habit Routine Loop" };
+    const runId = await handleRunSequence([routine], repeatCount);
+    if (!runId) return { ok: false, message: "Routine not run: screen verification failed, was cancelled, or another action is running." };
+    try {
+      await waitForReplay(runId);
+      return { ok: true, message: `Routine verified and completed ${repeatCount} cycles.` };
+    } catch (error) {
+      return { ok: false, message: `Routine stopped: ${error instanceof Error ? error.message : error}` };
+    }
   };
   const executeHubTask = async (_url: string, options: RequestInit) => {
     const body = JSON.parse(String(options.body));
@@ -1984,6 +2081,7 @@ export default function Dashboard({
             {/* Tri-Agent Cooperative Operations Squad: 1 Assists User, 1 Reads Logs, 1 Corrects AI Actions & Heals */}
             <ThreeAiAgentsSquad
               className="border-cyan-500/50 shadow-2xl"
+              onRunRoutine={runHabitRoutine}
               onDispatchFix={(action) => {
                 toast.success(`Autonomous Agent Corrector: Dispatched self-healing fix (${action})`);
               }}
@@ -2065,6 +2163,21 @@ export default function Dashboard({
               </CardHeader>
               <CardContent className="p-2">
                 <LiveScreenHUD
+                  intentionsPanel={{
+                    gateReport,
+                    replayRun,
+                    sequence,
+                    goals: goalsState as RunnableGoal[],
+                    detectedElements: perceptionReport ? (perceptionReport.elements ?? []).length : null,
+                    profile: learningProfile,
+                    profileError: learningError,
+                    onCreateGoal: createGoalFromHud,
+                    onPauseGoal: pauseGoal,
+                    onResumeGoal: resumeGoal,
+                    onDeleteGoal: deleteGoal,
+                    onExecuteGoal: (id) => { void executeGoal(id); },
+                    onAdjustDelay: adjustMovementDelay,
+                  }}
                   onReplaySteps={steps => { void handleRunSequence(steps); }}
                   replayRun={replayRun}
                   onReplayControl={command => { void handleReplayControl(command); }}
@@ -2825,31 +2938,10 @@ export default function Dashboard({
                 }
                 setGoalsState((prev) =>
                   prev.map((g) => (g.id === id ? { ...g, ...upd } : g)),
-                );
-              }}
-              onDeleteGoal={(id) =>
-                setGoalsState((prev) => prev.filter((g) => g.id !== id))
+                )
               }
-              onExecuteGoal={async (id) => {
-                const g = goalsState.find((x) => x.id === id);
-                const x = g?.targetCenter?.x || 960;
-                const y = g?.targetCenter?.y || 540;
-                handleAddSequenceStep(x, y);
-                await executeHubTask("/api/execute-task", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    targetDevice,
-                    deviceId: selectedAdbDevice,
-                    task: {
-                      id,
-                      name: g?.title || id,
-                      action: "click",
-                      targetPosition: { x, y },
-                    },
-                  }),
-                });
-              }}
+              onDeleteGoal={deleteGoal}
+              onExecuteGoal={(id) => { void executeGoal(id); }}
               onSelectTargetCoordinates={(x, y) => handleAddSequenceStep(x, y)}
             />
           </TabsContent>

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { MouseTrajectoryStore } from "../../src/services/mouseTrajectoryStore";
+import { detectStepsFromFrames, sampleTimesFor } from "@/lib/frame-step-detection";
 
 export interface RecordedMouseEvent {
   timestamp: number;
@@ -71,6 +72,9 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
   const [recordedFrames, setRecordedFrames] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedSteps, setExtractedSteps] = useState<any[]>([]);
+  const [frameTimes, setFrameTimes] = useState<number[]>([]);
+  /** Why step detection produced nothing; shown instead of steps. */
+  const [breakdownFailure, setBreakdownFailure] = useState<string | null>(null);
   const [workflowGoal, setWorkflowGoal] = useState("Automate user task recorded in video");
 
   // Mouse Movement Integration State
@@ -173,6 +177,7 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
       recordedChunksRef.current = [];
       setRecordedFrames([]);
       setExtractedSteps([]);
+      setBreakdownFailure(null);
       mouseEventsRef.current = [];
       setRecordedMouseEvents([]);
       setMouseMovementCount(0);
@@ -265,8 +270,8 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
       const ctx = canvas.getContext("2d");
 
       const frames: string[] = [];
-      const sampleTimes = [0.2, 0.8, 1.6, 2.4, 3.2, 4.0].filter((t) => t < duration);
-      if (sampleTimes.length === 0) sampleTimes.push(0.1);
+      const times: number[] = [];
+      const sampleTimes = sampleTimesFor(duration);
 
       for (const t of sampleTimes) {
         video.currentTime = t;
@@ -327,10 +332,12 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
           }
 
           frames.push(canvas.toDataURL("image/jpeg", 0.75));
+          times.push(t);
         }
       }
 
       setRecordedFrames(frames);
+      setFrameTimes(times);
       URL.revokeObjectURL(video.src);
     } catch (e) {
       console.error("Error extracting frames:", e);
@@ -339,15 +346,40 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
 
   const handleRunAiBreakdown = async () => {
     setIsAnalyzing(true);
+    setBreakdownFailure(null);
+    setExtractedSteps([]);
     try {
-      const mousePayload = recordedMouseEvents.map((m) => ({
-        t: Number(m.timestamp.toFixed(2)),
-        x: m.x,
-        y: m.y,
-        type: m.type,
-        speed: m.speed,
-      }));
+      const serverResult = await requestServerBreakdown();
+      if (serverResult.steps.length > 0) {
+        setExtractedSteps(serverResult.steps);
+        toast.success(`AI decomposed the recording into ${serverResult.steps.length} workflow steps.`);
+        return;
+      }
+      const frames = recordedFrames.map((image, i) => ({ image, time: frameTimes[i] ?? i }));
+      const detection = await detectStepsFromFrames(frames, recordedMouseEvents);
+      if (detection.status === "detected") {
+        setExtractedSteps(detection.steps);
+        toast.success(`Vision model anchored ${detection.steps.length} recorded clicks to detected elements.`);
+        return;
+      }
+      const reason = `${detection.reason} (server breakdown: ${serverResult.error})`;
+      setBreakdownFailure(reason);
+      toast.error(`Step detection failed: ${detection.reason}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
+  /** The server breakdown's steps, or none with the reason it gave. */
+  const requestServerBreakdown = async (): Promise<{ steps: any[]; error: string }> => {
+    const mousePayload = recordedMouseEvents.map((m) => ({
+      t: Number(m.timestamp.toFixed(2)),
+      x: m.x,
+      y: m.y,
+      type: m.type,
+      speed: m.speed,
+    }));
+    try {
       const res = await fetch("/api/ai/breakdown-video-steps", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -359,88 +391,12 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
           mouseMovementIntegrated: integrateMouseMovement,
         }),
       });
-
-      const data = await res.json();
-      if (data.success && data.steps && data.steps.length > 0) {
-        setExtractedSteps(data.steps);
-        toast.success(`AI decomposed video & mouse trajectory into ${data.steps.length} workflow steps!`);
-      } else {
-        // Synthesize steps directly from captured mouse movements and keyframes
-        const synthesized = synthesizeStepsFromMouseData();
-        setExtractedSteps(synthesized);
-        toast.success(`Synthesized ${synthesized.length} workflow steps from recorded mouse movement!`);
-      }
-    } catch (err: any) {
-      // Fallback synthesis from mouse movement
-      const synthesized = synthesizeStepsFromMouseData();
-      setExtractedSteps(synthesized);
-      toast.success(`Generated ${synthesized.length} steps from recorded mouse trajectory.`);
-    } finally {
-      setIsAnalyzing(false);
+      const data = await res.json().catch(() => ({}));
+      if (data.success && Array.isArray(data.steps) && data.steps.length > 0) return { steps: data.steps, error: "" };
+      return { steps: [], error: data.error || `HTTP ${res.status}` };
+    } catch (err) {
+      return { steps: [], error: err instanceof Error ? err.message : String(err) };
     }
-  };
-
-  const synthesizeStepsFromMouseData = (): any[] => {
-    const events = recordedMouseEvents.length > 0 ? recordedMouseEvents : [
-      { timestamp: 0.5, x: 500, y: 32, type: 'click' as const, speed: 120 },
-      { timestamp: 1.5, x: 540, y: 220, type: 'move' as const, speed: 340 },
-      { timestamp: 2.8, x: 420, y: 360, type: 'click' as const, speed: 0 },
-    ];
-
-    const steps: any[] = [];
-    let stepCount = 1;
-
-    // Filter significant points
-    const clickEvents = events.filter((e) => e.type === 'click');
-    const moveEvents = events.filter((e, idx) => idx % Math.max(1, Math.floor(events.length / 4)) === 0 && e.type === 'move');
-
-    if (clickEvents.length > 0) {
-      clickEvents.forEach((c, idx) => {
-        steps.push({
-          id: `step-vid-${Date.now()}-${idx}`,
-          stepNumber: stepCount++,
-          name: `Click Element at (${c.x}, ${c.y})`,
-          action: 'click',
-          x: c.x,
-          y: c.y,
-          delayMs: 500,
-          reasoning: `Mouse click detected in video at timestamp ${c.timestamp.toFixed(1)}s`,
-          screenshotUrl: recordedFrames[idx % Math.max(1, recordedFrames.length)],
-        });
-      });
-    }
-
-    moveEvents.forEach((m, idx) => {
-      if (!steps.some((s) => Math.abs(s.x - m.x) < 50 && Math.abs(s.y - m.y) < 50)) {
-        steps.push({
-          id: `step-vid-move-${Date.now()}-${idx}`,
-          stepNumber: stepCount++,
-          name: `Navigate / Gesture to (${m.x}, ${m.y})`,
-          action: m.speed && m.speed > 400 ? 'swipe_down' : 'move',
-          x: m.x,
-          y: m.y,
-          delayMs: 400,
-          reasoning: `Mouse movement trajectory tracked at velocity ${m.speed || 150} px/s`,
-          screenshotUrl: recordedFrames[(idx + 1) % Math.max(1, recordedFrames.length)],
-        });
-      }
-    });
-
-    if (steps.length === 0) {
-      steps.push({
-        id: `step-vid-default`,
-        stepNumber: 1,
-        name: 'Target Drive Search Input',
-        action: 'click',
-        x: 500,
-        y: 32,
-        delayMs: 500,
-        reasoning: 'Synthesized from video anchor keyframe.',
-        screenshotUrl: recordedFrames[0],
-      });
-    }
-
-    return steps;
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -449,11 +405,11 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
       const url = URL.createObjectURL(file);
       setRecordedVideoUrl(url);
       setRecordingTimeSec(6);
-      extractFramesFromBlob(file, [
-        { timestamp: 0.4, x: 500, y: 32, type: 'click', speed: 80 },
-        { timestamp: 1.8, x: 540, y: 220, type: 'move', speed: 290 },
-        { timestamp: 3.2, x: 420, y: 360, type: 'click', speed: 0 },
-      ]);
+      // An uploaded video has no recorded pointer events; detection says so rather than inventing clicks.
+      setRecordedMouseEvents([]);
+      setExtractedSteps([]);
+      setBreakdownFailure(null);
+      extractFramesFromBlob(file, []);
       toast.success(`Loaded video: ${file.name}`);
     }
   };
@@ -676,7 +632,14 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
                 )}
               </div>
 
-              {extractedSteps.length === 0 ? (
+              {breakdownFailure ? (
+                <div role="alert" data-breakdown-failure className="p-3 rounded-xl bg-rose-950/70 border border-rose-500/60 text-rose-200 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <AlertCircle className="w-4 h-4" /> Step detection failed — no steps were generated
+                  </div>
+                  <p className="text-[10px]">{breakdownFailure}</p>
+                </div>
+              ) : extractedSteps.length === 0 ? (
                 <div className="text-center py-16 text-slate-500 space-y-2">
                   <Layers className="w-8 h-8 mx-auto opacity-40" />
                   <p>No steps generated yet.</p>

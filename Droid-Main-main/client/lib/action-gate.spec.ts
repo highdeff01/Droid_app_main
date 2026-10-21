@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_REINSPECTIONS,
   TARGET_PADDING_PX,
+  USER_VERIFIED_OVERRIDE,
   analysisConfidence,
+  applyUserOverride,
+  canUserOverride,
   findTargetElement,
+  formatBlockedReason,
   gateTargetForSteps,
   runActionGate,
+  type GateBlockDetail,
   type GatePost,
+  type GateResult,
   type GateStepLike,
 } from "./action-gate";
 
@@ -271,6 +278,152 @@ describe("runActionGate", () => {
     if (result.status === "verified") expect(result.confidence).toBeUndefined();
   });
 
+  describe("runActionGate reinspection", () => {
+    it("verifies on the second inspection when the element is missing on the first", async () => {
+      const far = makeElement({ boundingBox: { x: 900, y: 900, width: 20, height: 20 } });
+      const near = makeElement({ boundingBox: { x: 90, y: 90, width: 20, height: 20 } });
+      let captureCalls = 0;
+      let describeCalls = 0;
+      const post: GatePost = async (url) => {
+        if (url === "/api/replay/capture") {
+          captureCalls++;
+          return { success: true, frame: { image: "data:img" } };
+        }
+        describeCalls++;
+        const report = makeReport({ elements: describeCalls === 1 ? [far] : [near] });
+        return { success: true, report };
+      };
+      const controller = new AbortController();
+
+      const result = await runActionGate(
+        { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
+        post,
+      );
+
+      expect(result.status).toBe("verified");
+      if (result.status === "verified") expect(result.attempts).toBe(2);
+      expect(captureCalls).toBe(2);
+      expect(describeCalls).toBe(2);
+    });
+
+    it("blocks with target_not_found detail after MAX_REINSPECTIONS retries", async () => {
+      const elements = [
+        makeElement({ id: "a", boundingBox: { x: 900, y: 900, width: 20, height: 20 } }),
+        makeElement({ id: "b", boundingBox: { x: 950, y: 950, width: 20, height: 20 } }),
+      ];
+      let captureCalls = 0;
+      let describeCalls = 0;
+      const post: GatePost = async (url) => {
+        if (url === "/api/replay/capture") {
+          captureCalls++;
+          return { success: true, frame: { image: "data:img" } };
+        }
+        describeCalls++;
+        return { success: true, report: makeReport({ elements }) };
+      };
+      const controller = new AbortController();
+
+      const result = await runActionGate(
+        {
+          targetDevice: "device-1",
+          target: baseTarget,
+          signal: controller.signal,
+          stepLabel: "Click Submit",
+        },
+        post,
+      );
+
+      expect(captureCalls).toBe(1 + MAX_REINSPECTIONS);
+      expect(describeCalls).toBe(1 + MAX_REINSPECTIONS);
+      expect(result.status).toBe("blocked");
+      if (result.status !== "blocked" || !result.detail) throw new Error("expected blocked detail");
+      const { detail } = result;
+      expect(detail.stage).toBe("target_not_found");
+      expect(detail.attempts).toBe(1 + MAX_REINSPECTIONS);
+      expect(detail.elementsDetected).toBe(2);
+      expect(detail.x).toBe(100);
+      expect(detail.y).toBe(100);
+      expect(detail.frame).toBe("data:img");
+      expect(detail.report).toBeTruthy();
+      expect(result.reason).toContain("Click Submit");
+      expect(result.reason).toContain("Submit");
+      expect(result.reason).toContain("(100, 100)");
+      expect(result.reason).toContain("2 elements detected");
+      expect(result.reason).toContain("target not found");
+    });
+
+    it("blocks at the capture stage without ever calling describe-screen", async () => {
+      let captureCalls = 0;
+      let describeCalled = false;
+      const post: GatePost = async (url) => {
+        if (url === "/api/replay/capture") {
+          captureCalls++;
+          throw new Error("boom");
+        }
+        describeCalled = true;
+        return { success: true, report: makeReport() };
+      };
+      const controller = new AbortController();
+
+      const result = await runActionGate(
+        { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
+        post,
+      );
+
+      expect(result.status).toBe("blocked");
+      if (result.status !== "blocked" || !result.detail) throw new Error("expected blocked detail");
+      expect(result.detail.stage).toBe("capture");
+      expect(result.detail.attempts).toBe(1);
+      expect(result.detail.elementsDetected).toBeNull();
+      expect(describeCalled).toBe(false);
+      expect(captureCalls).toBe(1);
+      expect(result.reason).toContain("screen capture failed");
+    });
+
+    it("blocks at the analysis stage when describe-screen rejects", async () => {
+      let captureCalls = 0;
+      const post: GatePost = async (url) => {
+        if (url === "/api/replay/capture") {
+          captureCalls++;
+          return { success: true, frame: { image: "data:img" } };
+        }
+        throw new Error("boom");
+      };
+      const controller = new AbortController();
+
+      const result = await runActionGate(
+        { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
+        post,
+      );
+
+      expect(result.status).toBe("blocked");
+      if (result.status !== "blocked" || !result.detail) throw new Error("expected blocked detail");
+      expect(result.detail.stage).toBe("analysis");
+      expect(captureCalls).toBe(1);
+      expect(result.reason).toContain("screen analysis failed");
+    });
+
+    it("verifies on the first attempt when the target needs no element", async () => {
+      const report = makeReport({ confidence: 0.55 });
+      const post: GatePost = async (url) => {
+        if (url === "/api/replay/capture") {
+          return { success: true, frame: { image: "data:img" } };
+        }
+        return { success: true, report };
+      };
+      const controller = new AbortController();
+      const target = { x: 0, y: 0, needsTarget: false };
+
+      const result = await runActionGate(
+        { targetDevice: "device-1", target, signal: controller.signal },
+        post,
+      );
+
+      expect(result.status).toBe("verified");
+      if (result.status === "verified") expect(result.attempts).toBe(1);
+    });
+  });
+
   it("resolves cancelled when aborted while describe-screen is pending", async () => {
     let resolveDescribe: (value: unknown) => void = () => {};
     let resolveDescribeCalled: () => void = () => {};
@@ -303,5 +456,121 @@ describe("runActionGate", () => {
     const result = await resultPromise;
 
     expect(result.status).toBe("cancelled");
+  });
+});
+
+describe("formatBlockedReason", () => {
+  function makeDetail(overrides: Partial<GateBlockDetail> = {}): GateBlockDetail {
+    return {
+      stage: "target_not_found",
+      stepLabel: "Click Submit",
+      targetLabel: "Submit",
+      x: 100,
+      y: 100,
+      elementsDetected: 2,
+      attempts: 1,
+      error: "Target not found",
+      ...overrides,
+    };
+  }
+
+  it("pluralizes a single detected element as '1 element detected'", () => {
+    const reason = formatBlockedReason(makeDetail({ elementsDetected: 1 }));
+    expect(reason).toContain("1 element detected");
+  });
+
+  it("pluralizes a single attempt as '1 inspection'", () => {
+    const reason = formatBlockedReason(makeDetail({ attempts: 1 }));
+    expect(reason).toContain("1 inspection");
+  });
+
+  it("reports 'no elements analyzed' when elementsDetected is null", () => {
+    const reason = formatBlockedReason(makeDetail({ elementsDetected: null }));
+    expect(reason).toContain("no elements analyzed");
+  });
+
+  it("starts with 'Action:' when there is no stepLabel", () => {
+    const reason = formatBlockedReason(makeDetail({ stepLabel: undefined }));
+    expect(reason.startsWith("Action:")).toBe(true);
+  });
+});
+
+describe("user override", () => {
+  function makeBlocked(
+    stage: GateBlockDetail["stage"],
+    extra: Partial<GateBlockDetail> = {},
+  ): GateResult {
+    const detail: GateBlockDetail = {
+      stage,
+      stepLabel: "Click Submit",
+      targetLabel: "Submit",
+      x: 100,
+      y: 100,
+      elementsDetected: stage === "target_not_found" ? 2 : null,
+      attempts: 1,
+      error: "boom",
+      ...(stage === "target_not_found"
+        ? { frame: "data:img", report: makeReport() }
+        : {}),
+      ...extra,
+    };
+    return { status: "blocked", reason: formatBlockedReason(detail), detail };
+  }
+
+  const notFound = makeBlocked("target_not_found");
+  const captureBlocked = makeBlocked("capture");
+  const analysisBlocked = makeBlocked("analysis");
+  const verified: GateResult = {
+    status: "verified",
+    frame: "data:img",
+    report: makeReport(),
+  };
+  const cancelled: GateResult = {
+    status: "cancelled",
+    reason: "Action cancelled before dispatch",
+  };
+
+  it("is true only for a blocked target_not_found result with a frame and report", () => {
+    expect(canUserOverride(notFound)).toBe(true);
+  });
+
+  it("is false for a capture-stage block", () => {
+    expect(canUserOverride(captureBlocked)).toBe(false);
+  });
+
+  it("is false for an analysis-stage block", () => {
+    expect(canUserOverride(analysisBlocked)).toBe(false);
+  });
+
+  it("is false for a verified result", () => {
+    expect(canUserOverride(verified)).toBe(false);
+  });
+
+  it("is false for a cancelled result", () => {
+    expect(canUserOverride(cancelled)).toBe(false);
+  });
+
+  it("returns undefined when the user did not confirm", () => {
+    expect(applyUserOverride(notFound, false)).toBeUndefined();
+  });
+
+  it("returns undefined when the block cannot be overridden even if confirmed", () => {
+    expect(applyUserOverride(captureBlocked, true)).toBeUndefined();
+  });
+
+  it("turns a confirmed target-not-found block into a verified override", () => {
+    const overridden = applyUserOverride(notFound, true);
+    if (!overridden) throw new Error("expected an override result");
+    expect(overridden.status).toBe("verified");
+    expect(overridden.override).toBe(true);
+    if (notFound.status === "blocked" && notFound.detail) {
+      expect(overridden.frame).toBe(notFound.detail.frame);
+      expect(overridden.report).toBe(notFound.detail.report);
+    }
+    expect(overridden.confidence).toBeUndefined();
+  });
+
+  it("labels the override with the USER_VERIFIED_OVERRIDE constant", () => {
+    expect(USER_VERIFIED_OVERRIDE).toBe("user-verified override");
   });
 });

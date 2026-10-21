@@ -29,27 +29,33 @@ export interface ExtractedVideoStep {
   delayMs: number;
   dwellDurationMs?: number;
   screenshotUrl?: string;
-  confidence: number;
+  /** Model-reported confidence; absent when the model gave none. */
+  confidence?: number;
   uiTargetName?: string;
   reasoning?: string;
 }
 
-/** Shared post-processing: turns a parsed steps array into ExtractedVideoStep[]. */
+const NO_FRAMES = "No recorded frames were provided";
+
+const hasPoint = (item: any) =>
+  Number.isFinite(Number(item?.x)) && Number.isFinite(Number(item?.y)) && item?.x !== "" && item?.y !== "";
+
+/** Shared post-processing: turns a parsed steps array into ExtractedVideoStep[]; items without coordinates are dropped. */
 function buildAnalyzedSteps(parsed: any, videoFrames: string[]): ExtractedVideoStep[] {
   if (!Array.isArray(parsed) || parsed.length === 0) return [];
-  return parsed.map((item: any, idx: number) => ({
+  return parsed.filter(hasPoint).map((item: any, idx: number) => ({
     id: `video_step_${Date.now()}_${idx + 1}`,
     stepNumber: idx + 1,
     name: item.name || `Step #${idx + 1}`,
     action: item.action || "click",
-    x: Number(item.x) || 960,
-    y: Number(item.y) || 540,
+    x: Number(item.x),
+    y: Number(item.y),
     toX: item.toX ? Number(item.toX) : undefined,
     toY: item.toY ? Number(item.toY) : undefined,
     text: item.text || "",
     keyPayload: item.keyPayload || "",
     delayMs: Number(item.delayMs) || 450,
-    confidence: 0.96,
+    confidence: typeof item.confidence === "number" ? item.confidence : undefined,
     uiTargetName: item.uiTargetName || item.name,
     reasoning: item.reasoning || "Detected visual user action in recording frame.",
     screenshotUrl: videoFrames[idx % videoFrames.length] || undefined,
@@ -83,6 +89,7 @@ export const handleBreakdownVideoSteps: RequestHandler = async (req, res) => {
 
     // If frames and mouse events provided, we use Gemini or visual-spatial perception analysis
     let analyzedSteps: ExtractedVideoStep[] = [];
+    let failureReason = NO_FRAMES;
 
     if (videoFrames.length > 0) {
       const sampleFrame = videoFrames[0];
@@ -140,7 +147,7 @@ Respond strictly in valid JSON format matching this array:
           const rawText = response.text || "[]";
           analyzedSteps = buildAnalyzedSteps(JSON.parse(rawText), videoFrames);
         } catch (geminiErr: any) {
-          console.warn("Gemini breakdown error, falling back to algorithmic vision decomposition:", geminiErr.message);
+          failureReason = `Gemini vision breakdown failed: ${geminiErr.message}`;
         }
       } else {
         try {
@@ -150,44 +157,23 @@ Respond strictly in valid JSON format matching this array:
           const qwenResult = await sendQwenChatRequest([message], { format: "json" });
           if (qwenResult.success) {
             analyzedSteps = buildAnalyzedSteps(parseModelJson(qwenResult.content), videoFrames);
+          } else {
+            failureReason = `Vision model unavailable: ${qwenResult.error || "no response"}`;
           }
         } catch (qwenErr: any) {
-          console.warn("Qwen breakdown error, falling back to algorithmic vision decomposition:", qwenErr.message);
+          failureReason = `Vision model breakdown failed: ${qwenErr.message}`;
         }
       }
     }
 
-    // High-fidelity fallback / algorithmic decomposition if Gemini unavailable
+    // No fabricated fallback: when the model produced no steps, say so with the reason.
     if (analyzedSteps.length === 0) {
-      const generatedCount = Math.max(3, Math.min(8, Math.round(videoDurationSec * 1.5)));
-      const sampleActions: Array<{ name: string; action: ExtractedVideoStep["action"]; x: number; y: number; text?: string }> = [
-        { name: "Focus Navigation Anchor", action: "click", x: 420, y: 180 },
-        { name: "Enter Search Query", action: "type", x: 680, y: 180, text: "Automation Task Data" },
-        { name: "Execute Query Submission", action: "press_key", x: 680, y: 180 },
-        { name: "Select Result Row", action: "click", x: 680, y: 360 },
-        { name: "Inspect Context Menu", action: "right_click", x: 820, y: 360 },
-        { name: "Confirm Dialog Action", action: "click", x: 960, y: 620 },
-      ];
-
-      analyzedSteps = Array.from({ length: generatedCount }, (_, i) => {
-        const tpl = sampleActions[i % sampleActions.length];
-        const frameUrl = videoFrames[i % videoFrames.length] || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1920&auto=format&fit=crop&q=80";
-        return {
-          id: `vid_step_${Date.now()}_${i + 1}`,
-          stepNumber: i + 1,
-          name: tpl.name,
-          action: tpl.action,
-          x: tpl.x,
-          y: tpl.y,
-          text: tpl.text,
-          delayMs: 400 + i * 50,
-          dwellDurationMs: 300,
-          confidence: 0.94 - i * 0.01,
-          uiTargetName: tpl.name,
-          reasoning: `AI motion vector decomposition identified significant UI transition at offset ${(i * 1.2).toFixed(1)}s.`,
-          screenshotUrl: frameUrl,
-        };
-      });
+      const modelAnswered = videoFrames.length > 0 && failureReason === NO_FRAMES;
+      const error = modelAnswered
+        ? "Vision model returned no actionable steps for the recorded frames"
+        : failureReason;
+      addBridgeLog("AI_VIDEO_RECORDING_BREAKDOWN_FAILED", "error", `[AI Video Engine] ${error}`);
+      return res.status(422).json({ success: false, error, steps: [] });
     }
 
     addBridgeLog(
