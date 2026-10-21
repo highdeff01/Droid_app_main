@@ -30,6 +30,10 @@ import { assistantPlansRouter } from "./routes/assistant-plans";
 import { assistantExecutionRouter } from "./routes/assistant-execution";
 import { assistantRecordingsRouter } from "./routes/assistant-recordings";
 import { assistantWorkflowsRouter } from "./routes/assistant-workflows";
+import { createHudToolsRouter } from "./routes/hud-tools";
+import { DurableStore } from "./durable-store";
+import { recognizeWithProviders } from "./ocr-provider";
+import { sendQwenChatRequest } from "./ai-endpoint";
 import { validateDeviceId } from "./automation-adapters";
 import { assistantConditionsRouter } from "./routes/assistant-conditions";
 import {
@@ -487,6 +491,12 @@ export function createServer() {
 
   // AI Goal Re-Planner
   app.post("/api/ai/goal-replan", handleGoalReplan);
+
+  // Screen HUD tools: OCR at a point, persisted entity tags, Qwen ask/guide, reusable packs
+  app.use(
+    "/api/hud",
+    createHudToolsRouter({ store: new DurableStore(), recognize: recognizeWithProviders, chat: sendQwenChatRequest }),
+  );
 
   // Workflow Disk Persistence Endpoints (/api/workflows)
   const WORKFLOWS_DIR = path.join(process.cwd(), "workflows");

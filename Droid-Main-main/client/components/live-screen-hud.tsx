@@ -136,6 +136,23 @@ import { useElementSize } from "@/hooks/use-element-size";
 import { useBufferedFrame } from "@/hooks/use-buffered-frame";
 import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
+import {
+  askQwen,
+  completionStep,
+  dispatchInteractiveAction,
+  fetchQwenGuide,
+  inspectOcrAtPoint,
+  stopBridge,
+  postHudJson,
+  tagEntityAtPoint,
+  verifyIntegrityAtPoint,
+  type HudStepLike,
+} from "@/lib/hud-actions";
+import { HudAgentPanel } from "./hud-agent-panel";
+import type { HudSuggestedAction } from "@shared/api";
+
+/** How often the Qwen guide re-reads the live frame while enabled. */
+const QWEN_GUIDE_POLL_MS = 8000;
 
 /** Footprint of the record popover, used to keep it inside the viewport. */
 const RECORD_POPOVER_SIZE = { width: 288, height: 420 };
@@ -607,12 +624,13 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     text: string;
   } | null>(null);
 
-  // Qwen AI Agent Guide State
-  const [qwenGuideEnabled, setQwenGuideEnabled] = useState<boolean>(true);
-  const [qwenLiveThought, setQwenLiveThought] = useState<string | null>(
-    "Qwen Agent Guide active: Monitoring trajectories, assisted movement, and action completion."
-  );
+  // Qwen AI Agent Guide State: off until the user enables it; thought/intention come only from the model.
+  const [qwenGuideEnabled, setQwenGuideEnabled] = useState<boolean>(false);
+  const [qwenLiveThought, setQwenLiveThought] = useState<string | null>(null);
+  const [qwenGuideIntention, setQwenGuideIntention] = useState<string | null>(null);
+  const [qwenSuggestedActions, setQwenSuggestedActions] = useState<HudSuggestedAction[]>([]);
   const [qwenIncompleteTypingAlert, setQwenIncompleteTypingAlert] = useState<string | null>(null);
+  const qwenGuideBusyRef = useRef<boolean>(false);
 
   // Repeating Drawing with Auto-Tool & AI Thinking Between Steps
   const [isRepeatingDrawing, setIsRepeatingDrawing] = useState<boolean>(false);
@@ -709,8 +727,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     });
 
     try {
-      await fetch("/api/pyautogui/stop", { method: "POST" });
-    } catch {}
+      toast.info(await stopBridge());
+    } catch (err) {
+      toast.error(`Bridge stop failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     onStopSequence?.();
     if (isRecordMode) {
@@ -793,90 +813,79 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     setActionExecutionLogs((prev) => [...prev.slice(-150), newEntry]);
   };
 
-  // Dispatch real-time action directly to device/PC hardware (Android Studio-style direct bridge)
+  // Manual (user-initiated, ungated) action: await the bridge and report its real result.
+  // The server's interactive-action handler also queues the action for the mobile stream.
   const dispatchInteractiveHardwareAction = async (
     action: "click" | "double_click" | "right_click" | "drag" | "type" | "press_key",
     x: number,
     y: number,
     extra?: { toX?: number; toY?: number; text?: string; key?: string }
   ) => {
+    playClickPip();
+    setClickRipples((prev) => [
+      ...prev.slice(-10),
+      { id: `bridge_click_${Date.now()}`, x, y, time: Date.now() },
+    ]);
+    setHudActiveClickPoint({
+      x,
+      y,
+      frame: sequence.length + 1,
+      text: `[DEVICE BRIDGE] ${action.toUpperCase()} @ (${x}, ${y})`,
+    });
+    setTimeout(() => setHudActiveClickPoint(null), 600);
+
+    let result: { simulated: boolean; message: string };
     try {
-      playClickPip();
-      setClickRipples((prev) => [
-        ...prev.slice(-10),
-        { id: `bridge_click_${Date.now()}`, x, y, time: Date.now() },
-      ]);
-      setHudActiveClickPoint({
+      result = await dispatchInteractiveAction({ action, x, y, ...extra });
+    } catch (err) {
+      toast.error(`${action} @ (${x}, ${y}) failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    const where = result.simulated ? "virtual only (no display on the bridge)" : "executed on device";
+    toast.success(`${action} @ (${x}, ${y}): ${where}`, { description: result.message });
+
+    // Step auto-recording during usage, only after the dispatch succeeded
+    if (autoRecordDuringUsage) {
+      const stepNum = sequence.length + 1;
+      const autoName = `Step ${stepNum} (${action === "right_click" ? "Right Click" : action === "double_click" ? "Double Click" : action === "type" ? `Type "${extra?.text}"` : action === "press_key" ? `Key [${extra?.key}]` : "Click"})`;
+      onAddStep({
+        stepNumber: stepNum,
+        name: autoName,
+        action: action === "type" ? "type_text" : (action as any),
         x,
         y,
-        frame: sequence.length + 1,
-        text: `[DEVICE BRIDGE] ${action.toUpperCase()} @ (${x}, ${y})`,
-      });
-      setTimeout(() => setHudActiveClickPoint(null), 600);
+        toX: extra?.toX,
+        toY: extra?.toY,
+        text: extra?.text,
+        keyPayload: extra?.key,
+        delayMs: 400,
+        status: "pending",
+        referenceScreenshotUrl: screenshotUrl || frozenSnapshotUrl || undefined,
+      } as any);
+      toast.info(`Recorded: ${autoName}`);
+    }
+  };
 
-      // Direct PC/Device Hardware Dispatch
-      fetch("/api/pyautogui/interactive-action", {
+  /** AI-initiated actions: each step is dispatched through the action gate in order; rejects on the first failure. */
+  const runGatedSteps = async (steps: HudStepLike[]) => {
+    for (const step of steps) {
+      await executeVerifiedTask("/api/execute-task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action,
-          x,
-          y,
-          toX: extra?.toX,
-          toY: extra?.toY,
-          text: extra?.text,
-          key: extra?.key,
-          deviceMode: "android_studio_mirror",
-        }),
-      }).catch(() => {});
-
-      // Also dispatch to Mobile Stream & ADB bridge
-      const normX = x > 1 ? Math.min(1, x / 1920) : x;
-      const normY = y > 1 ? Math.min(1, y / 1080) : y;
-      const normToX = extra?.toX !== undefined ? (extra.toX > 1 ? Math.min(1, extra.toX / 1920) : extra.toX) : undefined;
-      const normToY = extra?.toY !== undefined ? (extra.toY > 1 ? Math.min(1, extra.toY / 1080) : extra.toY) : undefined;
-
-      fetch("/api/mobile-stream/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: {
-            type: action === "drag" ? "swipe" : action === "double_click" ? "double_tap" : action === "type" ? "type_text" : action === "press_key" ? "key" : "tap",
-            x: normX,
-            y: normY,
-            toX: normToX,
-            toY: normToY,
-            text: extra?.text,
-            key: extra?.key,
-            description: `Live HUD ${action.toUpperCase()} @ (${Math.round(x)}, ${Math.round(y)})`,
+          task: {
+            id: step.id,
+            name: step.name,
+            action: step.action,
+            x: step.x,
+            y: step.y,
+            targetPosition: { x: step.x, y: step.y },
+            textPayload: step.text,
+            targetOcrLabel: step.targetOcrLabel || step.name,
+            delayMs: step.delayMs ?? 500,
           },
         }),
-      }).catch(() => {});
-
-      // AI Step Auto-Recording during usage
-      if (autoRecordDuringUsage) {
-        const stepNum = sequence.length + 1;
-        const autoName = `Step ${stepNum} (${action === "right_click" ? "Right Click" : action === "double_click" ? "Double Click" : action === "type" ? `Type "${extra?.text}"` : action === "press_key" ? `Key [${extra?.key}]` : "Click"})`;
-        onAddStep({
-          stepNumber: stepNum,
-          name: autoName,
-          action: action === "type" ? "type_text" : (action as any),
-          x,
-          y,
-          toX: extra?.toX,
-          toY: extra?.toY,
-          text: extra?.text,
-          keyPayload: extra?.key,
-          delayMs: 400,
-          status: "pending",
-          referenceScreenshotUrl: screenshotUrl || frozenSnapshotUrl || undefined,
-        } as any);
-        toast.success(`AI Auto-Recorded: ${autoName}`, {
-          description: `Dispatched to hardware @ (${x}, ${y})`,
-        });
-      }
-    } catch (err: any) {
-      console.error("Interactive device bridge error:", err);
+      });
     }
   };
 
@@ -1034,9 +1043,6 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   useEffect(() => {
     if (!sequence || sequence.length === 0) {
       setQwenDetectedErrors([]);
-      if (qwenGuideEnabled) {
-        setQwenLiveThought("Qwen Agent Guide: Ready for step recording. No actions loaded.");
-      }
       return;
     }
 
@@ -1099,19 +1105,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     });
 
     setQwenDetectedErrors(issues);
-
-    if (qwenGuideEnabled) {
-      if (issues.length > 0) {
-        setQwenLiveThought(
-          `⚠️ Qwen Sentinel: Detected ${issues.length} workflow issue(s) (${issues[0].message}). Click [⚡ Qwen Fix & Orchestrate] to calibrate.`
-        );
-      } else {
-        setQwenLiveThought(
-          `✓ Qwen Sentinel: All ${sequence.length} steps verified • Trajectories aligned & ready for playback.`
-        );
-      }
-    }
-  }, [sequence, qwenGuideEnabled]);
+  }, [sequence]);
 
   const handleQwenAutoFixAndOrchestrate = async () => {
     if (sequence.length === 0) {
@@ -1321,22 +1315,15 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         tags: ["sightline", "cot_verified", "zero_drift", isMobileMode ? "mobile" : "desktop"],
       };
 
-      await fetch("/api/assistant/workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }).catch(() => {});
+      const saved = await postHudJson("/api/workflows/save", {
+        name,
+        sequence,
+        metadata: { kind: "workflow", ...payload, steps: undefined, createdFrom: "screen-hud" },
+      });
+      if (isMobileMode) await postHudJson("/api/mobile-stream/workflows", payload);
 
-      if (isMobileMode) {
-        await fetch("/api/mobile-stream/workflows", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }).catch(() => {});
-      }
-
-      toast.success(`💾 Workflow "${name}" saved to library!`, {
-        description: `${sequence.length} step(s) recorded with clean baseline & CoT validation.`,
+      toast.success(`Workflow "${saved.name}" saved to library`, {
+        description: `${saved.stepCount} step(s) saved${isMobileMode ? " (also to mobile workflows)" : ""}.`,
       });
       setShowTestModeModal(false);
     } catch (e: any) {
@@ -1797,55 +1784,95 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     setQwenLiveThought("Replay requested; fresh screenshot decisions appear in the Replay agent monitor.");
   };
 
-  // Repeating Drawing with Auto-Tool Selection and Qwen AI Thinking Between Steps
+  /** The freshest frame the HUD holds, as a data URL, or null when nothing is captured. */
+  const currentHudFrame = (): string | null => grabVideoFrame() || frozenSnapshotUrl || screenshotUrl || null;
+
+  // PREVIEW: draws three fixed sample shapes on the overlay only. Between strokes Qwen really reads the
+  // current frame. No device dispatch: the gated replay pipeline has no drag action.
   const handleRepeatingDrawingWithAi = async () => {
     if (isRepeatingDrawing) return;
     setIsRepeatingDrawing(true);
-    // Auto-select drawing tool as requested
     setOverlayActiveTool("route");
     setIsDrawingOverlayOpen(true);
 
+    const sampleSegments = [
+      [{ x: 400, y: 300 }, { x: 550, y: 300 }, { x: 550, y: 420 }, { x: 400, y: 420 }, { x: 400, y: 300 }],
+      [{ x: 600, y: 250 }, { x: 700, y: 320 }, { x: 650, y: 440 }, { x: 550, y: 380 }],
+      [{ x: 480, y: 180 }, { x: 620, y: 180 }, { x: 680, y: 260 }, { x: 480, y: 260 }],
+    ];
     try {
-      const sampleSegments = [
-        [{ x: 400, y: 300 }, { x: 550, y: 300 }, { x: 550, y: 420 }, { x: 400, y: 420 }, { x: 400, y: 300 }],
-        [{ x: 600, y: 250 }, { x: 700, y: 320 }, { x: 650, y: 440 }, { x: 550, y: 380 }],
-        [{ x: 480, y: 180 }, { x: 620, y: 180 }, { x: 680, y: 260 }, { x: 480, y: 260 }],
-      ];
-
       for (let sIdx = 0; sIdx < sampleSegments.length; sIdx++) {
-        // Qwen thinking in between each drawing step
-        if (autoCheckAfterAction) {
-          setQwenThinkingStatus(`🤖 Qwen Thinking: Analyzing stroke segment ${sIdx + 1}/${sampleSegments.length} curvature & UI alignment...`);
-          await new Promise((r) => setTimeout(r, 650));
-        }
-
         const pts = sampleSegments[sIdx];
+        if (autoCheckAfterAction) {
+          setQwenThinkingStatus(`Qwen reading the screen before stroke ${sIdx + 1}/${sampleSegments.length}…`);
+          const answer = await askQwen(
+            currentHudFrame() ?? "",
+            `I am about to drag from (${pts[0].x}, ${pts[0].y}) to (${pts[pts.length - 1].x}, ${pts[pts.length - 1].y}). Is that area clear to draw on? Answer briefly.`,
+          );
+          setQwenThinkingStatus(`Qwen: ${answer}`);
+        }
         setFreehandRoutePoints(pts);
-
-        // Dispatched to PC
-        executeVerifiedTask("/api/execute-task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            targetDevice: "desktop",
-            task: {
-              id: `drawing_stroke_${sIdx}`,
-              name: `Repeated Drawing Stroke ${sIdx + 1}`,
-              action: "drag",
-              targetPosition: pts[pts.length - 1],
-            },
-          }),
-        }).catch(() => {});
-
-        await new Promise((r) => setTimeout(r, 600));
       }
-
-      setQwenThinkingStatus("✓ Qwen Thinking: Drawing cycle completed with verified stroke alignment.");
-      setTimeout(() => setQwenThinkingStatus(null), 3000);
+      toast.success(`Drawing preview: ${sampleSegments.length} strokes drawn on the overlay only`, {
+        description: "Nothing was sent to the device: the gated replay pipeline has no drag action.",
+      });
+    } catch (err) {
+      toast.error(`Demo drawing stopped: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
+      setQwenThinkingStatus(null);
       setIsRepeatingDrawing(false);
     }
   };
+
+  /** One Qwen guide pass on the live frame: show its thought and intention; complete unfinished typing through the gate. */
+  const runQwenGuideTick = async () => {
+    if (qwenGuideBusyRef.current) return;
+    qwenGuideBusyRef.current = true;
+    try {
+      const guide = await fetchQwenGuide(currentHudFrame() ?? "", sequence);
+      setQwenLiveThought(guide.thought);
+      setQwenGuideIntention(guide.intention);
+      setQwenSuggestedActions(guide.suggestedActions ?? []);
+      const completion = completionStep(guide, sequence);
+      setQwenIncompleteTypingAlert(completion ? `Qwen completing typing: "${completion.text}"` : null);
+      if (completion) {
+        await runGatedSteps([completion]);
+        toast.success(`Qwen completed typing for "${completion.name}"`);
+      }
+    } catch (err) {
+      setQwenLiveThought(`Qwen guide error: ${err instanceof Error ? err.message : String(err)}`);
+      setQwenGuideIntention(null);
+    } finally {
+      qwenGuideBusyRef.current = false;
+    }
+  };
+  const qwenGuideTickRef = useRef(runQwenGuideTick);
+  qwenGuideTickRef.current = runQwenGuideTick;
+
+  /** Approve one movement the Qwen guide suggested: run it through the action gate and report the outcome. */
+  const runQwenSuggestion = async (suggestion: HudSuggestedAction, idx: number) => {
+    try {
+      await runGatedSteps([{ id: `qwen_suggest_${Date.now()}_${idx}`, ...suggestion }]);
+      setQwenSuggestedActions((prev) => prev.filter((_, i) => i !== idx));
+      toast.success(`Qwen suggestion "${suggestion.name}" executed after screen verification`);
+    } catch (err) {
+      toast.error(`Qwen suggestion blocked: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  useEffect(() => {
+    if (!qwenGuideEnabled) {
+      setQwenLiveThought(null);
+      setQwenGuideIntention(null);
+      setQwenSuggestedActions([]);
+      setQwenIncompleteTypingAlert(null);
+      return;
+    }
+    setQwenLiveThought("Qwen guide: reading the live frame…");
+    void qwenGuideTickRef.current();
+    const id = window.setInterval(() => void qwenGuideTickRef.current(), QWEN_GUIDE_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [qwenGuideEnabled]);
 
   React.useEffect(
     () => () => {
@@ -1984,23 +2011,27 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     }
   };
 
+  /** The live video frame as a JPEG data URL, or null when no stream is playing. No side effects. */
+  const grabVideoFrame = (): string | null => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth <= 0) return null;
+    try {
+      const c = document.createElement("canvas");
+      c.width = video.videoWidth || 1920;
+      c.height = video.videoHeight || 1080;
+      const ctx = c.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(video, 0, 0, c.width, c.height);
+      return c.toDataURL("image/jpeg", 0.90);
+    } catch (err) {
+      console.error("Frame capture error:", err);
+      return null;
+    }
+  };
+
   // Instant High-Resolution Frame Capture with 10-Second Action Ledger & 10 Screenshots Tab Sync
   const handleCaptureFreshFrame = (slotIndex: number = 0): string | null => {
-    let snap: string | null = null;
-    if (videoRef.current && videoRef.current.videoWidth > 0) {
-      try {
-        const c = document.createElement("canvas");
-        c.width = videoRef.current.videoWidth || 1920;
-        c.height = videoRef.current.videoHeight || 1080;
-        const ctx = c.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(videoRef.current, 0, 0, c.width, c.height);
-          snap = c.toDataURL("image/jpeg", 0.90);
-        }
-      } catch (err) {
-        console.error("Frame capture error:", err);
-      }
-    }
+    let snap: string | null = grabVideoFrame();
 
     if (!snap) {
       snap = frozenSnapshotUrl || screenshotUrl || null;
@@ -2048,7 +2079,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
     setIsContinuousScreenRecording(true);
     setScreenRecordDurationSec(0);
-    toast.success("🔴 Screen Recording Active: Capturing 1 FPS stream & sending to AI across all apps!");
+    toast.info("Local screen recording started: 1 frame/s kept in the HUD action ledger (not sent to any AI).");
 
     screenRecordIntervalRef.current = window.setInterval(() => {
       setScreenRecordDurationSec((prev) => prev + 1);
@@ -3053,7 +3084,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 ? "bg-red-600 hover:bg-red-500 text-white border-red-400 shadow-lg shadow-red-950 animate-pulse ring-2 ring-red-400"
                 : "bg-slate-900 border-slate-700 text-rose-300 hover:text-white hover:bg-rose-950/70"
             }`}
-            title="Record screen at 1 FPS, stream frames to AI across all apps, and run 3 cooperative agents"
+            title="Record the screen locally at 1 frame/s into the HUD action ledger (nothing is sent to AI)"
           >
             <Camera className={`w-3.5 h-3.5 ${isContinuousScreenRecording ? "text-white" : "text-rose-400"}`} />
             <span>
@@ -3582,10 +3613,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 ? "bg-pink-600 text-white animate-pulse ring-2 ring-pink-400 shadow-lg"
                 : "bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-md border border-pink-400/40"
             }`}
-            title="Auto-selects drawing tool and draws repeating segments with Qwen thinking in between each step"
+            title="PREVIEW: draws three fixed sample shapes on the overlay only (no device dispatch); Qwen reads the live frame between strokes"
           >
             <Sparkles className="w-3.5 h-3.5 mr-1.5 text-pink-300" />
-            {isRepeatingDrawing ? "DRAWING + QWEN THINKING..." : "AUTO DRAWING (AI TOOL)"}
+            {isRepeatingDrawing ? "PREVIEW DRAWING + QWEN..." : "AUTO DRAWING (PREVIEW)"}
           </Button>
 
           {/* Qwen AI Agent Guide (Adjusting, Assisting Movement & Completing Forgotten Typing) */}
@@ -3597,7 +3628,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 ? "bg-cyan-700 hover:bg-cyan-600 text-white ring-2 ring-cyan-400 shadow-md shadow-cyan-950"
                 : "bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700"
             }`}
-            title="Enable Qwen AI Agent to guide movements, adjust paths, and backtrack to finish incomplete typing"
+            title="Qwen (qwen3.5:2b) reads the live frame every 8s, shows its thought and intention, and completes unfinished typing through the action gate"
           >
             <Brain className={`w-3.5 h-3.5 mr-1.5 ${qwenGuideEnabled ? "text-cyan-300 animate-pulse" : "text-slate-500"}`} />
             QWEN AGENT GUIDE ({qwenGuideEnabled ? "ON" : "OFF"})
@@ -3975,9 +4006,23 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             <Brain className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
             <span className="text-cyan-400 font-bold">Qwen Guide:</span>
             <span className="text-slate-200">{qwenLiveThought}</span>
+            {qwenGuideIntention && (
+              <span className="text-cyan-300">Intention: {qwenGuideIntention}</span>
+            )}
+            {qwenSuggestedActions.map((suggestion, idx) => (
+              <button
+                key={`${suggestion.name}-${idx}`}
+                type="button"
+                className="rounded border border-cyan-600/50 px-1.5 text-[10px] text-cyan-200 hover:bg-cyan-900/60"
+                title="Run this Qwen-suggested movement through the action gate"
+                onClick={() => void runQwenSuggestion(suggestion, idx)}
+              >
+                Run (gated): {suggestion.action} "{suggestion.name}" @ ({suggestion.x}, {suggestion.y})
+              </button>
+            ))}
           </div>
           <Badge className="bg-cyan-900/60 text-cyan-300 border-cyan-600/50 text-[9px]">
-            AI ASSIST ACTIVE
+            QWEN LIVE (every {QWEN_GUIDE_POLL_MS / 1000}s)
           </Badge>
         </div>
       )}
@@ -3994,6 +4039,21 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           </Badge>
         </div>
       )}
+
+      {/* Qwen / agent fast-path: Ask, Auto Actions, Test/Simulate, Plan, Pack, Presentation */}
+      <div className="relative z-30 px-3 py-1.5 border-b border-slate-800 bg-slate-950/90">
+        <HudAgentPanel
+          frame={frozenSnapshotUrl || screenshotUrl || null}
+          steps={sequence}
+          replayRun={replayRun}
+          runGated={runGatedSteps}
+          onLoadSteps={(steps) =>
+            steps.forEach((step, idx) =>
+              onAddStep({ ...step, stepNumber: sequence.length + idx + 1, status: "pending" } as any),
+            )
+          }
+        />
+      </div>
 
       {/* Granular Step-by-Step PC Execution Progress Banner */}
       {isExecutingStepByStep && executingStepProgress && (
@@ -5868,27 +5928,68 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             toast.success("Updated reference screenshot for step!");
           }
         }}
-        onInspectOCR={(x, y) => {
-          const nearElem = nativeUiElements.find((e) => frameBoxContains(e.boundingBox, x, y));
-          if (nearElem) {
-            toast.info(`Element Found: "${nearElem.name}" (${nearElem.type})`);
-          } else {
-            toast.info(`OCR Inspection @ (${x}, ${y})`, {
-              description: "Target location locked in native screen space.",
-            });
+        onInspectOCR={async (x, y) => {
+          try {
+            const ocr = await inspectOcrAtPoint(currentHudFrame() ?? "", { x, y }, NATIVE_FRAME);
+            const nearElem = nativeUiElements.find((e) => frameBoxContains(e.boundingBox, x, y));
+            const elementNote = nearElem ? ` Element: "${nearElem.name}" (${nearElem.type}).` : "";
+            if (ocr.text) {
+              const conf = ocr.confidence !== null ? ` (${Math.round(ocr.confidence * 100)}% via ${ocr.provider})` : ` (via ${ocr.provider})`;
+              toast.success(`OCR @ (${x}, ${y}): "${ocr.text}"${conf}`, { description: elementNote || undefined });
+            } else {
+              toast.info(`OCR @ (${x}, ${y}): no text at this point`, {
+                description: `${ocr.provider} read ${ocr.blockCount} text block(s) elsewhere on the frame.${elementNote}`,
+              });
+            }
+          } catch (err) {
+            toast.error(`OCR inspect failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         }}
-        onVerifyIntegrity={(x, y) => {
-          toast.info(`Integrity Validator Active @ (${x}, ${y})`, {
-            description: "No significant drift detected against reference frame (Confidence: 98.4%).",
-          });
+        onVerifyIntegrity={async (x, y) => {
+          try {
+            const result = await verifyIntegrityAtPoint(currentHudFrame() ?? "", { x, y }, sequence, localDriftThreshold);
+            if (result.kind === "step") {
+              const report = result.withinThreshold ? toast.success : toast.warning;
+              report(`"${result.stepName}": ${result.driftPx}px drift (threshold ${result.thresholdPx}px)`, {
+                description: result.summary,
+              });
+            } else if (result.element) {
+              const conf = result.confidence !== undefined ? ` (${Math.round(result.confidence * 100)}% confidence)` : "";
+              toast.success(`Point (${x}, ${y}) is on "${result.element.name || result.element.type}"${conf}`, {
+                description: "No recorded step here to measure drift against.",
+              });
+            } else {
+              toast.warning(`No analyzed element at (${x}, ${y}) in the current frame`);
+            }
+          } catch (err) {
+            toast.error(`Integrity check failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }}
-        onTellMainAiToMove={(x, y) => {
-          toast.info(`AI Navigation Cue dispatched to (${x}, ${y})`);
-          dispatchInteractiveHardwareAction("click", x, y);
+        onTellMainAiToMove={async (x, y) => {
+          try {
+            await runGatedSteps([{ id: `ai_move_${Date.now()}`, name: `AI move to (${x}, ${y})`, action: "click", x, y }]);
+            toast.success(`AI moved to (${x}, ${y}) after screen verification`);
+          } catch (err) {
+            toast.error(`AI move blocked: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }}
-        onTag3WayEntity={(type, x, y) => {
-          toast.success(`Tagged (${x}, ${y}) as ${type.toUpperCase()} entity`);
+        onTag3WayEntity={async (type, x, y) => {
+          const nearElem = nativeUiElements.find((e) => frameBoxContains(e.boundingBox, x, y));
+          try {
+            const entity = await tagEntityAtPoint({
+              type,
+              x,
+              y,
+              elementLabel: nearElem?.name,
+              frameWidth: NATIVE_FRAME.width,
+              frameHeight: NATIVE_FRAME.height,
+            });
+            toast.success(`Saved ${type.toUpperCase()} entity at (${entity.x}, ${entity.y})`, {
+              description: entity.elementLabel ? `On "${entity.elementLabel}" • id ${entity.id}` : `id ${entity.id}`,
+            });
+          } catch (err) {
+            toast.error(`Entity tag failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }}
         onOpenStepManagerModal={(coords) => {
           const { pctX, pctY } = toPercentPair(coords.x, coords.y);
