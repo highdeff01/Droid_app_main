@@ -53,15 +53,24 @@ export function createCorsMiddleware(): RequestHandler {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
+  const allowed = new Set(configuredOrigins);
+
+  // Exact-match allowlist, fail closed: an empty list or a non-matching origin
+  // gets no CORS headers, so browsers keep the request same-origin only.
   return cors({
-    origin: configuredOrigins.length > 0 ? configuredOrigins : false,
+    origin: (origin, callback) => {
+      callback(null, origin !== undefined && allowed.has(origin));
+    },
     credentials: true,
   });
 }
 
+/** Safety ceiling per client IP per window for non-whitelisted /api routes. */
+const DEFAULT_MAX_REQUESTS_PER_WINDOW = 1_000;
+
 export function createApiRateLimiter(
   windowMs = 60_000,
-  maxRequests = 100_000,
+  maxRequests = DEFAULT_MAX_REQUESTS_PER_WINDOW,
 ): RequestHandler {
   const requests = new Map<string, { count: number; resetAt: number }>();
 
