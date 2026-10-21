@@ -90,6 +90,7 @@ import { ApkAndPwaModal } from "@/components/ApkAndPwaModal";
 import { usePWAInstall } from "@/hooks/usePWAInstall";
 import { InteractiveContextMenu, ContextMenuTarget } from "@/components/interactive-context-menu";
 import { BarcodeInventoryScannerModal } from "@/components/barcode-inventory-scanner-modal";
+import { startPollLoop } from "@/lib/poll-loop";
 import {
   scanBarcodeFromVideo,
   lookupBarcodeItem,
@@ -779,32 +780,7 @@ export default function MobileRemote() {
     };
   }, [releaseWakeLock, stopBackgroundAudioKeepalive]);
 
-  // Live polling for Main PC Screen Frame when in mirror_pc mode
-  useEffect(() => {
-    if (streamMode !== "mirror_pc" || !isStreaming) return;
-
-    let isMounted = true;
-    const pollPcScreen = async () => {
-      try {
-        const res = await fetch("/api/screen/capture");
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted && data.success && data.imageData) {
-            setPcMirrorFrame(data.imageData);
-          }
-        }
-      } catch {}
-    };
-
-    pollPcScreen();
-    const interval = setInterval(pollPcScreen, 250);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [streamMode, isStreaming]);
-
-  // Synchronize Virtual OS app state with backend & other tabs
+  // Virtual OS sync events from other components on this page
   useEffect(() => {
     const handleSync = (e: any) => {
       const d = e.detail;
@@ -815,38 +791,39 @@ export default function MobileRemote() {
       if (d.notesContent) setVirtualOsNotes(d.notesContent);
     };
     window.addEventListener("sightline-virtual-os-sync", handleSync);
-
-    const pollState = async () => {
-      try {
-        const res = await fetch("/api/virtual-os/state");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.state) {
-            if (data.state.activeApp) setVirtualOsActiveApp(data.state.activeApp);
-            if (data.state.chromeUrl) setVirtualOsAppUrl(data.state.chromeUrl);
-            if (data.state.calcDisplay) setVirtualOsCalc(data.state.calcDisplay);
-            if (data.state.notesContent) setVirtualOsNotes(data.state.notesContent);
-          }
-        }
-      } catch {}
-    };
-    pollState();
-    const stateInterval = setInterval(pollState, 400);
-
-    return () => {
-      window.removeEventListener("sightline-virtual-os-sync", handleSync);
-      clearInterval(stateInterval);
-    };
+    return () => window.removeEventListener("sightline-virtual-os-sync", handleSync);
   }, []);
 
-  // Polling for incoming automation actions from PC Deck & Hub
+  // One non-overlapping poll loop: PC mirror frame and incoming actions every tick, virtual OS state every 2nd
+  const pollFlagsRef = useRef({ mirror: false, streaming: false });
+  pollFlagsRef.current = { mirror: streamMode === "mirror_pc" && isStreaming, streaming: isStreaming };
+  const pollIncomingActionsRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
-    if (!isStreaming) return;
-    const actionInterval = setInterval(() => {
-      pollIncomingActions();
-    }, 250);
-    return () => clearInterval(actionInterval);
-  }, [isStreaming]);
+    const pollPcScreen = async () => {
+      const res = await fetch("/api/screen/capture");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.success && data.imageData && pollFlagsRef.current.mirror) setPcMirrorFrame(data.imageData);
+    };
+    const pollState = async () => {
+      const res = await fetch("/api/virtual-os/state");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.success || !data.state) return;
+      if (data.state.activeApp) setVirtualOsActiveApp(data.state.activeApp);
+      if (data.state.chromeUrl) setVirtualOsAppUrl(data.state.chromeUrl);
+      if (data.state.calcDisplay) setVirtualOsCalc(data.state.calcDisplay);
+      if (data.state.notesContent) setVirtualOsNotes(data.state.notesContent);
+    };
+    return startPollLoop(
+      [
+        { everyTicks: 1, enabled: () => pollFlagsRef.current.mirror, run: pollPcScreen },
+        { everyTicks: 1, enabled: () => pollFlagsRef.current.streaming, run: () => pollIncomingActionsRef.current() },
+        { everyTicks: 2, enabled: () => true, run: pollState },
+      ],
+      250,
+    );
+  }, []);
 
   const pollIncomingActions = async () => {
     try {
@@ -860,6 +837,7 @@ export default function MobileRemote() {
       }
     } catch {}
   };
+  pollIncomingActionsRef.current = pollIncomingActions;
 
   const handleExecuteIncomingAction = (act: any) => {
     try {

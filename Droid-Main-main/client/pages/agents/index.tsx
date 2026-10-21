@@ -151,130 +151,17 @@ export default function AgentsPage() {
 
     setTasks((prev) => [task, ...prev]);
     setNewTask("");
-    addLog(`Created new task: ${newTask}`);
-
-    // Auto-assign to scheduler if available
-    setTimeout(() => assignTask(task.id, "scheduler"), 100);
+    addLog(`Queued task locally (preview, not executed): ${newTask}`);
   };
 
+  // Preview only: records the assignment; no backend agent picks the task up, so it stays pending.
   const assignTask = (taskId: string, agentType: AgentType) => {
     setTasks((prev) =>
       prev.map((task) =>
-        task.id === taskId
-          ? {
-              ...task,
-              status: "in_progress",
-              assignedTo: agentType,
-              updatedAt: new Date(),
-            }
-          : task,
+        task.id === taskId ? { ...task, assignedTo: agentType, updatedAt: new Date() } : task,
       ),
     );
-
-    setAgents((prev) =>
-      prev.map((agent) =>
-        agent.type === agentType
-          ? { ...agent, status: "processing", lastActive: new Date() }
-          : agent,
-      ),
-    );
-
-    addLog(`Assigned task ${taskId} to ${agentType}`);
-
-    // Simulate task processing
-    setTimeout(() => completeTask(taskId), 2000);
-  };
-
-  const completeTask = (taskId: string) => {
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return;
-
-    const isSuccess = Math.random() > 0.2; // 80% success rate for demo
-
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId
-          ? {
-              ...t,
-              status: isSuccess ? "completed" : "failed",
-              updatedAt: new Date(),
-              result: isSuccess ? "Task completed successfully" : undefined,
-              error: isSuccess ? undefined : "Task failed due to unknown error",
-            }
-          : t,
-      ),
-    );
-
-    if (task.assignedTo) {
-      setAgents((prev) =>
-        prev.map((agent) =>
-          agent.type === task.assignedTo
-            ? {
-                ...agent,
-                status: "idle",
-                lastActive: new Date(),
-                metrics: {
-                  tasksCompleted: agent.metrics.tasksCompleted + 1,
-                  successRate: isSuccess
-                    ? (agent.metrics.successRate *
-                        agent.metrics.tasksCompleted +
-                        100) /
-                      (agent.metrics.tasksCompleted + 1)
-                    : (agent.metrics.successRate *
-                        agent.metrics.tasksCompleted) /
-                      (agent.metrics.tasksCompleted + 1),
-                  avgProcessingTime: 0, // Simplified for demo
-                },
-              }
-            : agent,
-        ),
-      );
-    }
-
-    addLog(`Task ${taskId} ${isSuccess ? "completed" : "failed"}`);
-
-    // If this was a scheduling task, create new tasks
-    if (task.type === "scheduling" && isSuccess) {
-      createChildTasks(taskId);
-    }
-  };
-
-  const createChildTasks = (parentTaskId: string) => {
-    const childTasks: Task[] = [
-      {
-        id: `task-${Date.now()}-1`,
-        type: "analysis",
-        status: "pending",
-        priority: 2,
-        assignedTo: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        metadata: {
-          parentTaskId,
-          description: "Analyze game state",
-          dependencies: [],
-        },
-      },
-      {
-        id: `task-${Date.now()}-2`,
-        type: "execution",
-        status: "pending",
-        priority: 1,
-        assignedTo: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        metadata: {
-          parentTaskId,
-          description: "Execute game actions",
-          dependencies: [`task-${Date.now()}-1`],
-        },
-      },
-    ];
-
-    setTasks((prev) => [...childTasks, ...prev]);
-    childTasks.forEach((task) =>
-      addLog(`Created child task: ${task.metadata.description}`),
-    );
+    addLog(`Marked task ${taskId} for ${agentType} (preview: no agent backend executes it)`);
   };
 
   const getStatusColor = (status: string) => {
@@ -307,9 +194,11 @@ export default function AgentsPage() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Agent System</h1>
+          <h1 className="text-3xl font-bold">
+            Agent System <Badge variant="outline" className="ml-2 align-middle">Demo preview</Badge>
+          </h1>
           <p className="text-muted-foreground">
-            Manage and monitor AI agents for game automation
+            Preview of the agent task board. No agent backend is connected: tasks are kept in this page only and are never executed.
           </p>
         </div>
         <div className="flex space-x-2">

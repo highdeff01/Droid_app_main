@@ -86,7 +86,8 @@ export default defineConfig(() => {
     server: {
       port: 3000,
       strictPort: true, // Prevents Vite from silently shifting to port 3001/3002 on collision
-      host: '0.0.0.0',
+      // SECURITY.md: bind to loopback by default; DEV_HOST/HOST opt in to another interface.
+      host: process.env.DEV_HOST || process.env.HOST || '127.0.0.1',
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // File watching is deactivated when DISABLE_HMR is true to save CPU and avoid intermediate rebuilds.
       hmr: process.env.DISABLE_HMR !== 'true',

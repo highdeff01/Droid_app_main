@@ -1,5 +1,6 @@
 import { evaluateCalculator } from "@/lib/calculator";
 import React, { useState, useEffect, useRef } from "react";
+import { startPollLoop } from "@/lib/poll-loop";
 import {
   Search,
   Globe,
@@ -255,57 +256,36 @@ export const InteractivePhoneVirtualOS: React.FC<InteractivePhoneVirtualOSProps>
     onStateChange,
   ]);
 
-  // Listen for external sync from MobileRemote or other components
-  useEffect(() => {
-    const handleExternalSync = (e: any) => {
-      const d = e.detail;
-      if (!d) return;
-      if (d.activeApp && d.activeApp !== activeApp) {
-        setActiveApp(d.activeApp);
-      }
-      if (d.chromeUrl && d.chromeUrl !== chromeUrl) {
-        setChromeUrl(d.chromeUrl);
-      }
-      if (d.chromeQuery && d.chromeQuery !== chromeSearch) {
-        setChromeSearch(d.chromeQuery);
-      }
-      if (d.calcDisplay && d.calcDisplay !== calcDisplay) {
-        setCalcDisplay(d.calcDisplay);
-      }
-    };
+  // Latest compared values in refs so the sync listener and poll loop are created once
+  const syncedStateRef = useRef({ activeApp, chromeUrl, chromeSearch, calcDisplay });
+  syncedStateRef.current = { activeApp, chromeUrl, chromeSearch, calcDisplay };
 
+  // Listen for external sync from MobileRemote or other components, and poll the backend
+  useEffect(() => {
+    const applyRemoteState = (d: any) => {
+      if (!d) return;
+      const current = syncedStateRef.current;
+      if (d.activeApp && d.activeApp !== current.activeApp) setActiveApp(d.activeApp);
+      if (d.chromeUrl && d.chromeUrl !== current.chromeUrl) setChromeUrl(d.chromeUrl);
+      if (d.chromeQuery && d.chromeQuery !== current.chromeSearch) setChromeSearch(d.chromeQuery);
+      if (d.calcDisplay && d.calcDisplay !== current.calcDisplay) setCalcDisplay(d.calcDisplay);
+    };
+    const handleExternalSync = (e: any) => applyRemoteState(e.detail);
     window.addEventListener("sightline-virtual-os-sync", handleExternalSync);
 
-    // Fast polling backend for multi-client / mobile remote updates
-    const pollInterval = window.setInterval(async () => {
-      try {
-        const res = await fetch("/api/virtual-os/state");
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.state) {
-            const st = json.state;
-            if (st.activeApp && st.activeApp !== activeApp) {
-              setActiveApp(st.activeApp);
-            }
-            if (st.chromeUrl && st.chromeUrl !== chromeUrl) {
-              setChromeUrl(st.chromeUrl);
-            }
-            if (st.chromeQuery && st.chromeQuery !== chromeSearch) {
-              setChromeSearch(st.chromeQuery);
-            }
-            if (st.calcDisplay && st.calcDisplay !== calcDisplay) {
-              setCalcDisplay(st.calcDisplay);
-            }
-          }
-        }
-      } catch {}
-    }, 400);
+    const pollState = async () => {
+      const res = await fetch("/api/virtual-os/state");
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.success) applyRemoteState(json.state);
+    };
+    const stopPolling = startPollLoop([{ everyTicks: 1, enabled: () => true, run: pollState }], 400);
 
     return () => {
       window.removeEventListener("sightline-virtual-os-sync", handleExternalSync);
-      clearInterval(pollInterval);
+      stopPolling();
     };
-  }, [activeApp, chromeUrl, chromeSearch, calcDisplay]);
+  }, []);
 
   const handleHome = () => {
     setIsNotificationsOpen(false);

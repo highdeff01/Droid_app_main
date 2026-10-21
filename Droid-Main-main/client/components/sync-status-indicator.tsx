@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { WorkflowStep, DEFAULT_DRIFT_THRESHOLD_PX } from "@/lib/drift-calibration";
 
-export type SyncState = "in_sync" | "drift_detected" | "out_of_sync" | "syncing" | "idle";
+export type SyncState = "in_sync" | "drift_detected" | "out_of_sync" | "syncing" | "idle" | "check_failed";
 
 export interface SyncStatusIndicatorProps {
   currentFrameUrl?: string | null;
@@ -126,9 +126,9 @@ export const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({
           setAiNote("Live viewport verified against stored step coordinates.");
         }
       }
-    } catch {
-      setSyncState("in_sync");
-      setAiNote("Local screen check verified. Viewport responsive.");
+    } catch (err) {
+      setSyncState("check_failed");
+      setAiNote(`Sync check failed: ${err instanceof Error ? err.message : String(err)}. Screen state is unknown.`);
     } finally {
       setLastCheckTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     }
@@ -183,6 +183,14 @@ export const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({
           subLabel: `${(similarityScore * 100).toFixed(0)}%`,
           badgeClass: "bg-red-950/90 border-red-500/80 text-red-200 hover:bg-red-900/70 shadow-[0_0_14px_rgba(239,68,68,0.4)]",
           dotClass: "bg-red-400 animate-ping",
+        };
+      case "check_failed":
+        return {
+          icon: <AlertTriangle className="w-3.5 h-3.5 text-red-400" />,
+          label: "Check Failed",
+          subLabel: "Unknown",
+          badgeClass: "bg-red-950/90 border-red-500/80 text-red-200 hover:bg-red-900/70",
+          dotClass: "bg-red-400",
         };
       case "syncing":
         return {

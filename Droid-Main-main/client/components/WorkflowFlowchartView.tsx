@@ -429,7 +429,7 @@ export const WorkflowFlowchartView: React.FC<{ className?: string }> = ({ classN
     toast.success(`Generated and saved interactive flowchart from "${session.name}"`);
   };
 
-  // Run Step-by-Step Simulation with motion feedback
+  // Visual preview: animates node states locally; nothing is executed or verified on a device
   const runSimulation = async () => {
     if (isSimulating) return;
     setIsSimulating(true);
@@ -445,7 +445,7 @@ export const WorkflowFlowchartView: React.FC<{ className?: string }> = ({ classN
 
       await new Promise((res) => setTimeout(res, 550));
 
-      // If it's a recovery or drift node, simulate a brief drift event
+      // Recovery / drifted nodes show their drift state in the preview
       const isDriftStep = node.type === "recovery" || (node.data.driftOffsetPx && node.data.driftOffsetPx > 10);
 
       if (isDriftStep) {
@@ -462,7 +462,7 @@ export const WorkflowFlowchartView: React.FC<{ className?: string }> = ({ classN
 
     setActiveStepIndex(null);
     setIsSimulating(false);
-    toast.success("Workflow simulation verified with 100% path coverage!");
+    toast.info("Visual preview finished. Nothing was executed or verified; run the workflow from the replay controls to verify it.");
   };
 
   const selectedNode = useMemo(() => nodes.find((n) => n.id === selectedNodeId) || null, [nodes, selectedNodeId]);
@@ -604,10 +604,11 @@ export const WorkflowFlowchartView: React.FC<{ className?: string }> = ({ classN
           <Button
             onClick={runSimulation}
             disabled={isSimulating}
+            title="Animates the flowchart locally; does not execute or verify anything on a device"
             className="h-8 px-3 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs gap-1.5 shadow-lg shadow-purple-950/50"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            {isSimulating ? "TESTING PATH..." : "SIMULATE FLOW"}
+            {isSimulating ? "PREVIEWING..." : "VISUAL PREVIEW"}
           </Button>
 
           <Button
