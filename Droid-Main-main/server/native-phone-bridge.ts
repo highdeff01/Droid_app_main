@@ -18,7 +18,13 @@ interface NativeDevice {
   id: string; name: string; pairing?: string; pairingExpires: number; credential?: string;
   expires: number; lastSeen: number; controlEnabled: boolean; frame?: PhoneFrame;
   records: PhoneRecording[]; pending: Map<string, PendingCommand>;
+  aiState: NativeAiState; notices: NativeNotice[];
 }
+/** What the desktop/AI side is doing, mirrored in the phone's indicator. */
+export type NativeAiState = "idle" | "thinking" | "acting" | "waiting_approval";
+/** A popup the phone shows for a key event; delivered once via poll. */
+export interface NativeNotice { kind: "workflow_started" | "workflow_finished" | "workflow_failed" | "goal_complete" | "approval_needed"; message: string }
+const FRESH_FRAME_MS = 5000, ONLINE_MS = 15000;
 
 /** Each phone has separate, revocable upload credentials and a one-use QR invitation. */
 export class NativePhoneBridge {
@@ -28,7 +34,7 @@ export class NativePhoneBridge {
     if (this.devices.size >= 32) throw new Error("Too many native phones; disconnect an existing phone first");
     const id = `native-${randomUUID()}`, pairing = randomBytes(32).toString("base64url");
     this.devices.set(id, { id, name: "Waiting for Android app", pairing: digest(pairing), pairingExpires: Date.now() + 300000,
-      expires, lastSeen: 0, controlEnabled: false, records: [], pending: new Map() });
+      expires, lastSeen: 0, controlEnabled: false, records: [], pending: new Map(), aiState: "idle", notices: [] });
     return { id, pairing };
   }
   private prune() {
@@ -37,8 +43,9 @@ export class NativePhoneBridge {
   has(id: string) { return this.devices.has(id); }
   register(pairing: string, name: string) {
     this.prune();
-    const device = [...this.devices.values()].find(d => d.pairing === digest(pairing) && d.pairingExpires > Date.now());
-    if (!device) throw new Error("QR invitation expired or already used. Create a new QR on the desktop.");
+    const device = [...this.devices.values()].find(d => d.pairing === digest(pairing));
+    if (!device) throw new Error("QR invitation is invalid or already used. Create a new QR on the desktop.");
+    if (device.pairingExpires <= Date.now()) throw new Error("QR invitation expired (invitations last 5 minutes). Create a new QR on the desktop.");
     const token = randomBytes(32).toString("base64url");
     device.pairing = undefined; device.credential = digest(token); device.name = name; device.lastSeen = Date.now();
     return { token, device: device.id, expires: device.expires };
@@ -50,11 +57,29 @@ export class NativePhoneBridge {
   }
   list() {
     this.prune();
-    return [...this.devices.values()].map(d => ({ id: d.id, state: Date.now() - d.lastSeen < 15000 ? "device" : "offline", detail: d.name }));
+    return [...this.devices.values()].map(d => ({ id: d.id, state: Date.now() - d.lastSeen < ONLINE_MS ? "device" : "offline", detail: d.name }));
   }
   info(id: string) {
     const d = this.devices.get(id);
-    return d && { online: Date.now() - d.lastSeen < 15000, controlEnabled: d.controlEnabled, name: d.name, storage: "phone" };
+    return d && {
+      online: Date.now() - d.lastSeen < ONLINE_MS, controlEnabled: d.controlEnabled, name: d.name, storage: "phone",
+      paired: !!d.credential, pairingExpires: d.credential ? undefined : d.pairingExpires,
+      frameAgeMs: d.frame?.capturedAt ? Date.now() - d.frame.capturedAt : undefined, aiState: d.aiState,
+    };
+  }
+  setAiState(id: string, state: NativeAiState) { const d = this.devices.get(id); if (d) d.aiState = state; }
+  notify(id: string, notice: NativeNotice) {
+    const d = this.devices.get(id);
+    if (!d) return;
+    d.notices.push(notice);
+    if (d.notices.length > 20) d.notices.shift();
+  }
+  /** Indicator state and undelivered popups for the phone's poll response. */
+  phoneState(id: string) {
+    const d = this.devices.get(id);
+    if (!d) throw new Error("Phone disconnected");
+    const notices = d.notices; d.notices = [];
+    return { aiState: d.aiState, notices };
   }
   heartbeat(id: string, controlEnabled: boolean, records: PhoneRecording[]) {
     const d = this.devices.get(id);
@@ -77,17 +102,23 @@ export class NativePhoneBridge {
   }
   async capture(id: string): Promise<PhoneFrame> {
     const d = this.devices.get(id);
-    if (!d?.frame || Date.now() - d.frame.capturedAt > 5000) throw new Error("No fresh phone screen. Enable Sightline accessibility and screen sharing in the Android app.");
+    if (!d?.frame || Date.now() - d.frame.capturedAt > FRESH_FRAME_MS) throw new Error("No fresh phone screen. Enable Sightline accessibility and screen sharing in the Android app.");
     return { ...d.frame };
   }
   async command(id: string, type: string, extra: { action?: PhoneAction; minutes?: number } = {}) {
     const d = this.devices.get(id);
-    if (!d || Date.now() - d.lastSeen > 15000) throw new Error("Android app is offline");
+    if (!d || Date.now() - d.lastSeen > ONLINE_MS) throw new Error("Android app is offline");
     if (type === "action" && !d.controlEnabled) throw new Error("Enable Sightline accessibility on the phone to allow control");
     if (d.pending.size) throw new Error("Phone has an operation awaiting acknowledgment");
     return new Promise<unknown>((resolve, reject) => {
       const command = { id: randomUUID(), type, ...extra, expires: Date.now() + 12000 };
-      const timer = setTimeout(() => { d.pending.delete(command.id); reject(new Error("Phone did not confirm the operation. Check the phone before retrying.")); }, 12000);
+      const timer = setTimeout(() => {
+        const entry = d.pending.get(command.id);
+        d.pending.delete(command.id);
+        reject(new Error(entry?.delivered
+          ? "Phone did not confirm the operation. Check the phone before retrying."
+          : "Phone did not pick up the operation before its deadline; nothing was executed. Check the phone's connection."));
+      }, 12000);
       timer.unref();
       d.pending.set(command.id, { command, delivered: false, timer, resolve, reject });
     });

@@ -45,6 +45,7 @@ export interface MobileActionItem {
   description?: string;
   note?: string;
   deviceId?: string;
+  repeatCount?: number;
   createdAt: number;
 }
 
@@ -1128,7 +1129,16 @@ mobileStreamRouter.post("/api/mobile-stream/workflows", (req, res) => {
   if (!name || typeof name !== "string") {
     return res.status(400).json({ success: false, error: "Workflow name is required" });
   }
+  const newWf = saveDeviceWorkflow({ name, description, notes, tags, actions, autoSave, sourceSnapshot });
+  res.json({ success: true, workflow: newWf });
+});
 
+/** Stores a device workflow; shared by the desktop route and native phone action recording. */
+export function saveDeviceWorkflow(input: {
+  name: string; description?: string; notes?: string; tags?: string[];
+  actions?: Array<Partial<Omit<MobileActionItem, "type">> & { type?: string }>; autoSave?: boolean; sourceSnapshot?: string;
+}): DeviceWorkflow {
+  const { name, description, notes, tags, actions, autoSave, sourceSnapshot } = input;
   const actionList = Array.isArray(actions) && actions.length > 0 ? actions : [];
 
   const newWf: DeviceWorkflow = {
@@ -1150,6 +1160,7 @@ mobileStreamRouter.post("/api/mobile-stream/workflows", (req, res) => {
       durationMs: a.durationMs || 150,
       description: a.description || `Step ${idx + 1}: ${a.type}`,
       note: a.note,
+      repeatCount: a.repeatCount,
       createdAt: a.createdAt || Date.now(),
     })),
     autoSave: autoSave === true,
@@ -1161,9 +1172,15 @@ mobileStreamRouter.post("/api/mobile-stream/workflows", (req, res) => {
 
   savedDeviceWorkflows.unshift(newWf);
   centralLogHub.addLog("Mobile-Automation", "INFO", `Saved new device workflow "${newWf.name}" (${newWf.actions.length} steps)`);
+  return newWf;
+}
 
-  res.json({ success: true, workflow: newWf });
-});
+export function listDeviceWorkflows() { return savedDeviceWorkflows; }
+export function findDeviceWorkflow(id: string) { return savedDeviceWorkflows.find((w) => w.id === id); }
+export function markWorkflowExecuted(wf: DeviceWorkflow) {
+  wf.executionCount = (wf.executionCount || 0) + 1;
+  wf.lastExecutedAt = Date.now();
+}
 
 // PUT update an existing workflow (including notes, actions, tags, auto-save toggle)
 mobileStreamRouter.put("/api/mobile-stream/workflows/:id", (req, res) => {

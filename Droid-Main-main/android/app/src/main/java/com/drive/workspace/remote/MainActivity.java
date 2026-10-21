@@ -14,15 +14,17 @@ import java.net.URI;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
-    private EditText link, minutes;
+    private EditText link, minutes, repeat;
     private TextView status;
-    private Button connect;
+    private Button connect, recordActions;
     private boolean pendingRecord;
     private int pendingMinutes;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         public void run() {
-            status.setText(ScreenCaptureService.status(MainActivity.this) + "\nAccessibility: " + (PhoneAccessibilityService.current() == null ? "disabled" : "enabled"));
+            status.setText(ScreenCaptureService.status(MainActivity.this) + "\nAccessibility: " + (PhoneAccessibilityService.current() == null ? "disabled" : "enabled")
+                + (ActionRecorder.isActive() ? "\nRecording actions: " + ActionRecorder.count() + " event(s)" : ""));
+            recordActions.setText(ActionRecorder.isActive() ? "Stop & upload workflow" : "Record workflow");
             main.postDelayed(this, 1500);
         }
     };
@@ -41,6 +43,15 @@ public class MainActivity extends Activity {
         button(layout, "Stop recording and save", () -> { if (ScreenCaptureService.isSharing()) startService(new Intent(this, ScreenCaptureService.class).setAction(ScreenCaptureService.STOP_RECORD)); });
         button(layout, "Stop sharing and recording", () -> stopService(new Intent(this, ScreenCaptureService.class)));
         button(layout, "Saved recordings / Share video", this::saved);
+        TextView workflowHelp = new TextView(this); workflowHelp.setText("Action workflows: record your own taps, scrolls, typing and Back/Home/Recents in other apps, then replay them here or from the desktop. Password fields are never recorded."); layout.addView(workflowHelp);
+        recordActions = button(layout, "Record workflow", this::toggleActionRecording);
+        repeat = new EditText(this); repeat.setHint("Runs (1–25)"); repeat.setText("1"); repeat.setInputType(InputType.TYPE_CLASS_NUMBER); layout.addView(repeat);
+        button(layout, "Run saved workflow", this::chooseWorkflow);
+        button(layout, "Stop running workflow", () -> background(() -> { PhoneApi.post(this, "/native/replay/cancel", new JSONObject()); return "Stop requested. An action already in flight cannot be undone."; }));
+        CheckBox overlay = new CheckBox(this); overlay.setText("Show status badge over other apps (accessibility overlay)");
+        overlay.setChecked(PhoneApi.prefs(this).getBoolean("overlay", false));
+        overlay.setOnCheckedChangeListener((view, checked) -> PhoneApi.prefs(this).edit().putBoolean("overlay", checked).apply());
+        layout.addView(overlay);
         status = new TextView(this); layout.addView(status);
         acceptLink(getIntent());
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 2);
@@ -76,7 +87,9 @@ public class MainActivity extends Activity {
                         JSONObject result = PhoneApi.request(server, "", "/native/register", "application/json", new JSONObject().put("pairing", pairing).put("name", Build.MANUFACTURER + " " + Build.MODEL).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
                         PhoneApi.prefs(this).edit().putString("server", server).putString("token", result.getString("token")).putString("status", "Connected to " + server + ". Enable accessibility, then Start sharing.").apply();
                         runOnUiThread(() -> { link.setText(""); message("Paired. Enable accessibility, then Start sharing."); });
-                    } catch (Exception error) { runOnUiThread(() -> message(error.getMessage())); }
+                    } catch (PhoneApi.RevokedException | PhoneApi.ServerException error) { runOnUiThread(() -> message("Pairing refused: " + error.getMessage())); }
+                    catch (java.io.IOException error) { runOnUiThread(() -> message("Cannot reach server " + server + " — check that the phone is on the same Wi-Fi and the QR URL is reachable (" + error.getMessage() + ")")); }
+                    catch (Exception error) { runOnUiThread(() -> message(error.getMessage())); }
                     finally { runOnUiThread(() -> connect.setEnabled(true)); worker.shutdown(); }
                 });
             }).show();
@@ -117,6 +130,56 @@ public class MainActivity extends Activity {
             Intent share = new Intent(Intent.ACTION_SEND).setType("video/mp4").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             share.setClipData(ClipData.newRawUri("Sightline recording", uri));
             startActivity(Intent.createChooser(share, "Save or share full phone video"));
+        }).setNegativeButton("Close", null).show();
+    }
+    private interface Work { String run() throws Exception; }
+    /** Network work off the UI thread; the toast shows the server's real answer or failure. */
+    private void background(Work work) {
+        java.util.concurrent.ExecutorService worker = Executors.newSingleThreadExecutor();
+        worker.execute(() -> {
+            String result;
+            try { result = work.run(); } catch (Exception error) { result = error.getMessage(); }
+            String shown = result;
+            runOnUiThread(() -> message(shown));
+            worker.shutdown();
+        });
+    }
+    private void toggleActionRecording() {
+        if (PhoneApi.prefs(this).getString("token", "").isEmpty()) { message("Pair with the desktop first"); return; }
+        if (!ActionRecorder.isActive()) {
+            if (PhoneAccessibilityService.current() == null) { message("Enable Sightline accessibility first; it observes your taps while recording"); return; }
+            ActionRecorder.start();
+            message("Recording your actions. Switch to other apps, then come back and tap Stop & upload.");
+            return;
+        }
+        JSONArray recorded = ActionRecorder.stop();
+        String name = "Phone workflow " + java.text.DateFormat.getDateTimeInstance().format(new java.util.Date());
+        background(() -> ActionRecorder.upload(this, name, recorded));
+    }
+    private void chooseWorkflow() {
+        final int runs;
+        try { runs = Integer.parseInt(repeat.getText().toString()); if (runs < 1 || runs > 25) throw new NumberFormatException(); }
+        catch (NumberFormatException error) { message("Runs must be 1–25"); return; }
+        java.util.concurrent.ExecutorService worker = Executors.newSingleThreadExecutor();
+        worker.execute(() -> {
+            try {
+                JSONArray workflows = PhoneApi.get(this, "/native/workflows").getJSONArray("workflows");
+                runOnUiThread(() -> showWorkflows(workflows, runs));
+            } catch (Exception error) { runOnUiThread(() -> message(error.getMessage())); }
+            finally { worker.shutdown(); }
+        });
+    }
+    private void showWorkflows(JSONArray workflows, int runs) {
+        if (workflows.length() == 0) { message("No saved workflows yet. Record one first."); return; }
+        String[] labels = new String[workflows.length()];
+        for (int i = 0; i < labels.length; i++) { JSONObject w = workflows.optJSONObject(i); labels[i] = w.optString("name") + " · " + w.optInt("steps") + " step(s)"; }
+        new AlertDialog.Builder(this).setTitle("Run " + runs + " time(s) — choose workflow").setItems(labels, (dialog, index) -> {
+            String id = workflows.optJSONObject(index).optString("id");
+            background(() -> {
+                if (!ScreenCaptureService.isSharing()) throw new IllegalStateException("Start sharing first; workflows verify each step against fresh screenshots");
+                JSONObject run = PhoneApi.post(this, "/native/workflows/" + Uri.encode(id) + "/run", new JSONObject().put("iterations", runs)).getJSONObject("run");
+                return "Workflow started: " + run.optInt("total") + " verified action(s). You can switch apps; progress shows in the notification.";
+            });
         }).setNegativeButton("Close", null).show();
     }
     private void message(String text) { Toast.makeText(this, text == null ? "Operation failed" : text, Toast.LENGTH_LONG).show(); }
