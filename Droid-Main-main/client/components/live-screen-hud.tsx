@@ -52,6 +52,7 @@ import {
 } from "lucide-react";
 import { AIWorkflowReviewModal, AIReviewResult } from "./ai-workflow-review-modal";
 import { AutoCorrectionLog, AutoCorrectionEntry, DEFAULT_DRIFT_LOGS } from "./AutoCorrectionLog";
+import { buildSyntheticDriftEntry, describeSyntheticDriftToast } from "@/lib/synthetic-drift";
 import { OverseerAIPanel } from "./OverseerAIPanel";
 import { WorkflowFlowchartView } from "./WorkflowFlowchartView";
 import { DriftHeatmapOverlay } from "./drift-heatmap-overlay";
@@ -101,6 +102,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
+import { readJsonResponse } from "@/lib/api-helper";
 import {
   frameBoxAsPercent,
   frameBoxContains,
@@ -5636,14 +5638,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
               },
             }),
           })
-            .then(async (r) => {
-              try {
-                const text = await r.text();
-                return JSON.parse(text);
-              } catch {
-                return { success: r.ok, simulated: true };
-              }
-            })
+            .then((r) => readJsonResponse(r))
             .then((d) => {
               if (d.success) {
                 toast.success(`Executed "${step.name}" on PC!`);
@@ -5713,14 +5708,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 },
               }),
             })
-              .then(async (r) => {
-                try {
-                  const text = await r.text();
-                  return JSON.parse(text);
-                } catch {
-                  return { success: r.ok, simulated: true };
-                }
-              })
+              .then((r) => readJsonResponse(r))
               .then((d) => {
                 setIsExecutingTrailOnPC(false);
                 if (d.success) {
@@ -6155,36 +6143,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           });
         }}
         onTriggerTestDriftEvent={() => {
-          const testX = Math.round(200 + Math.random() * 1200);
-          const testY = Math.round(150 + Math.random() * 700);
-          const shiftX = Math.round((Math.random() - 0.5) * 36);
-          const shiftY = Math.round((Math.random() - 0.5) * 36);
-          const driftDist = parseFloat(Math.hypot(shiftX, shiftY).toFixed(1));
-          const stepNum = sequence.length > 0 ? Math.floor(Math.random() * sequence.length) + 1 : 1;
-
-          logDriftAutoCorrection({
-            stepIndex: stepNum,
-            stepName: `Auto-Verified Target Action #${stepNum}`,
-            originalCoords: { x: testX, y: testY },
-            recalibratedCoords: { x: testX + shiftX, y: testY + shiftY },
-            driftDistancePx: driftDist,
-            driftDelta: { dx: shiftX, dy: shiftY },
-            recoveryBranch:
-              driftDist > 18
-                ? "ocr_landmark_anchor"
-                : driftDist > 10
-                ? "visual_template_offset"
-                : "cubic_bezier_morph",
-            confidenceScore: parseFloat((0.94 + Math.random() * 0.05).toFixed(2)),
-            targetElement: `UI Target Element @ (${testX}, ${testY})`,
-            diffScore: parseFloat((0.96 + Math.random() * 0.03).toFixed(2)),
-            reasoning: `Dynamic frame diff detected ${driftDist}px inter-frame layout displacement. Recalibrated trajectory spline to align with real-time target bounding anchor.`,
-            status: "auto_recalibrated",
-          });
-
-          toast.warning(`Frame Drift Detected (Δ${driftDist}px)`, {
-            description: `Auto-recalibrated target to (${testX + shiftX}, ${testY + shiftY}) with 98% confidence.`,
-          });
+          const entry = buildSyntheticDriftEntry(sequence.length);
+          logDriftAutoCorrection(entry);
+          const { title, description } = describeSyntheticDriftToast(entry);
+          toast.info(title, { description });
         }}
       />
 

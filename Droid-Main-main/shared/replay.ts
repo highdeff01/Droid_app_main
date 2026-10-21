@@ -16,6 +16,9 @@ export const replayStepSchema = z.object({
   ]),
   x: z.number().finite().min(0).max(16384),
   y: z.number().finite().min(0).max(16384),
+  /** Swipe end point in screenshot pixels (Android scroll steps recorded on the phone). */
+  toX: z.number().finite().min(0).max(16384).optional(),
+  toY: z.number().finite().min(0).max(16384).optional(),
   text: z.string().max(4000).optional(),
   keyPayload: z.string().max(100).optional(),
   delayMs: z.number().int().min(0).max(5000).default(500),
