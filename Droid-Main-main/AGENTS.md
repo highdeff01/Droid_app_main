@@ -12,7 +12,7 @@
 - The `node:22-slim` image has no `python3`/X11, so the pyautogui bridge returns its designed simulated fallbacks (`{ success: true, simulated: true }`). Handlers that `spawn` a child process must guard their response so the `error` (ENOENT) and `close` events can't both call `res.json` — a double response raises `ERR_HTTP_HEADERS_SENT`, which the startup script's `uncaughtException` handler turns into a full process exit. See `handleInteractiveDeviceAction` in `server/routes/pyautogui-bridge.ts` for the `sendOnce` guard pattern.
 
 ## AI provider configuration
-- The AI vision/planner engines (`server/ai-perception-engine.ts`, `server/ai-planner-engine.ts`, `server/routes/analyze-screenshot.ts`) take their Ollama-compatible endpoint from the request body or the `OLLAMA_ENDPOINT` env var (see `server/ai-endpoint.ts`). Nothing is hardcoded.
+- The AI vision/planner engines (`server/ai-perception-engine.ts`, `server/ai-planner-engine.ts`, `server/routes/analyze-screenshot.ts`) take their Ollama-compatible endpoint from the request body or the `OLLAMA_ENDPOINT` env var (see `server/ai-endpoint.ts`). Precedence: request body → runtime setting (`/api/ai/settings`) → `OLLAMA_ENDPOINT` → LAN default `http://192.168.1.100:11434/api/chat`; on connection failure/timeout `sendQwenChatRequest` falls back to `https://quantumclaw.net/ollama/api/chat`. Model defaults to `qwen3.5:2b` (`OLLAMA_MODEL` overrides).
 - With `OLLAMA_ENDPOINT` unset, perception uses the app's Gemini provider (`detectScreenElementsAndSteps`) and the planner uses its deterministic fallback, so the AI pipeline works without any remote host.
 
 ## AI Monitor & action history

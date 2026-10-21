@@ -28,6 +28,9 @@ import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { TabContextualSettingsBar } from "./tab-contextual-settings-bar";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { mouseRoutePlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 
 export interface MouseRoutePoint {
   x: number;
@@ -46,6 +49,7 @@ interface ContinuousMouseRoutePlayerProps {
 export const ContinuousMouseRoutePlayer: React.FC<
   ContinuousMouseRoutePlayerProps
 > = ({ currentLiveScreenshot, onDispatchRouteToOS }) => {
+  const actionGate = useActionGate({ targetDevice: "desktop" });
   const [isRecordingRoute, setIsRecordingRoute] = useState(false);
   const [isPlayingRoute, setIsPlayingRoute] = useState(false);
   const [isDragRoute, setIsDragRoute] = useState(false);
@@ -127,27 +131,20 @@ export const ContinuousMouseRoutePlayer: React.FC<
 
     setIsPlayingRoute(true);
     setStatusLog(
-      `⚡ Dispatching 60Hz continuous mouse route (${routePoints.length} points) to Physical OS...`,
+      `🔍 Verifying the live screen, then dispatching 60Hz continuous mouse route (${routePoints.length} points)...`,
     );
 
     try {
-      const res = await fetch("/api/execute-task", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetDevice: "desktop",
-          task: {
-            id: `route_${Date.now()}`,
-            name: "Continuous Navigational Mouse Route",
-            action: "stream_mouse_route",
-            routePoints,
-            speedMultiplier,
-            driftPx: humanDriftPx,
-            isDrag: isDragRoute,
-          },
-        }),
-      });
-      const data = await res.json();
+      const result = await actionGate.run(
+        mouseRoutePlan(routePoints, { speedMultiplier, driftPx: humanDriftPx, isDrag: isDragRoute }),
+      );
+      const failure = gateFailure(result);
+      if (failure) {
+        setStatusLog(`⛔ Route not dispatched: ${failure}`);
+        setIsPlayingRoute(false);
+        return;
+      }
+      const data = result!.results[0] as { success?: boolean; error?: string; message?: string };
       if (data.success) {
         setStatusLog(
           `✓ Physical OS mouse executed continuous route successfully.`,

@@ -1,5 +1,10 @@
 import { spawn } from "child_process";
 import type { OCRTextBlock, RegionOfInterest } from "@shared/assistant";
+import {
+  buildVisionMessage,
+  parseModelJson,
+  sendQwenChatRequest,
+} from "./ai-endpoint";
 
 export interface OcrInput {
   imageData?: string;
@@ -7,7 +12,7 @@ export interface OcrInput {
 }
 
 export interface OcrResult {
-  provider: "tesseract" | "remote-ocr";
+  provider: "tesseract" | "remote-ocr" | "qwen-vision";
   text: OCRTextBlock[];
   confidence: number;
   regions: RegionOfInterest[];
@@ -250,11 +255,69 @@ export class RemoteOcrProvider implements OcrProvider {
   }
 }
 
+const QWEN_OCR_PROMPT =
+  'Read every visible text line in this screenshot. Return JSON {"text":[{"text":string,"confidence":0..1,"box":{"x":number,"y":number,"width":number,"height":number}}]} using screenshot pixel coordinates (top-left origin). Return {"text":[]} when no text is visible.';
+
+/** OCR through the Qwen 3.5:2b vision model (local Ollama, quantumclaw fallback). */
+export class QwenVisionOcrProvider implements OcrProvider {
+  readonly name = "qwen-vision" as const;
+
+  constructor(private readonly chat = sendQwenChatRequest) {}
+
+  async recognize(input: OcrInput): Promise<OcrResult> {
+    if (!input.imageData) {
+      throw new OcrProviderError("Image data is required for Qwen OCR", this.name);
+    }
+    const dimensions = imageDimensions(decodeImageData(input.imageData));
+    const reply = await this.chat(
+      [buildVisionMessage(QWEN_OCR_PROMPT, input.imageData)],
+      { format: "json" },
+    );
+    if (!reply.success) {
+      throw new OcrProviderError(reply.error || "Qwen OCR unavailable", this.name);
+    }
+    let parsed: any;
+    try {
+      parsed = parseModelJson(reply.content);
+    } catch (error) {
+      throw new OcrProviderError(
+        error instanceof Error ? error.message : "Qwen OCR returned invalid JSON",
+        this.name,
+      );
+    }
+    const lines: any[] = Array.isArray(parsed?.text) ? parsed.text : [];
+    const text: OCRTextBlock[] = lines
+      .filter((line) => typeof line?.text === "string" && line.text.trim())
+      .map((line, index) => {
+        const box = line.box;
+        const id = `roi_ocr_${index + 1}`;
+        const region =
+          box && [box.x, box.y, box.width, box.height].every(Number.isFinite)
+            ? normalizeRegion(box.x, box.y, box.width, box.height, dimensions, id)
+            : undefined;
+        return {
+          id: `ocr_${index + 1}`,
+          text: line.text.trim(),
+          confidence: Number.isFinite(line.confidence)
+            ? Math.max(0, Math.min(1, line.confidence))
+            : 0.5,
+          region,
+        };
+      });
+    const regions = text.flatMap((block) => (block.region ? [block.region] : []));
+    const confidence = text.length
+      ? text.reduce((sum, block) => sum + block.confidence, 0) / text.length
+      : 0;
+    return { provider: this.name, text, confidence, regions };
+  }
+}
+
 export function configuredOcrProviders(): OcrProvider[] {
   const providers: OcrProvider[] = [];
   if (process.env.OCR_REMOTE_URL)
     providers.push(new RemoteOcrProvider(process.env.OCR_REMOTE_URL));
   providers.push(new TesseractOcrProvider());
+  providers.push(new QwenVisionOcrProvider());
   return providers;
 }
 

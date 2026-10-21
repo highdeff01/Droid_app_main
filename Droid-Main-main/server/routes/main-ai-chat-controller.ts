@@ -1,6 +1,7 @@
 import { RequestHandler, Router } from "express";
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { centralLogHub } from "../log-hub";
+import { sendQwenChatRequest } from "../ai-endpoint";
 import { aiMonitorStore } from "../ai-monitor-store";
 import { dispatchActionToPython } from "./dual-ai-pipeline";
 import { queueMobileAction, executeAdbCommand, getRecentMobileFrames } from "./mobile-stream";
@@ -1228,6 +1229,20 @@ async function fallbackIntentExecution(
     return "🔍 **Screen Analysis Completed**\n\nScanned live display buffer and verified interactive bounding boxes.";
   }
 
+  return qwenCopilotReply(message);
+}
+
+/** Free-form copilot answer from Qwen; a static hint when the model is unreachable. */
+async function qwenCopilotReply(message: string): Promise<string> {
+  const reply = await sendQwenChatRequest([
+    {
+      role: "system",
+      content:
+        "You are the Main AI Copilot of a screen, mobile device and vision automation platform. Answer concisely in Markdown. You can click, type, switch dashboard tabs, analyze the screen and create workflows when the user asks.",
+    },
+    { role: "user", content: message },
+  ]);
+  if (reply.success && reply.content.trim()) return reply.content.trim();
   return `🤖 **Understood Request:** "${message}"\n\nI am ready to trigger hardware actions, switch views, or compile multi-step workflows. You can ask me to *click specific areas*, *type text*, *minimize phone*, or *create a new workflow*.`;
 }
 

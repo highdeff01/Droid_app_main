@@ -1,21 +1,24 @@
 /**
- * Resolves the Ollama-compatible vision and chat endpoint used by the AI
- * perception, planner, and copilot engines.
+ * Single gateway to the Ollama-compatible Qwen 3.5:2b model used for both text
+ * chat and screenshot (vision) analysis by the perception, planner, copilot,
+ * OCR and review engines.
  *
- * Configured Default:
- * URL: https://quantumclaw.net/ollama/api/chat
- * Model: qwen3.5:2b
+ * Endpoint chain: the primary endpoint (runtime setting > OLLAMA_ENDPOINT >
+ * local Ollama at DEFAULT_LOCAL_OLLAMA_ENDPOINT) is tried first; on a
+ * connection failure or timeout the request is retried once against
+ * DEFAULT_OLLAMA_ENDPOINT (quantumclaw).
  */
 
 import { centralLogHub } from "./log-hub";
 
+export const DEFAULT_LOCAL_OLLAMA_ENDPOINT = "http://192.168.1.100:11434/api/chat";
 export const DEFAULT_OLLAMA_ENDPOINT = "https://quantumclaw.net/ollama/api/chat";
 export const DEFAULT_QWEN_MODEL = "qwen3.5:2b";
+export const DEFAULT_CHAT_TIMEOUT_MS = 25_000;
+export const PING_TIMEOUT_MS = 8_000;
 
-let runtimeConfiguredEndpoint: string =
-  process.env.OLLAMA_ENDPOINT || DEFAULT_OLLAMA_ENDPOINT;
-let runtimeConfiguredModel: string =
-  process.env.OLLAMA_MODEL || DEFAULT_QWEN_MODEL;
+let runtimeConfiguredEndpoint: string | null = null;
+let runtimeConfiguredModel: string | null = null;
 
 export function setConfiguredAiEndpoint(url: string) {
   if (url && typeof url === "string" && url.trim().length > 0) {
@@ -23,13 +26,13 @@ export function setConfiguredAiEndpoint(url: string) {
     centralLogHub.addLog(
       "System",
       "INFO",
-      `Active AI model URL updated to: ${runtimeConfiguredEndpoint}`
+      `Active AI model URL updated to: ${runtimeConfiguredEndpoint}`,
     );
   }
 }
 
 export function getConfiguredAiEndpoint(): string {
-  return runtimeConfiguredEndpoint || DEFAULT_OLLAMA_ENDPOINT;
+  return resolveAiEndpoint();
 }
 
 export function setConfiguredAiModel(model: string) {
@@ -39,40 +42,97 @@ export function setConfiguredAiModel(model: string) {
 }
 
 export function getConfiguredAiModel(): string {
-  return runtimeConfiguredModel || DEFAULT_QWEN_MODEL;
+  return resolveAiModel();
 }
 
-export function resolveAiEndpoint(provided?: string | null): string {
-  const endpoint = (
-    provided ??
-    runtimeConfiguredEndpoint ??
-    process.env.OLLAMA_ENDPOINT ??
-    ""
-  ).trim();
-  if (endpoint.length > 0) {
-    if (endpoint.endsWith("/api/chat") || endpoint.endsWith("/api/generate")) {
-      return endpoint;
-    }
-    return endpoint.endsWith("/") ? `${endpoint}api/chat` : `${endpoint}/api/chat`;
+/** Clears runtime overrides so env/defaults apply again. */
+export function resetAiConfiguration() {
+  runtimeConfiguredEndpoint = null;
+  runtimeConfiguredModel = null;
+}
+
+function normalizeChatUrl(endpoint: string): string {
+  if (endpoint.endsWith("/api/chat") || endpoint.endsWith("/api/generate")) {
+    return endpoint;
   }
-  // If no endpoint configured, check if Gemini API key is available
-  // If yes, return Gemini endpoint; otherwise use Qwen default as fallback
-  return DEFAULT_OLLAMA_ENDPOINT;
+  return endpoint.endsWith("/") ? `${endpoint}api/chat` : `${endpoint}/api/chat`;
+}
+
+/** Primary endpoint: request value > runtime setting > env > local Ollama. */
+export function resolveAiEndpoint(provided?: string | null): string {
+  const candidates = [
+    provided,
+    runtimeConfiguredEndpoint,
+    process.env.OLLAMA_ENDPOINT,
+    DEFAULT_LOCAL_OLLAMA_ENDPOINT,
+  ];
+  const endpoint = candidates.find((c) => c && c.trim().length > 0)!.trim();
+  return normalizeChatUrl(endpoint);
+}
+
+/** Ordered endpoints to try: the primary, then quantumclaw when different. */
+export function resolveAiEndpointChain(provided?: string | null): string[] {
+  const primary = resolveAiEndpoint(provided);
+  return primary === DEFAULT_OLLAMA_ENDPOINT
+    ? [primary]
+    : [primary, DEFAULT_OLLAMA_ENDPOINT];
 }
 
 export function resolveAiModel(providedModel?: string | null): string {
-  const model = (
-    providedModel ??
-    runtimeConfiguredModel ??
-    process.env.OLLAMA_MODEL ??
-    ""
-  ).trim();
-  return model.length > 0 ? model : DEFAULT_QWEN_MODEL;
+  const candidates = [
+    providedModel,
+    runtimeConfiguredModel,
+    process.env.OLLAMA_MODEL,
+    DEFAULT_QWEN_MODEL,
+  ];
+  return candidates.find((c) => c && c.trim().length > 0)!.trim();
 }
+
+/** Strips a data URL prefix so Ollama receives raw base64 in `images`. */
+export function toBase64Image(imageData: string): string {
+  const comma = imageData.indexOf(",");
+  return imageData.startsWith("data:") && comma >= 0
+    ? imageData.slice(comma + 1)
+    : imageData;
+}
+
+/** Builds the user message carrying a screenshot for Qwen vision. */
+export function buildVisionMessage(
+  prompt: string,
+  imageData: string,
+): QwenChatMessage {
+  return { role: "user", content: prompt, images: [toBase64Image(imageData)] };
+}
+
+/**
+ * Parses a JSON reply from the model, tolerating <think> blocks and markdown
+ * fences. Throws when no JSON object can be read.
+ */
+export function parseModelJson<T = any>(content: string): T {
+  const withoutThinking = content.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  const unfenced = withoutThinking.replace(/```(?:json)?/gi, "").trim();
+  try {
+    return JSON.parse(unfenced) as T;
+  } catch {
+    const start = unfenced.indexOf("{");
+    const end = unfenced.lastIndexOf("}");
+    if (start < 0 || end <= start) {
+      throw new Error("Model reply contained no JSON object");
+    }
+    return JSON.parse(unfenced.slice(start, end + 1)) as T;
+  }
+}
+
+/** A connection failure or timeout, as opposed to an HTTP-level error. */
+function isConnectionFailure(err: unknown): boolean {
+  return !(err instanceof HttpStatusError);
+}
+
+class HttpStatusError extends Error {}
 
 export async function testAiEndpoint(
   endpoint?: string,
-  model?: string
+  model?: string,
 ): Promise<{
   success: boolean;
   status?: number;
@@ -96,44 +156,27 @@ export async function testAiEndpoint(
         messages: [{ role: "user", content: "ping" }],
         stream: false,
       }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(PING_TIMEOUT_MS),
     });
 
     const latencyMs = Date.now() - startTime;
-    let data: any = null;
-    try {
-      data = await response.json();
-    } catch {
-      // Non-JSON response
-    }
-
-    if (response.ok) {
-      return {
-        success: true,
-        status: response.status,
-        latencyMs,
-        endpoint: targetUrl,
-        model: targetModel,
-        message: `Endpoint verified successfully (${latencyMs}ms)`,
-        data,
-      };
-    } else {
-      return {
-        success: false,
-        status: response.status,
-        latencyMs,
-        endpoint: targetUrl,
-        model: targetModel,
-        message: `HTTP ${response.status}: ${response.statusText}`,
-        data,
-      };
-    }
+    const data: any = await response.json().catch(() => null);
+    return {
+      success: response.ok,
+      status: response.status,
+      latencyMs,
+      endpoint: targetUrl,
+      model: targetModel,
+      message: response.ok
+        ? `Endpoint verified successfully (${latencyMs}ms)`
+        : `HTTP ${response.status}: ${response.statusText}`,
+      data,
+    };
   } catch (err: any) {
-    const latencyMs = Date.now() - startTime;
     const errorMsg = err instanceof Error ? err.message : String(err);
     return {
       success: false,
-      latencyMs,
+      latencyMs: Date.now() - startTime,
       endpoint: targetUrl,
       model: targetModel,
       message: `Connection error: ${errorMsg}`,
@@ -148,72 +191,82 @@ export interface QwenChatMessage {
   images?: string[];
 }
 
+export interface QwenChatOptions {
+  endpoint?: string;
+  model?: string;
+  format?: "json";
+  timeoutMs?: number;
+}
+
+export interface QwenChatResult {
+  success: boolean;
+  content: string;
+  endpoint?: string;
+  raw?: any;
+  error?: string;
+}
+
+async function postChat(
+  url: string,
+  payload: Record<string, any>,
+  timeoutMs: number,
+): Promise<any> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new HttpStatusError(
+      `Qwen HTTP ${response.status}: ${response.statusText}`,
+    );
+  }
+  return response.json();
+}
+
 /**
- * Dispatches chat request to Qwen Ollama instance (http://192.168.1.100:11434/api/chat)
+ * Sends a chat (optionally with base64 screenshots in `images`) to Qwen,
+ * local endpoint first and quantumclaw on connection failure/timeout.
  */
 export async function sendQwenChatRequest(
   messages: QwenChatMessage[],
-  options?: {
-    endpoint?: string;
-    model?: string;
-    format?: "json";
-    timeoutMs?: number;
-  }
-): Promise<{ success: boolean; content: string; raw?: any; error?: string }> {
-  const targetUrl = resolveAiEndpoint(options?.endpoint);
-  const targetModel = resolveAiModel(options?.model);
-  const timeoutMs = options?.timeoutMs || 25000;
+  options?: QwenChatOptions,
+): Promise<QwenChatResult> {
+  const chain = resolveAiEndpointChain(options?.endpoint);
+  const model = resolveAiModel(options?.model);
+  const timeoutMs = options?.timeoutMs || DEFAULT_CHAT_TIMEOUT_MS;
+  const payload: Record<string, any> = { model, messages, stream: false };
+  if (options?.format === "json") payload.format = "json";
 
-  const payload: Record<string, any> = {
-    model: targetModel,
-    messages,
-    stream: false,
-  };
-
-  if (options?.format === "json") {
-    payload.format = "json";
-  }
-
-  try {
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Qwen HTTP ${response.status}: ${response.statusText}`);
+  let lastError = "No AI endpoint configured";
+  for (const [index, url] of chain.entries()) {
+    try {
+      const data = await postChat(url, payload, timeoutMs);
+      const content = data?.message?.content || data?.response || "";
+      centralLogHub.addLog(
+        "Qwen Vision",
+        "SUCCESS",
+        `Qwen response received (${model} @ ${url})`,
+        { model, promptLength: messages.length, contentLength: content.length },
+      );
+      return { success: true, content, endpoint: url, raw: data };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      const next = chain[index + 1];
+      if (!next || !isConnectionFailure(err)) break;
+      centralLogHub.addLog(
+        "Qwen Vision",
+        "WARN",
+        `Qwen endpoint ${url} unreachable (${lastError}); falling back to ${next}`,
+        { model, error: lastError, from: url, to: next },
+      );
     }
-
-    const data = await response.json();
-    const content = data?.message?.content || data?.response || "";
-
-    centralLogHub.addLog(
-      "Qwen Vision",
-      "SUCCESS",
-      `Qwen response received (${targetModel} @ ${targetUrl})`,
-      { model: targetModel, promptLength: messages.length, contentLength: content.length }
-    );
-
-    return {
-      success: true,
-      content,
-      raw: data,
-    };
-  } catch (err: any) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    centralLogHub.addLog(
-      "Qwen Vision",
-      "WARN",
-      `Qwen endpoint connection warning (${targetUrl}): ${errorMsg}`,
-      { model: targetModel, error: errorMsg }
-    );
-
-    return {
-      success: false,
-      content: "",
-      error: errorMsg,
-    };
   }
+
+  centralLogHub.addLog("Qwen Vision", "WARN", `Qwen request failed: ${lastError}`, {
+    model,
+    error: lastError,
+  });
+  return { success: false, content: "", error: lastError };
 }

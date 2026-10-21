@@ -28,7 +28,19 @@ export const replayStepSchema = z.object({
   expectedOutcome: z.string().max(1000).optional(),
   breakpoint: z.boolean().optional(),
   conditionType: z.enum(["always"]).optional(),
+  /** How many times this action is performed in a row (each repeat is verified). */
+  repeatCount: z.number().int().min(1).max(25).default(1),
 });
+
+/** Total device actions a run performs: every step's repeats, for every iteration. */
+export function replayActionCount(
+  steps: ReadonlyArray<{ repeatCount?: number }>,
+  iterations: number,
+) {
+  return (
+    steps.reduce((sum, step) => sum + (step.repeatCount ?? 1), 0) * iterations
+  );
+}
 export const replayRequestSchema = z
   .object({
     targetDevice: z.enum(["desktop", "android"]),
@@ -52,7 +64,7 @@ export const replayRequestSchema = z
       });
     if (new Set(value.steps.map((s) => s.id)).size !== value.steps.length)
       ctx.addIssue({ code: "custom", message: "Step IDs must be unique" });
-    if (value.steps.length * value.iterations > 100)
+    if (replayActionCount(value.steps, value.iterations) > 100)
       ctx.addIssue({
         code: "custom",
         message: "A run may contain at most 100 actions",

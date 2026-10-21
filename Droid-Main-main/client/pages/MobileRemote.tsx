@@ -82,6 +82,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { mobileActionPlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 import { InteractivePhoneVirtualOS } from "@/components/interactive-phone-virtual-os";
 import { ApkAndPwaModal } from "@/components/ApkAndPwaModal";
 import { usePWAInstall } from "@/hooks/usePWAInstall";
@@ -200,6 +203,7 @@ interface DifferentialFrame {
 }
 
 export default function MobileRemote() {
+  const actionGate = useActionGate({ targetDevice: "android" });
   const [isStreaming, setIsStreaming] = useState(true);
   const [streamMode, setStreamMode] = useState<StreamMode>("interactive_phone");
   const [activeTab, setActiveTab] = useState<"stream" | "chat" | "docs" | "workflows" | "scheduled" | "pack10" | "actions">("stream");
@@ -1506,6 +1510,11 @@ export default function MobileRemote() {
     });
   };
 
+  // AI-chosen phone action: verify the live phone screen first, then dispatch
+  const sendAiMobileAction = (act: any) => {
+    void actionGate.run(mobileActionPlan([act], sendMobileAction));
+  };
+
   // Interactive Live View Touch Handler (Fully interactive directly through phone)
   const handleLiveViewTouch = (e: React.TouchEvent | React.MouseEvent) => {
     let clientX = 0;
@@ -1769,36 +1778,36 @@ export default function MobileRemote() {
       replyText = "ðŸ“¸ Captured snapshot and added to 10-Screenshots Pack for workflow building!";
       actionDone = "Snapshot Captured";
     } else if (lower.includes("calc") || lower.includes("math")) {
-      sendMobileAction({ type: "open_app", appName: "Calculator" });
+      sendAiMobileAction({ type: "open_app", appName: "Calculator" });
       replyText = "ðŸ§® Opened Calculator app and ready for math inputs!";
       actionDone = "Launched Calculator";
     } else if (lower.includes("chrome") || lower.includes("search") || lower.includes("browser")) {
-      sendMobileAction({ type: "open_app", appName: "Google Chrome", appUrl: "https://google.com" });
+      sendAiMobileAction({ type: "open_app", appName: "Google Chrome", appUrl: "https://google.com" });
       replyText = "ðŸŒ Launched Google Chrome browser with web navigation active!";
       actionDone = "Launched Chrome";
     } else if (lower.includes("note") || lower.includes("write")) {
-      sendMobileAction({ type: "open_app", appName: "Notes", text: messageText });
+      sendAiMobileAction({ type: "open_app", appName: "Notes", text: messageText });
       replyText = "ðŸ“ Opened Notes app and synced entry!";
       actionDone = "Updated Notes";
     } else if (lower.includes("settings") || lower.includes("config")) {
-      sendMobileAction({ type: "open_app", appName: "Settings" });
+      sendAiMobileAction({ type: "open_app", appName: "Settings" });
       replyText = "âš™ï¸ Opened Settings app!";
       actionDone = "Opened Settings";
     } else if (lower.includes("swipe") || lower.includes("scroll")) {
       const dir = lower.includes("up") ? "swipe_up" : lower.includes("down") ? "swipe_down" : lower.includes("left") ? "swipe_left" : "swipe_right";
-      sendMobileAction({ type: "swipe", description: `Swiped ${dir}` });
+      sendAiMobileAction({ type: "swipe", description: `Swiped ${dir}` });
       replyText = `â†”ï¸ Dispatched swipe gesture (${dir}) across screen!`;
       actionDone = `Swiped ${dir}`;
     } else if (lower.includes("back")) {
-      sendMobileAction({ type: "key", key: "BACK", description: "Navigated Back" });
+      sendAiMobileAction({ type: "key", key: "BACK", description: "Navigated Back" });
       replyText = "â—€ Dispatched Back navigation key!";
       actionDone = "Navigated Back";
     } else if (lower.includes("home")) {
-      sendMobileAction({ type: "key", key: "HOME", description: "Navigated Home" });
+      sendAiMobileAction({ type: "key", key: "HOME", description: "Navigated Home" });
       replyText = "ðŸ  Returned to Home Launcher screen!";
       actionDone = "Navigated Home";
     } else if (lower.includes("app") || lower.includes("switcher")) {
-      sendMobileAction({ type: "key", key: "APPS", description: "App Switcher" });
+      sendAiMobileAction({ type: "key", key: "APPS", description: "App Switcher" });
       replyText = "📱 Opened App Switcher!";
       actionDone = "Opened App Switcher";
     } else if (lower.includes("vibrate")) {
@@ -1806,11 +1815,11 @@ export default function MobileRemote() {
       replyText = "ðŸ“³ Phone vibrated";
       actionDone = "Vibrated";
     } else if (lower.includes("volume") || lower.includes("sound")) {
-      sendMobileAction({ type: "key", key: "VOLUME_UP", description: "Volume Up" });
+      sendAiMobileAction({ type: "key", key: "VOLUME_UP", description: "Volume Up" });
       replyText = "ðŸ”Š Volume increased";
       actionDone = "Volume Up";
     } else {
-      sendMobileAction({ type: "tap", x: 0.5, y: 0.5, description: messageText });
+      sendAiMobileAction({ type: "tap", x: 0.5, y: 0.5, description: messageText });
       replyText = `🤖 AI processed command: "${messageText}". Action executed on device!`;
       actionDone = "Dispatched Action";
     }
@@ -2096,21 +2105,27 @@ export default function MobileRemote() {
   // Run Synced Workflow on Connected Phone
   const handleExecuteWorkflow = async (wf: SyncedWorkflow) => {
     setExecutingWorkflowId(wf.id);
-    toast.info(`â–¶ Executing "${wf.name}" on Phone...`);
+    toast.info(`▶ Executing "${wf.name}" on Phone (each step verified on the live screen)...`);
     try {
-      for (let i = 0; i < wf.actions.length; i++) {
-        const step = wf.actions[i];
-        handleExecuteIncomingAction({
-          id: `act_${Date.now()}_${i}`,
-          type: step.type,
-          x: step.x,
-          y: step.y,
-          text: step.text,
-          key: step.key,
-          description: step.description || `Step ${i + 1}/${wf.actions.length}`,
-        });
-        await new Promise((resolve) => setTimeout(resolve, step.durationMs || 900));
-      }
+      const steps = wf.actions.map((step, i) => ({
+        ...step,
+        description: step.description || `Step ${i + 1}/${wf.actions.length}`,
+        durationMs: step.durationMs || 900,
+      }));
+      const result = await actionGate.run(
+        mobileActionPlan(steps, (step) =>
+          handleExecuteIncomingAction({
+            id: `act_${Date.now()}`,
+            type: step.type,
+            x: step.x,
+            y: step.y,
+            text: step.text,
+            key: step.key,
+            description: step.description,
+          }),
+        ),
+      );
+      if (gateFailure(result)) return;
       toast.success(`âœ… Completed "${wf.name}" execution`);
     } catch {
       toast.error("Workflow execution interrupted");
@@ -3826,8 +3841,7 @@ export default function MobileRemote() {
                     </Button>
                     <Button
                       size="sm"
-                      onClick={() => handleExecuteWorkflow(wf)}
-                      disabled={executingWorkflowId === wf.id}
+                      onClick={() => (executingWorkflowId === wf.id ? actionGate.stop() : handleExecuteWorkflow(wf))}
                       className="h-6 px-2.5 text-[9px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white gap-1"
                     >
                       {executingWorkflowId === wf.id ? (
@@ -3835,7 +3849,7 @@ export default function MobileRemote() {
                       ) : (
                         <Play className="w-2.5 h-2.5" />
                       )}
-                      {executingWorkflowId === wf.id ? "Executing..." : "Run on Phone"}
+                      {executingWorkflowId === wf.id ? "Executing... (Stop)" : "Run on Phone"}
                     </Button>
                   </div>
                 </div>

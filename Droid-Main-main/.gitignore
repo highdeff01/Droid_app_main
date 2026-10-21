@@ -1,17 +1,34 @@
+# Dependencies
+node_modules/
 
-!.env.example
-"1"  
-"GameAI-MainApp-v2.5.0.apk"  
-"android-apk-project/"  
-"console.log('Server" 
-# Private on-device recordings copied to the host
-*.log
-*.tsbuildinfo
-.DS_Store
-.env*
-.phone-recordings/
-android-apk-project/
+# Build outputs
+dist/
+dev-dist/
 build/
 coverage/
-dist/
-node_modules/
+*.tsbuildinfo
+android-apk-project/
+
+# Android packages
+*.apk
+*.aab
+
+# Private on-device recordings copied to the host
+.phone-recordings/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment (keep the example)
+.env*
+!.env.example
+
+# Editors / IDEs
+.idea/
+.vscode/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini

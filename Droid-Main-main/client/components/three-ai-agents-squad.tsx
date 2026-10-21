@@ -24,6 +24,9 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { habitRoutinePlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 
 export interface SquadAgent {
   id: string;
@@ -48,6 +51,7 @@ export const ThreeAiAgentsSquad: React.FC<ThreeAiAgentsSquadProps> = ({
   className = "",
   onDispatchFix,
 }) => {
+  const actionGate = useActionGate({ targetDevice: "desktop" });
   const [agents, setAgents] = useState<SquadAgent[]>([
     {
       id: "agent_assistant",
@@ -211,20 +215,11 @@ export const ThreeAiAgentsSquad: React.FC<ThreeAiAgentsSquadProps> = ({
               <Button
                 size="sm"
                 onClick={async () => {
-                  toast.info("Automating routine for 5 cycles...");
-                  await fetch("/api/execute-task", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      task: {
-                        name: "Habit Routine Loop",
-                        action: "click",
-                        targetPosition: { x: habitSuggestion.x, y: habitSuggestion.y },
-                        delayMs: 400,
-                      },
-                      repeatCount: 5,
-                    }),
-                  });
+                  toast.info("Verifying the live screen, then automating routine for 5 cycles...");
+                  const result = await actionGate.run(
+                    habitRoutinePlan(habitSuggestion.x, habitSuggestion.y, 5),
+                  );
+                  if (gateFailure(result)) return;
                   toast.success("Routine executed 5 cycles!");
                   setHabitSuggestion(null);
                 }}
@@ -232,6 +227,14 @@ export const ThreeAiAgentsSquad: React.FC<ThreeAiAgentsSquadProps> = ({
               >
                 Automate Routine (5x)
               </Button>
+              {actionGate.isGating && (
+                <button
+                  onClick={actionGate.stop}
+                  className="text-[10px] text-rose-300 hover:text-white px-1"
+                >
+                  Stop
+                </button>
+              )}
               <button
                 onClick={() => setHabitSuggestion(null)}
                 className="text-xs text-amber-400 hover:text-white px-1"
