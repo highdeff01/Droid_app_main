@@ -1313,11 +1313,15 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         tags: ["sightline", "cot_verified", "zero_drift", isMobileMode ? "mobile" : "desktop"],
       };
 
-      await postHudJson("/api/assistant/workflows", payload);
+      const saved = await postHudJson("/api/workflows/save", {
+        name,
+        sequence,
+        metadata: { kind: "workflow", ...payload, steps: undefined, createdFrom: "screen-hud" },
+      });
       if (isMobileMode) await postHudJson("/api/mobile-stream/workflows", payload);
 
-      toast.success(`Workflow "${name}" saved to library`, {
-        description: `${sequence.length} step(s) saved${isMobileMode ? " (also to mobile workflows)" : ""}.`,
+      toast.success(`Workflow "${saved.name}" saved to library`, {
+        description: `${saved.stepCount} step(s) saved${isMobileMode ? " (also to mobile workflows)" : ""}.`,
       });
       setShowTestModeModal(false);
     } catch (e: any) {
@@ -3078,7 +3082,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 ? "bg-red-600 hover:bg-red-500 text-white border-red-400 shadow-lg shadow-red-950 animate-pulse ring-2 ring-red-400"
                 : "bg-slate-900 border-slate-700 text-rose-300 hover:text-white hover:bg-rose-950/70"
             }`}
-            title="Record screen at 1 FPS, stream frames to AI across all apps, and run 3 cooperative agents"
+            title="Record the screen locally at 1 frame/s into the HUD action ledger (nothing is sent to AI)"
           >
             <Camera className={`w-3.5 h-3.5 ${isContinuousScreenRecording ? "text-white" : "text-rose-400"}`} />
             <span>
