@@ -126,11 +126,16 @@ describe("re-planner helpers", () => {
     expect(readModelConfidence('{"summary": "no score"}')).toBeNull();
     expect(readModelConfidence("not json")).toBeNull();
     expect(readModelConfidence(null)).toBeNull();
+    for (const bogus of ['{"confidence": null}', '{"confidence": ""}', '{"confidence": true}']) {
+      expect(readModelConfidence(bogus)).toBeNull();
+    }
+    expect(readModelConfidence('{"confidence": "0.6"}')).toBe(0.6);
   });
 
   it("treats only finite offsets as measured", () => {
     expect(measuredOffset({})).toBeNull();
     expect(measuredOffset({ offsetX: 0 })).toEqual({ dx: 0, dy: 0 });
     expect(measuredOffset({ offsetX: "abc", offsetY: null })).toBeNull();
+    expect(measuredOffset({ offsetX: "", offsetY: false })).toBeNull();
   });
 });

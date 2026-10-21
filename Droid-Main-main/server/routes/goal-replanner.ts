@@ -38,12 +38,22 @@ export interface ReplanResult {
   executionPlan: string;
 }
 
+/** A finite number or non-blank numeric string as a number; null for anything else (null, "", booleans, NaN). */
+function finiteNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 /** Reads the model's own `confidence` from a JSON reply, clamped to [0, 1]; null when absent or unreadable. */
 export function readModelConfidence(content: string | null | undefined): number | null {
   if (!content) return null;
   try {
-    const value = Number(parseModelJson<{ confidence?: unknown }>(content).confidence);
-    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null;
+    const value = finiteNumber(parseModelJson<{ confidence?: unknown }>(content).confidence);
+    return value === null ? null : Math.min(1, Math.max(0, value));
   } catch {
     return null;
   }
@@ -51,12 +61,10 @@ export function readModelConfidence(content: string | null | undefined): number 
 
 /** Measured drift from real verification (step.offsetX/offsetY); null when the step carries none. */
 export function measuredOffset(step: any): { dx: number; dy: number } | null {
-  const dx = Number(step?.offsetX);
-  const dy = Number(step?.offsetY);
-  const hasX = step?.offsetX !== undefined && step?.offsetX !== null && Number.isFinite(dx);
-  const hasY = step?.offsetY !== undefined && step?.offsetY !== null && Number.isFinite(dy);
-  if (!hasX && !hasY) return null;
-  return { dx: hasX ? dx : 0, dy: hasY ? dy : 0 };
+  const dx = finiteNumber(step?.offsetX);
+  const dy = finiteNumber(step?.offsetY);
+  if (dx === null && dy === null) return null;
+  return { dx: dx ?? 0, dy: dy ?? 0 };
 }
 
 function healClickStep(step: any, idx: number, origX: number, origY: number, confidence: number | null): ReplanStepItem {
