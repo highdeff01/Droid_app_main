@@ -104,8 +104,55 @@ export function clientPointFromFrame(
  * relative to the frame size, clamped within the frame bounds.
  */
 export function framePointAsPercent(x: number, y: number, frame: FrameSize) {
+  const pct = framePointToPercent(x, y, frame);
+  return { left: `${pct.pctX}%`, top: `${pct.pctY}%` };
+}
+
+/**
+ * Expresses a frame coordinate as numeric percentages (0–100) of the frame,
+ * clamped within the frame bounds.
+ */
+export function framePointToPercent(x: number, y: number, frame: FrameSize) {
   return {
-    left: `${(positive(Math.min(frame.width, x)) / frame.width) * 100}%`,
-    top: `${(positive(Math.min(frame.height, y)) / frame.height) * 100}%`,
+    pctX: (positive(Math.min(frame.width, x)) / frame.width) * 100,
+    pctY: (positive(Math.min(frame.height, y)) / frame.height) * 100,
   };
+}
+
+export interface FrameBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Converts a box given in percentages (0–100) of the frame into frame pixels.
+ */
+export function percentBoxToFrame(box: FrameBox, frame: FrameSize): FrameBox {
+  return {
+    x: (box.x / 100) * frame.width,
+    y: (box.y / 100) * frame.height,
+    width: (box.width / 100) * frame.width,
+    height: (box.height / 100) * frame.height,
+  };
+}
+
+/**
+ * Expresses a frame-pixel box as CSS percentage `left`/`top`/`width`/`height`.
+ */
+export function frameBoxAsPercent(box: FrameBox, frame: FrameSize) {
+  const origin = framePointToPercent(box.x, box.y, frame);
+  const end = framePointToPercent(box.x + box.width, box.y + box.height, frame);
+  return {
+    left: `${origin.pctX}%`,
+    top: `${origin.pctY}%`,
+    width: `${end.pctX - origin.pctX}%`,
+    height: `${end.pctY - origin.pctY}%`,
+  };
+}
+
+/** True when the frame point lies inside the frame-pixel box (edges included). */
+export function frameBoxContains(box: FrameBox, x: number, y: number) {
+  return x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height;
 }

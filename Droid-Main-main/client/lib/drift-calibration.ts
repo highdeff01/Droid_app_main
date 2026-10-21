@@ -39,119 +39,17 @@ export interface AutoCalibrationResult {
 
 export const DEFAULT_DRIFT_THRESHOLD_PX = 8;
 
-export const INITIAL_RECORDED_WORKFLOW_STEPS: WorkflowStep[] = [
-  {
-    id: "step_login_nav",
-    stepNumber: 1,
-    name: "Click Primary Navigation / Login Anchor",
-    action: "click",
-    selector: "#nav-auth-login-button",
-    x: 1720,
-    y: 52,
-    originalX: 1720,
-    originalY: 52,
-    offsetX: 0,
-    offsetY: 0,
-    driftDistancePx: 2.1,
-    delayMs: 350,
-    status: "pending",
-    stabilityScore: 94,
-    breakpoint: false,
-    targetOcrLabel: "Log In",
-  },
-  {
-    id: "step_email_input",
-    stepNumber: 2,
-    name: "Focus & Enter User Account Email",
-    action: "type_text",
-    selector: "input[type='email']#user-id-field",
-    x: 960,
-    y: 380,
-    originalX: 960,
-    originalY: 380,
-    offsetX: 14,
-    offsetY: -8,
-    driftDistancePx: 16.1, // Drifting > threshold (8px)
-    delayMs: 450,
-    text: "operator.lead@enterprise.ai",
-    status: "pending",
-    stabilityScore: 62,
-    breakpoint: false,
-    targetOcrLabel: "Email or Username",
-  },
-  {
-    id: "step_remember_chk",
-    stepNumber: 3,
-    name: "Toggle Keep Session Active Checkbox",
-    action: "click",
-    selector: ".auth-card label.checkbox-remember-session",
-    x: 885,
-    y: 490,
-    originalX: 885,
-    originalY: 490,
-    offsetX: 12,
-    offsetY: 6,
-    driftDistancePx: 13.4, // Problematic selector
-    delayMs: 300,
-    status: "pending",
-    stabilityScore: 58,
-    breakpoint: true, // Sample breakpoint
-    targetOcrLabel: "Stay signed in for 30 days",
-  },
-  {
-    id: "step_auth_submit",
-    stepNumber: 4,
-    name: "Click Confirm & Authenticate Button",
-    action: "click",
-    selector: "button#btn-submit-credentials",
-    x: 960,
-    y: 560,
-    originalX: 960,
-    originalY: 560,
-    offsetX: 0,
-    offsetY: 0,
-    driftDistancePx: 3.5,
-    delayMs: 600,
-    status: "pending",
-    stabilityScore: 96,
-    breakpoint: false,
-    targetOcrLabel: "Authenticate",
-  },
-  {
-    id: "step_dashboard_ready",
-    stepNumber: 5,
-    name: "Verify Main Application Dashboard Ready",
-    action: "wait",
-    selector: "main.dashboard-container .header-metrics",
-    x: 960,
-    y: 120,
-    originalX: 960,
-    originalY: 120,
-    offsetX: 0,
-    offsetY: 0,
-    driftDistancePx: 1.2,
-    delayMs: 800,
-    status: "pending",
-    stabilityScore: 98,
-    breakpoint: false,
-    targetOcrLabel: "Dashboard Overview",
-  },
-];
-
 const STORAGE_KEY = "unified_sequence";
 const CALIBRATION_HIST_KEY = "workflow_calibration_history";
 
 /**
  * Loads the persisted workflow steps from local storage, normalizing
- * legacy fields and seeding the default steps on first use.
+ * legacy fields. Returns an empty list when nothing has been recorded yet.
  */
 export function loadStoredWorkflowSteps(): WorkflowStep[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      saveStoredWorkflowSteps(INITIAL_RECORDED_WORKFLOW_STEPS);
-      return INITIAL_RECORDED_WORKFLOW_STEPS;
-    }
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
       return parsed.map((s, idx) => ({
@@ -168,7 +66,7 @@ export function loadStoredWorkflowSteps(): WorkflowStep[] {
   } catch (err) {
     console.error("Failed to load workflow steps from storage:", err);
   }
-  return INITIAL_RECORDED_WORKFLOW_STEPS;
+  return [];
 }
 
 /**

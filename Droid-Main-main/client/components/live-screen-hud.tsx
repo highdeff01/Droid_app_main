@@ -104,9 +104,13 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
 import {
+  frameBoxAsPercent,
+  frameBoxContains,
   framePointAsPercent,
   framePointFromClient,
+  framePointToPercent,
   getContainedFrameViewport,
+  percentBoxToFrame,
 } from "@/lib/frame-viewport";
 
 export interface SequenceStep {
@@ -922,7 +926,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       const res = await executeAutoCalibration({
         steps: sequence as any,
         thresholdPx: localDriftThreshold,
-        elements: uiElements,
+        elements: nativeUiElements,
         screenshotUrl,
       });
       if (res.calibratedSteps) {
@@ -1857,6 +1861,32 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   const NATIVE_WIDTH = 1920;
   const NATIVE_HEIGHT = 1080;
+  const NATIVE_FRAME = { width: NATIVE_WIDTH, height: NATIVE_HEIGHT };
+
+  // Single conversion point: native frame pixels -> CSS percentages of the frame.
+  const toPercent = (nativeX: number, nativeY: number) =>
+    framePointAsPercent(nativeX, nativeY, NATIVE_FRAME);
+  const toPercentPair = (nativeX: number, nativeY: number) =>
+    framePointToPercent(nativeX, nativeY, NATIVE_FRAME);
+
+  // Vision elements arrive as percentages (0–100) of the frame; convert them once
+  // so every consumer below works in the same native-pixel space as recorded steps.
+  const nativeUiElements = useMemo<UIElementBox[]>(
+    () =>
+      uiElements
+        .filter((el) => el.boundingBox)
+        .map((el) => {
+          const boundingBox = percentBoxToFrame(el.boundingBox, NATIVE_FRAME);
+          const center = el.center
+            ? percentBoxToFrame({ ...el.center, width: 0, height: 0 }, NATIVE_FRAME)
+            : {
+                x: boundingBox.x + boundingBox.width / 2,
+                y: boundingBox.y + boundingBox.height / 2,
+              };
+          return { ...el, boundingBox, center: { x: center.x, y: center.y } };
+        }),
+    [uiElements]
+  );
 
   const getNativeCoordinates = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = viewportRef.current?.getBoundingClientRect();
@@ -1870,49 +1900,13 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       height: NATIVE_HEIGHT,
     });
 
-    return {
-      ...point,
-      pctX: (point.x / NATIVE_WIDTH) * 100,
-      pctY: (point.y / NATIVE_HEIGHT) * 100,
-    };
+    return { ...point, ...toPercentPair(point.x, point.y) };
   };
 
   const isMobileMode =
     selectedCanvasTitle?.toLowerCase().includes("mobile") ||
     selectedCanvasTitle?.toLowerCase().includes("phone") ||
     selectedTabName === "mobile";
-
-  const toPercent = (nativeX: number, nativeY: number) => {
-    const rawX = typeof nativeX === "number" ? nativeX : 0;
-    const rawY = typeof nativeY === "number" ? nativeY : 0;
-    // Auto-normalize if coordinate is 0..1 or 0..1920 / 0..1080
-    const normX = rawX <= 1 && rawX > 0 ? rawX * 100 : (rawX / (isMobileMode && rawX <= 1080 ? 1080 : NATIVE_WIDTH)) * 100;
-    const normY = rawY <= 1 && rawY > 0 ? rawY * 100 : (rawY / (isMobileMode && rawY <= 1920 ? 1920 : NATIVE_HEIGHT)) * 100;
-    return {
-      left: `${Math.max(0, Math.min(100, normX))}%`,
-      top: `${Math.max(0, Math.min(100, normY))}%`,
-    };
-  };
-
-  const toBoxPercent = (box: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  }) => {
-    const baseW = isMobileMode ? 1080 : NATIVE_WIDTH;
-    const baseH = isMobileMode ? 1920 : NATIVE_HEIGHT;
-    const rawX = box.x <= 1 && box.x > 0 ? box.x * 100 : (box.x / baseW) * 100;
-    const rawY = box.y <= 1 && box.y > 0 ? box.y * 100 : (box.y / baseH) * 100;
-    const rawW = box.width <= 1 && box.width > 0 ? box.width * 100 : (box.width / baseW) * 100;
-    const rawH = box.height <= 1 && box.height > 0 ? box.height * 100 : (box.height / baseH) * 100;
-    return {
-      left: `${Math.max(0, Math.min(100, rawX))}%`,
-      top: `${Math.max(0, Math.min(100, rawY))}%`,
-      width: `${Math.max(1, Math.min(100, rawW))}%`,
-      height: `${Math.max(1, Math.min(100, rawH))}%`,
-    };
-  };
 
   // Record continuous trajectory as user moves
   const recordMovementPoint = (x: number, y: number) => {
@@ -2345,9 +2339,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   const polylinePoints = sequence
     .map((step) => {
-      const xPct = (step.x / NATIVE_WIDTH) * 100;
-      const yPct = (step.y / NATIVE_HEIGHT) * 100;
-      return `${xPct},${yPct}`;
+      const { pctX, pctY } = toPercentPair(step.x, step.y);
+      return `${pctX},${pctY}`;
     })
     .join(" ");
 
@@ -3882,7 +3875,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             points={liveMouseTrail
               .map(
                 (pt) =>
-                  `${(pt.x / NATIVE_WIDTH) * 100}%,${(pt.y / NATIVE_HEIGHT) * 100}%`
+                  `${toPercent(pt.x, pt.y).left},${toPercent(pt.x, pt.y).top}`
               )
               .join(" ")}
             fill="none"
@@ -3895,8 +3888,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             pt.isClick ? (
               <circle
                 key={idx}
-                cx={`${(pt.x / NATIVE_WIDTH) * 100}%`}
-                cy={`${(pt.y / NATIVE_HEIGHT) * 100}%`}
+                cx={toPercent(pt.x, pt.y).left}
+                cy={toPercent(pt.x, pt.y).top}
                 r="6"
                 fill="#f59e0b"
                 stroke="#ffffff"
@@ -3905,8 +3898,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             ) : idx % 6 === 0 ? (
               <circle
                 key={idx}
-                cx={`${(pt.x / NATIVE_WIDTH) * 100}%`}
-                cy={`${(pt.y / NATIVE_HEIGHT) * 100}%`}
+                cx={toPercent(pt.x, pt.y).left}
+                cy={toPercent(pt.x, pt.y).top}
                 r="2.5"
                 fill="#06b6d4"
                 opacity="0.8"
@@ -4045,7 +4038,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           driftPoints={computePixelDriftHeatmap(
             sequence as any,
             localDriftThreshold,
-            uiElements
+            nativeUiElements
           )}
           thresholdPx={localDriftThreshold}
           opacity={0.85}
@@ -4363,8 +4356,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       )}
 
       {/* AI #1 Qwen Vision Detected UI Element Bounding Boxes */}
-      {uiElements.map((el, elIdx) => {
-        const boxStyle = toBoxPercent(el.boundingBox);
+      {nativeUiElements.map((el, elIdx) => {
+        const boxStyle = frameBoxAsPercent(el.boundingBox, NATIVE_FRAME);
         return (
           <div
             key={`hud_el_${el.id || "el"}_${elIdx}`}
@@ -4548,10 +4541,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       {/* Realistic Glowing Arrowhead Cursor (↖️) & Touch Pointer */}
       {replayingCursorPos && (
         <div
-          style={{
-            left: `${(replayingCursorPos.x / NATIVE_WIDTH) * 100}%`,
-            top: `${(replayingCursorPos.y / NATIVE_HEIGHT) * 100}%`,
-          }}
+          style={toPercent(replayingCursorPos.x, replayingCursorPos.y)}
           className="absolute -translate-x-1 -translate-y-1 pointer-events-none z-50 flex flex-col items-start transition-transform duration-75"
         >
           {/* Radial Aura */}
@@ -4576,10 +4566,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       {/* Visual Clickpoint Contact Marker ("..") during Frames 1-10 Replay */}
       {hudActiveClickPoint && (
         <div
-          style={{
-            left: `${(hudActiveClickPoint.x / NATIVE_WIDTH) * 100}%`,
-            top: `${(hudActiveClickPoint.y / NATIVE_HEIGHT) * 100}%`,
-          }}
+          style={toPercent(hudActiveClickPoint.x, hudActiveClickPoint.y)}
           className="absolute transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-50 flex flex-col items-center animate-in zoom-in-50 duration-150"
         >
           {/* Dual concentric expanding shockwave rings ("..") with visual blink effect */}
@@ -5727,8 +5714,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         onEditStep={(stepId) => {
           const targetStep = sequence.find((s) => s.id === stepId);
           if (!targetStep) return;
-          const pctX = (targetStep.x / NATIVE_WIDTH) * 100;
-          const pctY = (targetStep.y / NATIVE_HEIGHT) * 100;
+          const { pctX, pctY } = toPercentPair(targetStep.x, targetStep.y);
           setPopoverName(targetStep.name);
           setPopoverAction(targetStep.action);
           setPopoverText(targetStep.text || "");
@@ -5762,14 +5748,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           }
         }}
         onInspectOCR={(x, y) => {
-          const nearElem = (uiElements || []).find((e) => {
-            if (!e.boundingBox) return false;
-            const bx = (e.boundingBox.x / 100) * NATIVE_WIDTH;
-            const by = (e.boundingBox.y / 100) * NATIVE_HEIGHT;
-            const bw = (e.boundingBox.width / 100) * NATIVE_WIDTH;
-            const bh = (e.boundingBox.height / 100) * NATIVE_HEIGHT;
-            return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
-          });
+          const nearElem = nativeUiElements.find((e) => frameBoxContains(e.boundingBox, x, y));
           if (nearElem) {
             toast.info(`Element Found: "${nearElem.name}" (${nearElem.type})`);
           } else {
@@ -5791,8 +5770,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           toast.success(`Tagged (${x}, ${y}) as ${type.toUpperCase()} entity`);
         }}
         onOpenStepManagerModal={(coords) => {
-          const pctX = (coords.x / NATIVE_WIDTH) * 100;
-          const pctY = (coords.y / NATIVE_HEIGHT) * 100;
+          const { pctX, pctY } = toPercentPair(coords.x, coords.y);
           setRecordingClickPos({ x: coords.x, y: coords.y, pctX, pctY });
           setStepManagerClickedCoords({ x: coords.x, y: coords.y });
           setIsStepManagerOpen(true);
