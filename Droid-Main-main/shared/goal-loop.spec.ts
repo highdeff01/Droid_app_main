@@ -16,6 +16,7 @@ import {
   recordStepResult,
   relocateTarget,
   reportSignature,
+  verifiedSteps,
   verifyStep,
   type BestFlow,
   type ExecutedStep,
@@ -265,14 +266,22 @@ describe("verifyStep", () => {
     expect(verifyStep(step, before, after).passed).toBe(false);
   });
 
-  it("passes vacuously with no checks for a none expectation", () => {
-    const step = makeStep({ expectation: { kind: "none" } });
-    const after = makeObservation({ signature: "sig-2" });
+  it("requires a screen change as evidence when the step has no expectation", () => {
+    const step = makeStep({ action: "click", expectation: { kind: "none" } });
 
-    const result = verifyStep(step, before, after);
+    const changed = verifyStep(step, before, makeObservation({ signature: "sig-2" }));
+    const unchanged = verifyStep(step, before, makeObservation({ signature: before.signature }));
 
-    expect(result.checks).toHaveLength(0);
-    expect(result.passed).toBe(true);
+    expect(changed.checks.map((c) => c.check)).toEqual(["screen_changed"]);
+    expect(changed.passed).toBe(true);
+    expect(unchanged.passed).toBe(false);
+  });
+
+  it("fails text_landed when the typed text was already on an unchanged screen", () => {
+    const step = makeStep({ action: "type_text", text: "hello", expectation: { kind: "none" } });
+    const same = makeObservation({ signature: "sig-same", ocrText: ["hello there"] });
+
+    expect(verifyStep(step, same, same).passed).toBe(false);
   });
 
   it("fails the text_landed check when typed text is not visible after typing", () => {
@@ -283,6 +292,33 @@ describe("verifyStep", () => {
 
     expect(result.passed).toBe(false);
     expect(result.checks.find((c) => c.check === "text_landed")?.passed).toBe(false);
+  });
+});
+
+describe("verifier regressions", () => {
+  it("does not re-ground a label onto an element that merely contains its letters", () => {
+    const observation = makeObservation({
+      elements: [
+        makeElement({ name: "Bookmarks", boundingBox: { x: 600, y: 600, width: 40, height: 20 }, center: { x: 620, y: 610 } }),
+        makeElement({ name: "S", boundingBox: { x: 300, y: 300, width: 10, height: 10 }, center: { x: 305, y: 305 } }),
+      ],
+    });
+
+    expect(relocateTarget(makeStep({ x: 10, y: 10, targetLabel: "ok" }), observation).status).toBe("missing");
+    expect(relocateTarget(makeStep({ x: 10, y: 10, targetLabel: "Settings" }), observation).status).toBe("missing");
+  });
+
+  it("drops the verified steps of a dead route that looped back to an earlier screen", () => {
+    const a = makeExecuted({ step: makeStep({ id: "a" }), signatureAfter: "B" });
+    const b = makeExecuted({ step: makeStep({ id: "b" }), signatureAfter: "C" });
+    const c = makeExecuted({ step: makeStep({ id: "c" }), signatureAfter: "B" });
+    const state = { ...stateWith([a, b, c], ["A", "B", "C", "B"]), cursor: 3 };
+
+    const next = applyApprovedPlan(state, { goal: state.goal, reason: "dead route", steps: [makeStep({ id: "d" })] });
+
+    expect(verifiedSteps(state).map((s) => s.id)).toEqual(["a"]);
+    expect(next.plan.map((s) => s.id)).toEqual(["a", "d"]);
+    expect(next.cursor).toBe(1);
   });
 });
 

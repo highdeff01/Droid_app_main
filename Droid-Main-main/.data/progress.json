@@ -61,5 +61,47 @@
     "id": "progress_1792575895666_2v7v88vx",
     "sessionId": "session_1792575895661_r03m42xd",
     "createdAt": "2026-10-21T09:44:55.666Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792576215518_aq1vys2n",
+    "sessionId": "session_1792576215506_x59ab9pf",
+    "createdAt": "2026-10-21T09:50:15.518Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792576445683_sp4dhplb",
+    "sessionId": "session_1792576445679_86v47xim",
+    "createdAt": "2026-10-21T09:54:05.683Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792576549810_f0mfqvec",
+    "sessionId": "session_1792576549805_j9f1yg0v",
+    "createdAt": "2026-10-21T09:55:49.810Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792576608562_u0ywv083",
+    "sessionId": "session_1792576608556_1chpl8ps",
+    "createdAt": "2026-10-21T09:56:48.562Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792576664064_i5hb7dm1",
+    "sessionId": "session_1792576664060_3wjul5v9",
+    "createdAt": "2026-10-21T09:57:44.064Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792576704412_s9tunx30",
+    "sessionId": "session_1792576704407_pn5s1b9i",
+    "createdAt": "2026-10-21T09:58:24.412Z"
   }
 ]

@@ -133,12 +133,14 @@ export function boxContains(box: BoxLike, x: number, y: number): boolean {
   );
 }
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The element's name or text equals the label or contains it as whole words. */
 function labelMatches(el: ObservedElement, label: string): boolean {
   const wanted = normalize(label);
-  return [el.name, el.textValue ?? ""].some((v) => {
-    const have = normalize(v);
-    return have.length > 0 && (have.includes(wanted) || wanted.includes(have));
-  });
+  if (!wanted) return false;
+  const wholeWords = new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(wanted)}($|[^\\p{L}\\p{N}])`, "u");
+  return [el.name, el.textValue ?? ""].some((v) => wholeWords.test(normalize(v)));
 }
 
 const area = (el: ObservedElement) =>
@@ -259,18 +261,35 @@ const EXPECTATION_CHECKS: Record<StepExpectation["kind"], ExpectationCheck> = {
   none: () => null,
 };
 
-/** For typing steps: the typed text must be readable on the screen afterwards. */
-function textLandedCheck(step: GoalStep, after: ScreenObservation) {
+/**
+ * For typing steps: the typed text must be readable afterwards and must be new —
+ * text that was already on an unchanged screen proves nothing landed.
+ */
+function textLandedCheck(step: GoalStep, before: ScreenObservation, after: ScreenObservation) {
   if (!TEXT_ENTRY.has(step.action) || !step.text) return null;
-  const landed = textOnScreen(after, step.text);
-  return {
-    check: "text_landed",
-    passed: landed,
-    detail: landed ? "Typed text visible in the field" : `Typed text "${step.text}" not visible after typing`,
-  };
+  const visible = textOnScreen(after, step.text);
+  const preExisting = textOnScreen(before, step.text) && before.signature === after.signature;
+  const landed = visible && !preExisting;
+  const detail = landed
+    ? "Typed text visible in the field"
+    : visible
+      ? `"${step.text}" was already on screen and nothing changed`
+      : `Typed text "${step.text}" not visible after typing`;
+  return { check: "text_landed", passed: landed, detail };
 }
 
-/** Verifies a step's expected outcome on the screen captured after it ran. */
+/**
+ * A step the planner gave no expectation still needs evidence: a wait only has
+ * to elapse, anything else that is not a text entry (checked by text_landed)
+ * must change the screen.
+ */
+function defaultCheck(step: GoalStep, before: ScreenObservation, after: ScreenObservation) {
+  if (step.action === "wait") return { check: "waited", passed: true, detail: `Waited ${step.delayMs}ms` };
+  if (TEXT_ENTRY.has(step.action) && step.text) return null;
+  return { check: "screen_changed", ...EXPECTATION_CHECKS.screen_changed(step.expectation, before, after)! };
+}
+
+/** Verifies a step's expected outcome on the screen captured after it ran; no evidence is a failure. */
 export function verifyStep(
   step: GoalStep,
   before: ScreenObservation,
@@ -278,11 +297,13 @@ export function verifyStep(
 ): StepVerification {
   const checks: StepVerification["checks"] = [];
   const expected = EXPECTATION_CHECKS[step.expectation.kind](step.expectation, before, after);
+  const fallback = expected ? null : defaultCheck(step, before, after);
   if (expected) checks.push({ check: step.expectation.kind, ...expected });
-  const landed = textLandedCheck(step, after);
+  if (fallback) checks.push(fallback);
+  const landed = textLandedCheck(step, before, after);
   if (landed) checks.push(landed);
   return {
-    passed: checks.every((c) => c.passed),
+    passed: checks.length > 0 && checks.every((c) => c.passed),
     screenChanged: before.signature !== after.signature,
     checks,
   };
@@ -383,8 +404,24 @@ export interface PlanProposal {
 }
 
 /**
- * Adopts an approved re-plan for the remaining steps. The executed history
- * and the goal are kept; a proposal for a different goal is refused.
+ * Verified steps that still lead forward: when the current screen was already
+ * visited earlier, the verified steps taken since that first visit were a dead
+ * route (a loop back) and are dropped, so the rerouted flow skips them.
+ */
+function stepsOffDeadRoute(state: GoalState): GoalStep[] {
+  const current = state.visited[state.visited.length - 1];
+  const firstVisit = state.visited.indexOf(current);
+  const loopedBack = state.visited.slice(firstVisit).some((s) => s !== current);
+  return state.executed
+    .slice(0, loopedBack ? firstVisit : state.executed.length)
+    .filter((e) => e.verification.passed)
+    .map((e) => e.step);
+}
+
+/**
+ * Adopts an approved re-plan for the remaining steps. The goal is kept, as are
+ * the verified steps that lead to the current screen (a dead route is cut);
+ * a proposal for a different goal is refused.
  */
 export function applyApprovedPlan(state: GoalState, proposal: PlanProposal): GoalState {
   if (proposal.goal !== state.goal) {
@@ -394,7 +431,7 @@ export function applyApprovedPlan(state: GoalState, proposal: PlanProposal): Goa
     throw new Error(`The goal was already re-planned ${MAX_REVISIONS} times`);
   }
   if (proposal.steps.length === 0) throw new Error("The proposal has no steps");
-  const done = state.executed.filter((e) => e.verification.passed).map((e) => e.step);
+  const done = stepsOffDeadRoute(state);
   return {
     ...state,
     status: "testing",
@@ -404,9 +441,8 @@ export function applyApprovedPlan(state: GoalState, proposal: PlanProposal): Goa
   };
 }
 
-/** Steps that verified, in order: the workflow a successful run actually followed. */
-export const verifiedSteps = (state: GoalState): GoalStep[] =>
-  state.executed.filter((e) => e.verification.passed).map((e) => e.step);
+/** The verified workflow (as executed, re-grounded coordinates included) that leads to the current screen, dead routes excluded. */
+export const verifiedSteps = (state: GoalState): GoalStep[] => stepsOffDeadRoute(state);
 
 /** Raw planner output → validated goal steps; drops anything that is not a well-formed step. */
 export function parseProposedSteps(raw: unknown, idPrefix = "goal_step"): GoalStep[] {

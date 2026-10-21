@@ -124,5 +124,89 @@
     "id": "session_1792575895661_r03m42xd",
     "createdAt": "2026-10-21T09:44:55.661Z",
     "updatedAt": "2026-10-21T09:44:55.661Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:50:15.506Z",
+      "updatedAt": "2026-10-21T09:50:15.506Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576215506_x59ab9pf",
+    "createdAt": "2026-10-21T09:50:15.506Z",
+    "updatedAt": "2026-10-21T09:50:15.506Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:54:05.679Z",
+      "updatedAt": "2026-10-21T09:54:05.679Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576445679_86v47xim",
+    "createdAt": "2026-10-21T09:54:05.679Z",
+    "updatedAt": "2026-10-21T09:54:05.679Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:55:49.804Z",
+      "updatedAt": "2026-10-21T09:55:49.805Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576549805_j9f1yg0v",
+    "createdAt": "2026-10-21T09:55:49.805Z",
+    "updatedAt": "2026-10-21T09:55:49.805Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:56:48.556Z",
+      "updatedAt": "2026-10-21T09:56:48.556Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576608556_1chpl8ps",
+    "createdAt": "2026-10-21T09:56:48.556Z",
+    "updatedAt": "2026-10-21T09:56:48.556Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:57:44.060Z",
+      "updatedAt": "2026-10-21T09:57:44.060Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576664060_3wjul5v9",
+    "createdAt": "2026-10-21T09:57:44.060Z",
+    "updatedAt": "2026-10-21T09:57:44.060Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:58:24.407Z",
+      "updatedAt": "2026-10-21T09:58:24.407Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576704407_pn5s1b9i",
+    "createdAt": "2026-10-21T09:58:24.407Z",
+    "updatedAt": "2026-10-21T09:58:24.407Z"
   }
 ]

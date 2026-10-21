@@ -200,6 +200,7 @@ describe("runGoalLoop", () => {
     const step = makeStep({ id: "s1", action: "click", x: 10, y: 10, targetLabel: "OK" });
     const moved = makeElement({ name: "OK", boundingBox: { x: 190, y: 190, width: 20, height: 20 }, center: { x: 200, y: 200 } });
     const harness = createHarness({
+      captures: [{ hash: "h0" }, { hash: "h1" }, { hash: "h2" }],
       reports: [makeReport(), makeReport({ elements: [moved] }), makeReport()],
       proposals: [{ goal: GOAL, reason: "", steps: [step] }],
     });
@@ -281,6 +282,19 @@ describe("runGoalLoop", () => {
     expect(
       events.some((e) => e.phase === "awaiting_approval" && e.message.startsWith("Waiting for approval: Goal not reached")),
     ).toBe(true);
+  });
+
+  it("stops dispatching once the goal is reached mid-plan", async () => {
+    const harness = createHarness({
+      proposals: [{ goal: GOAL, reason: "", steps: [makeStep({ id: "s1", action: "wait" }), makeStep({ id: "s2", action: "wait" })] }],
+      assessments: [{ complete: true, onTrack: true, reason: "Already done" }],
+    });
+    const { options } = makeOptions();
+
+    const result = await runGoalLoop(GOAL, options, harness.deps);
+
+    expect(result.status).toBe("completed");
+    expect(harness.calls.filter((c) => c.kind === "post" && c.url === "/api/replay")).toHaveLength(1);
   });
 });
 

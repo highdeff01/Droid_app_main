@@ -250,12 +250,19 @@ async function dispatchStep(ctx: LoopContext, step: GoalStep): Promise<void> {
   await waitForReplayRun(started.run, { signal }, { gate: ctx.deps.gate, start: startReplay, fetch: fetchRun, sleep: ctx.deps.sleep });
 }
 
-/** Re-checks, gates, executes and verifies the next step; returns the state and the latest screen. */
-async function runNextStep(ctx: LoopContext, state: GoalState): Promise<{ state: GoalState; seen: Observed }> {
+interface StepOutcome {
+  state: GoalState;
+  seen: Observed;
+  /** Why the run is off course after this step; absent when it is on track. */
+  problem?: string;
+}
+
+/** Re-checks, gates, executes and verifies the next step. */
+async function runNextStep(ctx: LoopContext, state: GoalState): Promise<StepOutcome> {
   const planned = nextStep(state)!;
   const before = await observe(ctx, `before "${planned.name}"`);
   const relocation = relocateTarget(planned, before.observation);
-  if (relocation.status === "missing") return { state: await replan(ctx, state, before, relocation.reason), seen: before };
+  if (relocation.status === "missing") return { state, seen: before, problem: relocation.reason };
   const step = applyRelocation(planned, relocation);
   if (relocation.status === "moved") {
     ctx.options.onEvent({ phase: "thinking", message: `"${planned.name}" target moved ${relocation.distancePx}px; re-grounded on the fresh screen`, x: step.x, y: step.y });
@@ -274,8 +281,7 @@ async function runNextStep(ctx: LoopContext, state: GoalState): Promise<{ state:
   const recorded = recordStepResult(state, executed);
   ctx.options.onStep?.(executed, recorded);
   const progress = assessProgress(recorded);
-  if (progress.kind === "on_track") return { state: recorded, seen: after };
-  return { state: await replan(ctx, recorded, after, progress.reason), seen: after };
+  return { state: recorded, seen: after, problem: progress.kind === "on_track" ? undefined : progress.reason };
 }
 
 async function assessGoal(ctx: LoopContext, state: GoalState, seen: Observed): Promise<GoalAssessment> {
@@ -305,22 +311,39 @@ function buildEvidence(state: GoalState, assessment: GoalAssessment, finalFrame:
   };
 }
 
+/**
+ * After every step the goal is cross-checked: the local progress tracker
+ * (failures, stalls, dead routes) first, then the AI's verdict on the fresh
+ * screen. A goal reached mid-plan ends the run; off-track asks for a re-plan.
+ */
 async function driveGoal(ctx: LoopContext, onState: (state: GoalState) => void): Promise<GoalLoopResult> {
   let seen = await observe(ctx, "for planning");
   const initial = await propose(ctx, seen);
   let state = createGoalState(ctx.goal, initial.steps, seen.observation.signature);
   ctx.options.onPlan?.(state);
+  onState(state);
   for (;;) {
-    onState(state);
-    while (nextStep(state)) {
-      ({ state, seen } = await runNextStep(ctx, state));
+    let problem: string | undefined;
+    let verified = true;
+    if (nextStep(state)) {
+      const before = state.cursor;
+      ({ state, seen, problem } = await runNextStep(ctx, state));
+      verified = state.cursor > before;
       onState(state);
     }
-    const assessment = await assessGoal(ctx, state, seen);
-    if (assessment.complete) {
-      return { status: "completed", state, steps: verifiedSteps(state), evidence: buildEvidence(state, assessment, seen.frame) };
+    if (!problem && !verified) continue; // retry the failed step until the tracker flags it
+    if (!problem) {
+      const assessment = await assessGoal(ctx, state, seen);
+      if (assessment.complete) {
+        return { status: "completed", state, steps: verifiedSteps(state), evidence: buildEvidence(state, assessment, seen.frame) };
+      }
+      if (!nextStep(state)) problem = `Goal not reached: ${assessment.reason}`;
+      else if (!assessment.onTrack) problem = `Off-track: ${assessment.reason}`;
     }
-    state = await replan(ctx, state, seen, `Goal not reached: ${assessment.reason}`);
+    if (problem) {
+      state = await replan(ctx, state, seen, problem);
+      onState(state);
+    }
   }
 }
 
