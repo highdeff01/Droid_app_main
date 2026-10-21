@@ -32,6 +32,7 @@ import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
+import { runVerifiedReplay, sessionToReplaySteps } from "@/lib/verified-replay";
 import {
   MouseTrajectoryStore,
   MouseRecordingSession,
@@ -193,6 +194,25 @@ export const BatchOperationManager: React.FC<BatchOperationManagerProps> = ({
     ]);
   };
 
+  const replayAbortRef = useRef<AbortController | null>(null);
+
+  // No external executor: replay the session's recorded clicks through the gated replay engine
+  const replaySessionForReal = async (session: MouseRecordingSession, totalPoints: number) => {
+    const steps = sessionToReplaySteps(session);
+    const controller = new AbortController();
+    replayAbortRef.current = controller;
+    try {
+      await runVerifiedReplay(steps, {
+        signal: controller.signal,
+        onProgress: (run) =>
+          setCurrentStepWithinSession({ current: Math.min(run.currentStep + 1, steps.length), total: totalPoints }),
+      });
+      return true;
+    } finally {
+      if (replayAbortRef.current === controller) replayAbortRef.current = null;
+    }
+  };
+
   // Run the batch pipeline sequentially
   const runBatchPipeline = async () => {
     if (pipelineItems.length === 0) {
@@ -253,25 +273,14 @@ export const BatchOperationManager: React.FC<BatchOperationManagerProps> = ({
       const totalPoints = sessionData.points.length;
       setCurrentStepWithinSession({ current: 0, total: totalPoints });
 
-      // If external executor provided
-      if (onExecuteBatchStep) {
-        try {
-          success = await onExecuteBatchStep(sessionData, currentItem.speedMultiplier);
-        } catch (err: any) {
-          success = false;
-        }
-      } else {
-        // Step-by-step simulated pipeline progression
-        for (let p = 0; p < totalPoints; p++) {
-          if (isAbortedRef.current) break;
-          while (isPausedRef.current) {
-            await new Promise((res) => setTimeout(res, 250));
-            if (isAbortedRef.current) break;
-          }
-          setCurrentStepWithinSession({ current: p + 1, total: totalPoints });
-          await new Promise((res) => setTimeout(res, Math.max(15, 60 / currentItem.speedMultiplier)));
-        }
-        success = !isAbortedRef.current;
+      let failureReason = "Execution failed";
+      try {
+        success = onExecuteBatchStep
+          ? await onExecuteBatchStep(sessionData, currentItem.speedMultiplier)
+          : await replaySessionForReal(sessionData, totalPoints);
+      } catch (err) {
+        success = false;
+        failureReason = err instanceof Error ? err.message : String(err);
       }
 
       const elapsed = Date.now() - startTime;
@@ -287,11 +296,11 @@ export const BatchOperationManager: React.FC<BatchOperationManagerProps> = ({
         setPipelineItems((prev) =>
           prev.map((item, idx) =>
             idx === i
-              ? { ...item, status: "failed", executionTimeMs: elapsed, errorReason: "Verification threshold failed" }
+              ? { ...item, status: "failed", executionTimeMs: elapsed, errorReason: failureReason }
               : item
           )
         );
-        appendLog("error", `✗ [${i + 1}/${pipelineItems.length}] "${currentItem.name}" failed.`);
+        appendLog("error", `✗ [${i + 1}/${pipelineItems.length}] "${currentItem.name}" failed: ${failureReason}`);
 
         if (currentItem.onErrorAction === "abort") {
           appendLog("warn", "Policy set to 'Abort on Failure' - stopping pipeline.");
@@ -332,6 +341,7 @@ export const BatchOperationManager: React.FC<BatchOperationManagerProps> = ({
 
   const abortBatch = () => {
     isAbortedRef.current = true;
+    replayAbortRef.current?.abort();
     setIsBatchRunning(false);
     setIsBatchPaused(false);
     setCurrentRunningIndex(null);

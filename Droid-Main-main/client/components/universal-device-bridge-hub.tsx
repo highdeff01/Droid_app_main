@@ -897,7 +897,11 @@ export function UniversalDeviceBridgeHub({
         if (d.success && d.settings) {
           setWorkspaceSettings(d.settings);
           toast.success("Workspace settings updated!");
+        } else {
+          toast.error(d.error || "Server did not save the settings");
         }
+      } else {
+        toast.error(`Failed to save settings (HTTP ${res.status})`);
       }
     } catch {
       toast.error("Failed to save settings");
@@ -924,7 +928,11 @@ export function UniversalDeviceBridgeHub({
         if (d.success && d.analysis) {
           setAiRouteAnalysis(d.analysis);
           toast.success("AI route optimization analysis complete!");
+        } else {
+          toast.error(d.error || "Route analysis returned no result");
         }
+      } else {
+        toast.error(`Failed to analyze route (HTTP ${res.status})`);
       }
     } catch {
       toast.error("Failed to analyze route");

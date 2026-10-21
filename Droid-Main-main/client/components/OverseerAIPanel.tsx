@@ -35,6 +35,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { startPollLoop } from "@/lib/poll-loop";
+import {
+  appendLatencySample,
+  createLatencySample,
+  latencyStats,
+  measureRoundTrip,
+  type LatencySample,
+} from "@/lib/latency-sample";
+
+/** Bridge endpoint whose HTTP round trip is measured for the latency monitor. */
+const LATENCY_PROBE_URL = "/api/pyautogui/status";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -50,19 +61,6 @@ import {
   PixelDiffOptions,
 } from "../utils/pixelDiffEngine";
 
-export interface LatencySample {
-  timestamp: number;
-  timeLabel: string;
-  commandLatencyMs: number; // Command dispatch -> hardware execution
-  frameReactionLatencyMs: number; // Command -> observed frame reaction delta
-  totalRoundtripMs: number;
-  phase1_ipcMs: number;
-  phase2_hardwareMs: number;
-  phase3_compositorMs: number;
-  phase4_visionDiffMs: number;
-  commandType: string;
-  status: "optimal" | "normal" | "degraded";
-}
 
 export interface OverseerAIPanelProps {
   isOpen?: boolean;
@@ -234,35 +232,9 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
   const [activeTab, setActiveTab] = useState<"pixel-diff" | "latency-monitor">("pixel-diff");
 
   // Latency History State
-  const [latencyHistory, setLatencyHistory] = useState<LatencySample[]>(() => {
-    const samples: LatencySample[] = [];
-    const now = Date.now();
-    for (let i = 20; i >= 0; i--) {
-      const baseLat = 32 + Math.sin(i * 0.4) * 12 + (Math.random() * 8 - 4);
-      const ipc = 3.5 + Math.random() * 1.5;
-      const hw = 12 + Math.random() * 4;
-      const comp = 14 + Math.random() * 5;
-      const vis = baseLat - (ipc + hw + comp);
-
-      samples.push({
-        timestamp: now - i * 1500,
-        timeLabel: new Date(now - i * 1500).toLocaleTimeString([], {
-          minute: "2-digit",
-          second: "2-digit",
-        }),
-        commandLatencyMs: Math.round(ipc + hw),
-        frameReactionLatencyMs: Math.round(baseLat),
-        totalRoundtripMs: Math.round(baseLat + 4),
-        phase1_ipcMs: parseFloat(ipc.toFixed(1)),
-        phase2_hardwareMs: parseFloat(hw.toFixed(1)),
-        phase3_compositorMs: parseFloat(comp.toFixed(1)),
-        phase4_visionDiffMs: parseFloat(Math.max(2, vis).toFixed(1)),
-        commandType: i % 3 === 0 ? "MOUSE_CLICK" : i % 2 === 0 ? "MOUSE_MOVE" : "KEY_PRESS",
-        status: baseLat > 60 ? "degraded" : baseLat > 42 ? "normal" : "optimal",
-      });
-    }
-    return samples;
-  });
+  // Measured round trips to the automation bridge; empty until the first measurement lands
+  const [latencyHistory, setLatencyHistory] = useState<LatencySample[]>([]);
+  const [latencyError, setLatencyError] = useState<string | null>(null);
 
   const [isPinging, setIsPinging] = useState(false);
   const [speedMultiplier, setSpeedMultiplier] = useState(1.0);
@@ -285,38 +257,8 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
     return VERIFICATION_SCENARIOS.find((s) => s.id === selectedScenarioId) || VERIFICATION_SCENARIOS[0];
   }, [selectedScenarioId]);
 
-  // Rolling stats
-  const stats = useMemo(() => {
-    if (latencyHistory.length === 0) return { avg: 38, min: 25, max: 62, p95: 54, jitter: 3.2 };
-    const reactionTimes = latencyHistory.map((s) => s.frameReactionLatencyMs);
-    const sum = reactionTimes.reduce((a, b) => a + b, 0);
-    const avg = Math.round(sum / reactionTimes.length);
-    const min = Math.min(...reactionTimes);
-    const max = Math.max(...reactionTimes);
-
-    const sorted = [...reactionTimes].sort((a, b) => a - b);
-    const p95Idx = Math.floor(sorted.length * 0.95);
-    const p95 = sorted[p95Idx] || max;
-
-    let jitterSum = 0;
-    for (let i = 1; i < reactionTimes.length; i++) {
-      jitterSum += Math.abs(reactionTimes[i] - reactionTimes[i - 1]);
-    }
-    const jitter = parseFloat((jitterSum / Math.max(1, reactionTimes.length - 1)).toFixed(1));
-
-    return { avg, min, max, p95, jitter };
-  }, [latencyHistory]);
-
-  const currentSample = latencyHistory[latencyHistory.length - 1] || {
-    frameReactionLatencyMs: 38,
-    commandLatencyMs: 15,
-    totalRoundtripMs: 42,
-    phase1_ipcMs: 3.8,
-    phase2_hardwareMs: 12.2,
-    phase3_compositorMs: 14.5,
-    phase4_visionDiffMs: 7.5,
-    status: "optimal",
-  };
+  const stats = useMemo(() => latencyStats(latencyHistory), [latencyHistory]);
+  const currentSample = latencyHistory[latencyHistory.length - 1];
 
   /**
    * Run HTML5 Canvas Pixel-Level Verification between Ref & Captured frames
@@ -441,74 +383,35 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
     runPixelVerification();
   }, [runPixelVerification]);
 
-  // Periodic simulated latency updates
+  const recordRoundTrip = useCallback(async (commandType: string) => {
+    const roundTripMs = await measureRoundTrip(LATENCY_PROBE_URL);
+    setLatencyHistory((prev) => appendLatencySample(prev, createLatencySample(roundTripMs, Date.now(), commandType)));
+    setLatencyError(null);
+    return roundTripMs;
+  }, []);
+
+  // Measured bridge round trip every 2s while the latency tab is open
   useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const baseLat = Math.round(30 + Math.random() * 22 + (isExecuting ? 12 : 0));
-      const ipc = 3.2 + Math.random() * 1.8;
-      const hw = 11 + Math.random() * 5;
-      const comp = 13 + Math.random() * 6;
-      const vis = Math.max(2, baseLat - (ipc + hw + comp));
-
-      const newSample: LatencySample = {
-        timestamp: now,
-        timeLabel: new Date(now).toLocaleTimeString([], {
-          minute: "2-digit",
-          second: "2-digit",
-        }),
-        commandLatencyMs: Math.round(ipc + hw),
-        frameReactionLatencyMs: baseLat,
-        totalRoundtripMs: baseLat + 4,
-        phase1_ipcMs: parseFloat(ipc.toFixed(1)),
-        phase2_hardwareMs: parseFloat(hw.toFixed(1)),
-        phase3_compositorMs: parseFloat(comp.toFixed(1)),
-        phase4_visionDiffMs: parseFloat(vis.toFixed(1)),
-        commandType: isExecuting ? "DISPATCH_ACTION" : "FRAME_SYNC_PING",
-        status: baseLat > 60 ? "degraded" : baseLat > 42 ? "normal" : "optimal",
-      };
-
-      setLatencyHistory((prev) => [...prev.slice(1), newSample]);
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [isExecuting]);
+    if (activeTab !== "latency-monitor") return;
+    const commandType = isExecuting ? "BRIDGE_STATUS_DURING_EXECUTION" : "BRIDGE_STATUS";
+    const probe = async () => {
+      try {
+        await recordRoundTrip(commandType);
+      } catch (e) {
+        setLatencyError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    return startPollLoop([{ everyTicks: 1, enabled: () => true, run: probe }], 2000);
+  }, [activeTab, isExecuting, recordRoundTrip]);
 
   // Live Ping Test
   const handleTriggerLivePing = async () => {
     setIsPinging(true);
-    const startTime = performance.now();
-
     try {
-      const res = await fetch("/api/pyautogui/status");
-      const elapsed = Math.round(performance.now() - startTime);
-
-      const now = Date.now();
-      const ipc = parseFloat((elapsed * 0.15).toFixed(1));
-      const hw = parseFloat((elapsed * 0.35).toFixed(1));
-      const comp = parseFloat((elapsed * 0.3).toFixed(1));
-      const vis = parseFloat(Math.max(2, elapsed - (ipc + hw + comp)).toFixed(1));
-
-      const sample: LatencySample = {
-        timestamp: now,
-        timeLabel: new Date(now).toLocaleTimeString([], {
-          minute: "2-digit",
-          second: "2-digit",
-        }),
-        commandLatencyMs: Math.round(ipc + hw),
-        frameReactionLatencyMs: elapsed,
-        totalRoundtripMs: elapsed + 3,
-        phase1_ipcMs: ipc,
-        phase2_hardwareMs: hw,
-        phase3_compositorMs: comp,
-        phase4_visionDiffMs: vis,
-        commandType: "MANUAL_PING_TEST",
-        status: elapsed > 70 ? "degraded" : elapsed > 45 ? "normal" : "optimal",
-      };
-
-      setLatencyHistory((prev) => [...prev.slice(1), sample]);
-      toast.success(`Measured live reaction latency: ${elapsed}ms`);
+      const elapsed = await recordRoundTrip("MANUAL_PING_TEST");
+      toast.success(`Measured bridge round trip: ${elapsed}ms`);
     } catch (e: any) {
+      setLatencyError(e.message);
       toast.error(`Ping failed: ${e.message}`);
     } finally {
       setIsPinging(false);
@@ -832,31 +735,18 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
       ) : (
         /* TAB 2: REAL-TIME LATENCY MONITOR */
         <div className="p-4 space-y-4">
-          {/* Main Latency Metric Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3 rounded-xl border border-slate-800/80 bg-slate-900/40">
+          {/* Main Latency Metric Cards (measured HTTP round trips only) */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 p-3 rounded-xl border border-slate-800/80 bg-slate-900/40">
             <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80">
-              <span className="text-[10px] text-slate-500 block">FRAME REACTION DELAY</span>
+              <span className="text-[10px] text-slate-500 block">BRIDGE ROUND TRIP (MEASURED)</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-xl font-extrabold text-amber-400">
-                  {currentSample.frameReactionLatencyMs}
+                  {currentSample ? currentSample.roundTripMs : "—"}
                 </span>
                 <span className="text-xs text-slate-400 font-bold">ms</span>
               </div>
               <span className="text-[9px] text-emerald-400 block mt-0.5">
-                Avg: {stats.avg}ms • P95: {stats.p95}ms
-              </span>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80">
-              <span className="text-[10px] text-slate-500 block">HARDWARE DISPATCH DELAY</span>
-              <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-xl font-extrabold text-cyan-300">
-                  {currentSample.commandLatencyMs}
-                </span>
-                <span className="text-xs text-slate-400 font-bold">ms</span>
-              </div>
-              <span className="text-[9px] text-slate-500 block mt-0.5">
-                PyAutoGUI native IPC bridge
+                {stats ? `Avg: ${stats.avg}ms • P95: ${stats.p95}ms` : latencyError ?? "Waiting for first measurement"}
               </span>
             </div>
 
@@ -864,12 +754,12 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
               <span className="text-[10px] text-slate-500 block">JITTER VARIANCE</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-xl font-extrabold text-slate-200">
-                  ±{stats.jitter}
+                  {stats ? `±${stats.jitter}` : "—"}
                 </span>
                 <span className="text-xs text-slate-400 font-bold">ms</span>
               </div>
               <span className="text-[9px] text-emerald-400 block mt-0.5">
-                Min: {stats.min}ms / Max: {stats.max}ms
+                {stats ? `Min: ${stats.min}ms / Max: ${stats.max}ms` : "No samples yet"}
               </span>
             </div>
 
@@ -892,7 +782,7 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span className="font-bold text-amber-400/90 flex items-center gap-1.5">
                 <Activity className="w-3.5 h-3.5" />
-                REAL-TIME REACTION DELAY TIMELINE (ms)
+                MEASURED {LATENCY_PROBE_URL} ROUND TRIP (ms)
               </span>
 
               <Button
@@ -921,7 +811,7 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis dataKey="timeLabel" stroke="#475569" fontSize={10} />
-                  <YAxis stroke="#475569" fontSize={10} domain={[0, 80]} />
+                  <YAxis stroke="#475569" fontSize={10} domain={[0, "auto"]} />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "#090d16",
@@ -933,8 +823,8 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
                   />
                   <Area
                     type="monotone"
-                    dataKey="frameReactionLatencyMs"
-                    name="Frame Reaction (ms)"
+                    dataKey="roundTripMs"
+                    name="Round trip (ms)"
                     stroke="#f59e0b"
                     strokeWidth={2}
                     fillOpacity={1}
@@ -944,34 +834,12 @@ export const OverseerAIPanel: React.FC<OverseerAIPanelProps> = ({
               </ResponsiveContainer>
             </div>
 
-            {/* 4-Phase Latency Pipeline Breakdown */}
-            <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-2">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                4-Phase Automation Latency Breakdown
-              </span>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
-                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800/60">
-                  <span className="text-[9px] text-slate-500 block">1. IPC BRIDGE</span>
-                  <span className="font-bold text-slate-200">{currentSample.phase1_ipcMs}ms</span>
-                </div>
-
-                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800/60">
-                  <span className="text-[9px] text-slate-500 block">2. PYAUTOGUI EXEC</span>
-                  <span className="font-bold text-cyan-300">{currentSample.phase2_hardwareMs}ms</span>
-                </div>
-
-                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800/60">
-                  <span className="text-[9px] text-slate-500 block">3. OS DRAW & COMPOSITOR</span>
-                  <span className="font-bold text-amber-300">{currentSample.phase3_compositorMs}ms</span>
-                </div>
-
-                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800/60">
-                  <span className="text-[9px] text-slate-500 block">4. VISION OCR / DIFF</span>
-                  <span className="font-bold text-emerald-400">{currentSample.phase4_visionDiffMs}ms</span>
-                </div>
-              </div>
-            </div>
+            {latencyError && (
+              <p className="text-[10px] text-red-400">Last measurement failed: {latencyError}</p>
+            )}
+            <p className="text-[10px] text-slate-500">
+              Per-phase breakdown (IPC / hardware / compositor / vision) is not measured by the bridge, so it is not shown.
+            </p>
           </div>
         </div>
       )}

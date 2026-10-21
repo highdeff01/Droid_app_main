@@ -1,48 +1,25 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./global.css";
+import { toast } from "sonner";
+import {
+  handleUnhandledRejection,
+  handleWindowError,
+  installJsonGuard,
+  type ErrorSurface,
+} from "@/lib/global-error-guard";
 
-// Resilient Response.prototype.json patch to guard against HTML fallbacks and plain-text rate limits
-const _originalJson = Response.prototype.json;
-Response.prototype.json = async function () {
-  try {
-    const text = await this.text();
-    if (!text || text.trim() === "") {
-      return { success: this.ok, status: this.status };
-    }
-    try {
-      return JSON.parse(text);
-    } catch {
-      const cleanMsg =
-        text.length < 150 && !text.includes("<!doctype") && !text.includes("<html")
-          ? text.trim()
-          : `Non-JSON response (HTTP ${this.status})`;
-      return {
-        success: false,
-        status: this.status,
-        error: cleanMsg,
-        rawText: text.slice(0, 300),
-      };
-    }
-  } catch (err: any) {
-    return {
-      success: false,
-      status: this.status,
-      error: err?.message || "Failed to read response body",
-    };
-  }
+// Non-JSON bodies (HTML fallbacks, plain-text rate limits) resolve to { success: false, error } and are logged.
+installJsonGuard(Response.prototype);
+
+const surfaceError: ErrorSurface = (message, options) => {
+  toast.error(message, options?.reload
+    ? { duration: Infinity, action: { label: "Reload", onClick: () => window.location.reload() } }
+    : undefined);
 };
 
-// Global uncaught error handler to prevent silent blank screens
-window.addEventListener("error", (event) => {
-  console.warn("Handled global window error:", event.error || event.message);
-});
-
-window.addEventListener("unhandledrejection", (event) => {
-  console.warn("Handled global unhandled promise rejection:", event.reason);
-  // Prevent unhandled promise rejections from crashing the applet
-  event.preventDefault();
-});
+window.addEventListener("error", (event) => handleWindowError(event, surfaceError));
+window.addEventListener("unhandledrejection", (event) => handleUnhandledRejection(event, surfaceError));
 
 const container = document.getElementById("root");
 if (container) {
