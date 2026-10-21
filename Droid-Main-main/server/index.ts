@@ -243,6 +243,8 @@ export function createServer() {
   app.use("/api/method-learning", requireApiAccess, methodLearningRouter);
   // Habit profile, outcome feedback and templates (client: HUD learning strip, squad, workflow library).
   app.use("/api/learning", requireApiAccess, methodLearningRouter);
+  // Companion notes, triggers (watch on/off), pending trigger actions; the HUD Master AI panel drives it.
+  app.use("/api/companion", requireApiAccess, companionRouter);
 
   // === Master assistant routes ===
   app.use("/api/assistant", assistantRouter);

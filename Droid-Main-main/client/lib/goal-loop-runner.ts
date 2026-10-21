@@ -83,6 +83,12 @@ export interface GoalLoopOptions {
   onStep?: (executed: ExecutedStep, state: GoalState) => void;
   /** Resolves true only when the user approves the corrected proposal. */
   approve: (proposal: PlanProposal) => Promise<boolean>;
+  /** User guidance read fresh for every planning/assessment turn (never interrupts a step). */
+  guidance?: () => string[];
+  /** Called before a step is gated; a returned reason refuses the step and forces a re-plan. Throwing ends the run. */
+  beforeStep?: (step: GoalStep) => string | null;
+  /** Called with the replay run id each time a gated step starts on the device. */
+  onReplayStarted?: (runId: string) => void;
 }
 
 export interface GoalLoopDeps {
@@ -161,6 +167,12 @@ async function observe(ctx: LoopContext, purpose: string): Promise<Observed> {
   return { observation: observeScreen(analysis.report, ocrText, capture.frame?.hash), frame };
 }
 
+/** The guidance entries for this turn, omitted from the request when there are none. */
+function guidanceOf(ctx: LoopContext): { guidance?: string[] } {
+  const guidance = ctx.options.guidance?.() ?? [];
+  return guidance.length > 0 ? { guidance } : {};
+}
+
 function historyOf(state: GoalState | undefined) {
   return (state?.executed ?? []).map((e) => ({
     name: e.step.name,
@@ -183,6 +195,7 @@ async function propose(
     screenshot: seen.frame,
     history: historyOf(state),
     reason,
+    ...guidanceOf(ctx),
   });
   return data.proposal as PlanProposal;
 }
@@ -245,6 +258,7 @@ async function dispatchStep(ctx: LoopContext, step: GoalStep): Promise<void> {
     iterations: 1,
     confirmation: true,
   });
+  if (started.run?.id) ctx.options.onReplayStarted?.(started.run.id);
   const fetchRun = async (id: string) =>
     (await ctx.deps.get(`/api/replay/${encodeURIComponent(id)}`, { apiKey: device.apiKey, signal })).run as ReplayRunSnapshot;
   await waitForReplayRun(started.run, { signal }, { gate: ctx.deps.gate, start: startReplay, fetch: fetchRun, sleep: ctx.deps.sleep });
@@ -267,6 +281,8 @@ async function runNextStep(ctx: LoopContext, state: GoalState): Promise<StepOutc
   if (relocation.status === "moved") {
     ctx.options.onEvent({ phase: "thinking", message: `"${planned.name}" target moved ${relocation.distancePx}px; re-grounded on the fresh screen`, x: step.x, y: step.y });
   }
+  const refused = ctx.options.beforeStep?.(step);
+  if (refused) return { state, seen: before, problem: refused };
   await dispatchStep(ctx, step);
   const after = await observe(ctx, `after "${step.name}"`);
   const executed: ExecutedStep = {
@@ -291,6 +307,7 @@ async function assessGoal(ctx: LoopContext, state: GoalState, seen: Observed): P
     observation: seen.observation,
     screenshot: seen.frame,
     history: historyOf(state),
+    ...guidanceOf(ctx),
   });
   return data.assessment as GoalAssessment;
 }
