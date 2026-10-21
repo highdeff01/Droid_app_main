@@ -46,6 +46,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { callbackPlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 
 export interface LogEventItem {
   id: string;
@@ -95,6 +98,7 @@ export const InteractiveDeviceControlDeck: React.FC<InteractiveDeviceControlDeck
   currentScreenTitle = "Main Screen",
   className = "",
 }) => {
+  const actionGate = useActionGate({ targetDevice: activeDevice });
   // Typing state
   const [textInput, setTextInput] = useState("");
   const [isTypingDispatching, setIsTypingDispatching] = useState(false);
@@ -318,13 +322,21 @@ export const InteractiveDeviceControlDeck: React.FC<InteractiveDeviceControlDeck
     await new Promise((r) => setTimeout(r, 600));
 
     toast.info(`▶ Running Test Workflow: "${wf.name}"...`);
-    addLog("TEST_MODE", "info", `Started Test Run: ${wf.name}`, `Executing ${wf.steps.length} steps sequentially from clean state.`);
+    addLog("TEST_MODE", "info", `Started Test Run: ${wf.name}`, `Executing ${wf.steps.length} steps sequentially from clean state; each step is verified on the live screen first.`);
 
-    for (let i = 0; i < wf.steps.length; i++) {
-      const step = wf.steps[i];
-      await new Promise((r) => setTimeout(r, step.delayMs || 400));
-      onDispatchAction?.(step.action, step.x, step.y, { text: step.text, key: step.key });
-      addLog("CLICK", "success", `Executed Step ${i + 1}/${wf.steps.length}: ${step.name}`, `@ (${step.x}, ${step.y})`);
+    const steps = wf.steps.map((step) => ({ ...step, delayMs: step.delayMs || 400 }));
+    let executed = 0;
+    const result = await actionGate.run(
+      callbackPlan(steps, (step) => {
+        executed++;
+        onDispatchAction?.(step.action, step.x, step.y, { text: step.text, key: step.key });
+        addLog("CLICK", "success", `Executed Step ${executed}/${wf.steps.length}: ${step.name}`, `@ (${step.x}, ${step.y})`);
+      }),
+    );
+    const failure = gateFailure(result);
+    if (failure) {
+      addLog("ERROR", "error", `Test Run Stopped: ${wf.name}`, `After ${executed}/${wf.steps.length} steps: ${failure}`);
+      return;
     }
 
     toast.success(`✅ Test Workflow "${wf.name}" completed with 100% accuracy!`);
@@ -822,12 +834,12 @@ export const InteractiveDeviceControlDeck: React.FC<InteractiveDeviceControlDeck
 
                       <Button
                         size="sm"
-                        onClick={() => handleRunWorkflow(wf)}
+                        onClick={() => (actionGate.isGating ? actionGate.stop() : handleRunWorkflow(wf))}
                         aria-label={`Run Test: ${wf.name}`}
                         className="h-6 px-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-[10px] flex items-center gap-1"
                       >
                         <Play className="w-3 h-3 fill-current" />
-                        Run Test
+                        {actionGate.isGating ? "Stop" : "Run Test"}
                       </Button>
                     </div>
                   </div>

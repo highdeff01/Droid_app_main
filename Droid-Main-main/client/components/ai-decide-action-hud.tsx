@@ -28,6 +28,9 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SequenceStep } from "./live-screen-hud";
 import { ScreenPerceptionReport } from "./dual-ai-copilot-panel";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { stepSequencePlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 
 type DecideMode = "type" | "sequence" | "navigate";
 
@@ -62,6 +65,7 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
   onNavigate,
   onTypeText,
 }) => {
+  const actionGate = useActionGate({ targetDevice, deviceId: deviceId ?? undefined });
   const [mode, setMode] = useState<DecideMode>("type");
   const [aiDeciding, setAiDeciding] = useState(false);
   const [aiDecision, setAiDecision] = useState<{
@@ -217,26 +221,24 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
           `✓ Sequence of ${sequence.length} steps dispatched via pyautogui`,
         );
       } else {
-        // Fallback: dispatch each step directly
-        for (const s of sequence) {
-          await fetch("/api/execute-task", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              targetDevice,
-              deviceId,
-              task: {
+        // Fallback: verify the live screen before each step, then dispatch it; stop at the first failed check
+        const failure = gateFailure(
+          await actionGate.run(
+            stepSequencePlan(
+              sequence.map((s) => ({
                 id: s.id,
                 name: s.name,
                 action: s.action,
-                targetPosition: { x: s.x, y: s.y },
-                textPayload: s.text || "",
-              },
-            }),
-          });
-          await new Promise((r) => setTimeout(r, s.delayMs || 500));
-        }
-        setStatus(`✓ Sequence executed`);
+                x: s.x,
+                y: s.y,
+                text: s.text,
+                delayMs: s.delayMs || 500,
+              })),
+              { targetDevice, deviceId: deviceId ?? undefined },
+            ),
+          ),
+        );
+        setStatus(failure ? `Sequence stopped: ${failure}` : `✓ Sequence executed`);
       }
     } catch (e) {
       setStatus("Sequence error: " + String(e).slice(0, 60));
@@ -438,12 +440,14 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
                 </ScrollArea>
               )}
               <Button
-                onClick={handleExecuteSequence}
-                disabled={executing || sequence.length === 0}
+                onClick={actionGate.isGating ? actionGate.stop : handleExecuteSequence}
+                disabled={(executing && !actionGate.isGating) || sequence.length === 0}
                 className="w-full h-7 text-xs bg-cyan-600 hover:bg-cyan-500 text-white gap-1 font-bold"
               >
                 <Zap className="w-3.5 h-3.5" />{" "}
-                {executing
+                {actionGate.isGating
+                  ? "Verifying screen… (Stop)"
+                  : executing
                   ? "Running..."
                   : `Perform Full Sequence (${sequence.length}) via pyautogui`}
               </Button>

@@ -34,6 +34,9 @@ import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { TabContextualSettingsBar } from "./tab-contextual-settings-bar";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { typingPlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 
 export interface CachedCalculation {
   id: string;
@@ -62,6 +65,7 @@ export const DynamicCalculatorTypingHub: React.FC<
   const [targetDevice, setTargetDevice] = useState<"desktop" | "android">(
     "desktop",
   );
+  const actionGate = useActionGate({ targetDevice });
   const [typingSpeedWpm, setTypingSpeedWpm] = useState(65);
   const [charDelayMs, setCharDelayMs] = useState(25);
   const [autoKeyboardReflexActive, setAutoKeyboardReflexActive] =
@@ -177,21 +181,15 @@ export const DynamicCalculatorTypingHub: React.FC<
     }
 
     try {
-      const res = await fetch("/api/execute-task", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetDevice,
-          task: {
-            id: `type_task_${Date.now()}`,
-            name: `Type Payload on ${targetDevice}`,
-            action: clearFieldBeforeTyping ? "clear_and_type" : "type",
-            targetPosition: targetCoords,
-            textPayload: text,
-          },
-        }),
-      });
-      const data = await res.json();
+      const result = await actionGate.run(
+        typingPlan(targetDevice, targetCoords, text, clearFieldBeforeTyping),
+      );
+      const failure = gateFailure(result);
+      if (failure) {
+        setStatusLog(`⛔ Typing not dispatched: ${failure}`);
+        return;
+      }
+      const data = result!.results[0] as { success?: boolean };
       if (data.success) {
         setStatusLog(
           `✓ Typed \"${text}\" on ${targetDevice.toUpperCase()} successfully at (${targetCoords.x}, ${targetCoords.y}).`,

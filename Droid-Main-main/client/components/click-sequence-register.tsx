@@ -49,6 +49,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { SequenceStep } from "./live-screen-hud";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { aiRepeatPlan } from "@/lib/gated-plans";
 
 export interface LiveActivityEvent {
   id: string;
@@ -110,6 +112,7 @@ export const ClickSequenceRegister: React.FC<ClickSequenceRegisterProps> = ({
   onClearSequence,
   onSelectStep,
 }) => {
+  const actionGate = useActionGate({ targetDevice: "desktop" });
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isAiRepeatEnabled, setIsAiRepeatEnabled] = useState<boolean>(true);
@@ -192,21 +195,9 @@ export const ClickSequenceRegister: React.FC<ClickSequenceRegisterProps> = ({
 
       setActivityEvents((prev) => [newEvent, ...prev.slice(0, 30)]);
 
-      // If AI Repeat is enabled during recording, dispatch physical execution immediately
+      // If AI Repeat is enabled during recording, mirror the step once the live screen verifies its target
       if (isAiRepeatEnabled && isRecordMode) {
-        fetch("/api/execute-task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            task: {
-              id: `ai_mimic_${latest.id}`,
-              name: `AI Repeat: ${latest.name}`,
-              action: latest.action,
-              targetPosition: { x: latest.x, y: latest.y },
-              textPayload: latest.text || "",
-            },
-          }),
-        }).catch(() => {});
+        void actionGate.run(aiRepeatPlan(latest));
       }
     }
   }, [sequence.length, isAiRepeatEnabled, isRecordMode]);
@@ -400,11 +391,14 @@ export const ClickSequenceRegister: React.FC<ClickSequenceRegisterProps> = ({
             </button>
 
             {/* Run / Stop Sequence */}
-            {isRunning ? (
+            {isRunning || actionGate.isGating ? (
               <Button
                 size="sm"
                 variant="destructive"
-                onClick={onStopSequence}
+                onClick={() => {
+                  actionGate.stop();
+                  onStopSequence();
+                }}
                 className="gap-1.5 text-xs font-semibold"
               >
                 <Pause className="w-3.5 h-3.5" />

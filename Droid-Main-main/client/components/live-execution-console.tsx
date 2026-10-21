@@ -27,6 +27,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { bridgeActionPlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 
 export interface BridgeLogItem {
   id: string;
@@ -66,6 +69,7 @@ export const LiveExecutionConsole: React.FC<LiveExecutionConsoleProps> = ({
   onDispatchAction,
   onExecuteTestCommand,
 }) => {
+  const actionGate = useActionGate({ targetDevice: "desktop" });
   const [logs, setLogs] = useState<BridgeLogItem[]>([]);
   const [activeProcesses, setActiveProcesses] = useState<ActiveProcessItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -198,15 +202,11 @@ export const LiveExecutionConsole: React.FC<LiveExecutionConsoleProps> = ({
         ];
       }
 
-      if (onDispatchAction) {
-        await onDispatchAction(testActionType, payload);
-      } else {
-        const res = await fetch("/api/pyautogui/bridge", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
+      const result = await actionGate.run(bridgeActionPlan(testActionType, payload, onDispatchAction));
+      const failure = gateFailure(result);
+      if (failure) return;
+      if (!onDispatchAction) {
+        const data = result!.results[0] as { success?: boolean; error?: string };
         if (data.success) {
           toast.success(`Executed ${testActionType.toUpperCase()} via PyAutoGUI bridge`);
         } else {
@@ -481,12 +481,12 @@ export const LiveExecutionConsole: React.FC<LiveExecutionConsoleProps> = ({
 
         <Button
           size="sm"
-          onClick={handleExecuteTestAction}
-          disabled={isExecutingTest}
+          onClick={actionGate.isGating ? actionGate.stop : handleExecuteTestAction}
+          disabled={isExecutingTest && !actionGate.isGating}
           className="h-7 text-xs font-mono font-bold bg-emerald-600 hover:bg-emerald-500 text-white gap-1.5 shadow-md shadow-emerald-950"
         >
           <Play className={`w-3 h-3 ${isExecutingTest ? "animate-spin" : ""}`} />
-          {isExecutingTest ? "Executing..." : "Dispatch to PC"}
+          {actionGate.isGating ? "Verifying… (Stop)" : isExecutingTest ? "Executing..." : "Dispatch to PC"}
         </Button>
       </div>
 

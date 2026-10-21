@@ -13,7 +13,10 @@ const POSITIONAL_ACTIONS = new Set([
   "right_click",
   "clear_and_type",
   "type_text",
+  "type",
   "scroll",
+  "tap",
+  "double_tap",
 ]);
 
 export interface GateTarget {
@@ -21,6 +24,8 @@ export interface GateTarget {
   y: number;
   label?: string;
   needsTarget: boolean;
+  /** x/y are 0–1 fractions of the captured frame rather than pixels. */
+  relative?: boolean;
 }
 
 export interface GateStepLike {
@@ -72,6 +77,17 @@ export const postGateJson: GatePost = async (url, body, { apiKey, signal }) => {
   }
   return data;
 };
+
+/** The gate target for one action at a point; only positional actions need an element there. */
+export function gateTargetForAction(
+  action: string,
+  x: number,
+  y: number,
+  label?: string,
+  relative?: boolean,
+): GateTarget {
+  return { x, y, label, needsTarget: POSITIONAL_ACTIONS.has(action), relative };
+}
 
 /** The step whose coordinate the gate verifies: the first positional step, else the first step. */
 export function gateTargetForSteps(steps: GateStepLike[]): GateTarget {
@@ -127,6 +143,20 @@ function failure(error: unknown, signal: AbortSignal): GateResult {
   return { status: "blocked", reason };
 }
 
+/** The target point in frame pixels; relative (0–1) targets are scaled by the captured frame's size. */
+export function toFramePoint(
+  target: GateTarget,
+  frame: { width?: number; height?: number } | undefined,
+): { x: number; y: number } {
+  if (!target.relative) return { x: target.x, y: target.y };
+  const width = frame?.width;
+  const height = frame?.height;
+  if (!width || !height) {
+    throw new Error("Screen capture reported no frame size for a relative target");
+  }
+  return { x: Math.round(target.x * width), y: Math.round(target.y * height) };
+}
+
 /**
  * Capture a fresh frame, analyze it, and confirm the target is on screen.
  * Never falls back to a stale frame: any capture or analysis failure blocks the action.
@@ -144,6 +174,7 @@ export async function runActionGate(
     );
     const frame: string | undefined = capture.frame?.image;
     if (!frame) throw new Error("Screen capture returned no frame");
+    const point = toFramePoint(target, capture.frame);
     const data = await post(
       "/api/ai/describe-screen",
       { imageData: frame },
@@ -160,11 +191,11 @@ export async function runActionGate(
         confidence: analysisConfidence(report),
       };
     }
-    const element = findTargetElement(report, target.x, target.y);
+    const element = findTargetElement(report, point.x, point.y);
     if (!element) {
       const name = target.label ? `"${target.label}" ` : "";
       throw new Error(
-        `Target ${name}not found at (${target.x}, ${target.y}) in the analyzed screen`,
+        `Target ${name}not found at (${point.x}, ${point.y}) in the analyzed screen`,
       );
     }
     return {
