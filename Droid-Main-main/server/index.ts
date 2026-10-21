@@ -24,6 +24,7 @@ import { centralLogHub } from "./log-hub";
 import { assistantRouter } from "./routes/assistant";
 import { assistantSourcesRouter } from "./routes/assistant-sources";
 import { analysisRouter } from "./routes/analysis";
+import { goalWorkflowsRouter } from "./routes/goal-workflows";
 import { assistantPlansRouter } from "./routes/assistant-plans";
 import { assistantExecutionRouter } from "./routes/assistant-execution";
 import { assistantRecordingsRouter } from "./routes/assistant-recordings";
@@ -179,6 +180,7 @@ export function createServer() {
   app.use("/api/assistant/sources", requireApiAccess, assistantSourcesRouter);
   app.use("/api/assistant/analysis", requireApiAccess, analysisRouter);
   app.use("/api/assistant/plans", requireApiAccess, assistantPlansRouter);
+  app.use("/api/goal-workflows", requireApiAccess, goalWorkflowsRouter);
   app.use(
     "/api/assistant/execution",
     requireApiAccess,
