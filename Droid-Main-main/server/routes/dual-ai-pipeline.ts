@@ -18,6 +18,7 @@ import { aiPlannerEngine } from "../ai-planner-engine";
 import { adaptiveRetryEngine } from "../adaptive-retry-engine";
 import { verifyStepAccuracy, resolveStuckState } from "../ai-gemini-service";
 import { aiMonitorStore } from "../ai-monitor-store";
+import { companionEvents } from "../companion-events";
 
 
 // 1. AI #1 Screen Auto-Description & Feedback Positioning
@@ -392,8 +393,17 @@ export const handleAutonomousStep: RequestHandler = async (req, res) => {
 
 // Legacy callers share the strict device adapter and never synthesize success.
 export async function dispatchActionToPython(action: any): Promise<any> {
-  try { return await executeDeviceTask(action); }
-  catch (error) { return { success: false, error: error instanceof Error ? error.message : "Execution failed" }; }
+  let result: any;
+  try { result = await executeDeviceTask(action); }
+  catch (error) { result = { success: false, error: error instanceof Error ? error.message : "Execution failed" }; }
+  if (result?.success === false) {
+    companionEvents.reportError({
+      source: "device_command",
+      message: String(result.error || "Device command failed"),
+      failedStep: { name: action?.name, action: action?.action ?? action?.type, x: action?.x, y: action?.y },
+    });
+  }
+  return result;
 }
 
 // 7. AI Play Similar Action (Frames 1-10) with Clickpoint Execution on PC
