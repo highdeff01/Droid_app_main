@@ -96,5 +96,19 @@
     "id": "session_1792566808861_q608dkwb",
     "createdAt": "2026-10-21T07:13:28.861Z",
     "updatedAt": "2026-10-21T07:13:28.861Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T10:03:50.517Z",
+      "updatedAt": "2026-10-21T10:03:50.517Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792577030518_wop42z9b",
+    "createdAt": "2026-10-21T10:03:50.518Z",
+    "updatedAt": "2026-10-21T10:03:50.518Z"
   }
 ]

@@ -89,5 +89,18 @@
     },
     "events": [],
     "stoppedAt": "2026-10-21T07:13:28.873Z"
+  },
+  {
+    "id": "recording_1792577030531_kf2s89t",
+    "sessionId": "session-1",
+    "name": "Persistent recording",
+    "status": "stopped",
+    "startedAt": "2026-10-21T10:03:50.531Z",
+    "source": {
+      "source": "manual",
+      "sensitiveInputCaptured": false
+    },
+    "events": [],
+    "stoppedAt": "2026-10-21T10:03:50.531Z"
   }
 ]
