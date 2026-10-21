@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import type { Request, Response } from "express";
+import { isFrameStale } from "../capture-frame";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +28,7 @@ const MAX_DESKTOP_FRAMES = 30;
 let latestSyncedRealFrame: {
   imageData: string;
   metadata?: FrameMetadata;
+  timestamp: number;
 } | null = null;
 
 export const setLatestSyncedRealFrame = (
@@ -34,11 +36,12 @@ export const setLatestSyncedRealFrame = (
   metadata?: FrameMetadata,
   note?: string,
 ) => {
-  latestSyncedRealFrame = { imageData, metadata };
+  const timestamp = Date.now();
+  latestSyncedRealFrame = { imageData, metadata, timestamp };
   const item: DesktopFrameHistoryItem = {
-    id: `desktop_snap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id: `desktop_snap_${timestamp}_${Math.random().toString(36).slice(2, 6)}`,
     imageData,
-    timestamp: Date.now(),
+    timestamp,
     note,
     metadata,
   };
@@ -56,14 +59,19 @@ export const captureDesktopFrame = async (): Promise<{
   imageData?: string;
   method?: string;
   metadata?: FrameMetadata;
+  timestamp?: number;
   error?: string;
 }> => {
-  if (latestSyncedRealFrame) {
+  if (
+    latestSyncedRealFrame &&
+    !isFrameStale(latestSyncedRealFrame.timestamp, Date.now())
+  ) {
     return {
       success: true,
       imageData: latestSyncedRealFrame.imageData,
       method: "real_desktop_stream",
       metadata: latestSyncedRealFrame.metadata,
+      timestamp: latestSyncedRealFrame.timestamp,
     };
   }
 

@@ -718,6 +718,11 @@ export function queueMobileAction(item: Partial<MobileActionItem>): MobileAction
   return act;
 }
 
+/** The last frame a real device posted, with no synthetic mirror substitution. */
+export function getLatestRealMobileFrame() {
+  return latestMobileFrame;
+}
+
 export function getLatestMobileFrameSnapshot() {
   if (latestMobileFrame && Date.now() - latestMobileFrame.timestamp <= 25000) {
     return latestMobileFrame;
