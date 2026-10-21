@@ -96,5 +96,12 @@
     "id": "progress_1792624089658_odiwauhi",
     "sessionId": "session_1792624089652_8zicsiip",
     "createdAt": "2026-10-21T23:08:09.658Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792624560906_msl58quq",
+    "sessionId": "session_1792624560900_tszlwgbf",
+    "createdAt": "2026-10-21T23:16:00.906Z"
   }
 ]
