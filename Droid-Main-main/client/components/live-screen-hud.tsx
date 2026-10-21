@@ -137,6 +137,24 @@ import { useBufferedFrame } from "@/hooks/use-buffered-frame";
 import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
 import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
+import { MasterAiPanel, type MasterAiPanelProps } from "./master-ai-panel";
+import {
+  askQwen,
+  completionStep,
+  dispatchInteractiveAction,
+  fetchQwenGuide,
+  inspectOcrAtPoint,
+  stopBridge,
+  postHudJson,
+  tagEntityAtPoint,
+  verifyIntegrityAtPoint,
+  type HudStepLike,
+} from "@/lib/hud-actions";
+import { HudAgentPanel } from "./hud-agent-panel";
+import type { HudSuggestedAction } from "@shared/api";
+
+/** How often the Qwen guide re-reads the live frame while enabled. */
+const QWEN_GUIDE_POLL_MS = 8000;
 
 /** Footprint of the record popover, used to keep it inside the viewport. */
 const RECORD_POPOVER_SIZE = { width: 288, height: 420 };
@@ -285,6 +303,8 @@ interface LiveScreenHUDProps {
   onToggleCapture?: () => void;
   /** Live AI intention, goals and learning data; the collapsible panel renders only when provided. */
   intentionsPanel?: AiIntentionsPanelProps;
+  /** Master AI orchestrator; the control section renders only when provided. */
+  masterPanel?: MasterAiPanelProps;
 }
 
 export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
@@ -328,6 +348,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   onRetryStep,
   onToggleCapture,
   intentionsPanel,
+  masterPanel,
 }) => {
   const executeVerifiedTask = (url: string, options: RequestInit) => {
     if (!onExecuteTask) return Promise.reject(new Error("Open Screen Hub to use verified device execution"));
@@ -5379,6 +5400,13 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Master AI orchestrator */}
+      {masterPanel ? (
+        <div className="px-2 py-1 bg-slate-950 border-t border-slate-800 z-30">
+          <MasterAiPanel {...masterPanel} />
+        </div>
+      ) : null}
 
       {/* AI Intentions, Goals and Learning */}
       {intentionsPanel ? (
