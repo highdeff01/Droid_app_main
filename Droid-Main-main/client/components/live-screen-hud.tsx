@@ -134,6 +134,7 @@ import { useElementSize } from "@/hooks/use-element-size";
 import { useBufferedFrame } from "@/hooks/use-buffered-frame";
 import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
+import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
 
 /** Footprint of the record popover, used to keep it inside the viewport. */
 const RECORD_POPOVER_SIZE = { width: 288, height: 420 };
@@ -280,6 +281,8 @@ interface LiveScreenHUDProps {
   onRetryStep?: (step: SequenceStep) => void;
   /** Manual capture start/stop (ungated). */
   onToggleCapture?: () => void;
+  /** Live AI intention, goals and learning data; the collapsible panel renders only when provided. */
+  intentionsPanel?: AiIntentionsPanelProps;
 }
 
 export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
@@ -322,6 +325,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   onReplayControl,
   onRetryStep,
   onToggleCapture,
+  intentionsPanel,
 }) => {
   const executeVerifiedTask = (url: string, options: RequestInit) => {
     if (!onExecuteTask) return Promise.reject(new Error("Open Screen Hub to use verified device execution"));
@@ -5330,6 +5334,13 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           </div>
         </div>
       </div>
+
+      {/* AI Intentions, Goals and Learning */}
+      {intentionsPanel ? (
+        <div className="px-2 py-1 bg-slate-950 border-t border-slate-800 z-30">
+          <AiIntentionsPanel {...intentionsPanel} />
+        </div>
+      ) : null}
 
       {/* Bottom Docked Status & Coordinate Bar */}
       <div className="h-7 px-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono z-30 select-none">
