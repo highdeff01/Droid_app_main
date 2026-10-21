@@ -78,6 +78,10 @@ import {
 import { applyDelayMultiplier, type LearningOutcome, type UserHabitProfile } from "@shared/learning";
 import { buildRetryStep, toReplayStepPayload } from "@/lib/step-replay";
 import { GoalWorkflowPanel } from "@/components/goal-workflow-panel";
+import { companionApi } from "@/lib/companion-api";
+import type { WorkflowStepDraft } from "@shared/companion";
+import { CompanionChatPanel } from "@/components/companion-chat-panel";
+import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import { GOAL_PHASE_BADGE, type GoalLoopEvent } from "@/lib/goal-loop-runner";
 import {
   LiveScreenHUD,
@@ -2938,8 +2942,8 @@ export default function Dashboard({
                 }
                 setGoalsState((prev) =>
                   prev.map((g) => (g.id === id ? { ...g, ...upd } : g)),
-                )
-              }
+                );
+              }}
               onDeleteGoal={deleteGoal}
               onExecuteGoal={(id) => { void executeGoal(id); }}
               onSelectTargetCoordinates={(x, y) => handleAddSequenceStep(x, y)}
