@@ -52,6 +52,10 @@ import {
 import { TabContextualSettingsBar } from "./tab-contextual-settings-bar";
 import { SequenceStep, AIThinkingState } from "./live-screen-hud";
 
+/** " conf NN%" when the analysis reported a confidence, otherwise nothing. */
+const confidenceSuffix = (thinking: AIThinkingState) =>
+  thinking.confidence === undefined ? "" : ` conf ${(thinking.confidence * 100).toFixed(0)}%`;
+
 export interface TemporalFrameData {
   id: string;
   role: "previous" | "current" | "next";
@@ -185,7 +189,7 @@ export const TemporalScreenshotTrioHUD: React.FC<
         : `Live Frame #${liveRing.length + 1}`,
       screenshotUrl: currentLiveScreenshot,
       thinkingProcess: aiThinking
-        ? `Targeting (${aiThinking.x}, ${aiThinking.y}) conf ${(aiThinking.confidence * 100).toFixed(0)}%`
+        ? `Targeting (${aiThinking.x}, ${aiThinking.y})${confidenceSuffix(aiThinking)}`
         : "Live recording capture - analyzing element geometry",
       testsRun:
         perceptionElements.length > 0
@@ -219,7 +223,7 @@ export const TemporalScreenshotTrioHUD: React.FC<
         isLiveStreamActive && frozenSnapshotUrl
           ? frozenSnapshotUrl
           : currentLiveScreenshot,
-      thinkingProcess: `${aiThinking.action} @ (${aiThinking.x},${aiThinking.y}) conf ${(aiThinking.confidence * 100).toFixed(0)}%`,
+      thinkingProcess: `${aiThinking.action} @ (${aiThinking.x},${aiThinking.y})${confidenceSuffix(aiThinking)}`,
       testsRun: "Real-time spline + OCR verification",
       actionDispatched: aiThinking.action,
       timestamp: new Date().toLocaleTimeString(),
@@ -323,55 +327,9 @@ export const TemporalScreenshotTrioHUD: React.FC<
 
   const handleExecuteBackupWorkaround = async (obs: ScreenObstacleInfo) => {
     setStatusLog(
-      `🛡️ Triggering workaround: ${obs.armedWorkaround} via PyAutoGUI...`,
+      `🛡️ Verifying screen, then triggering workaround: ${obs.armedWorkaround}...`,
     );
-    // Actual pyautogui dispatch
-    try {
-      const actionMap: Record<string, any> = {
-        backdrop_click: { action: "click", x: 100, y: 100 },
-        escape_key: { action: "press_key", keyPayload: "escape" },
-        tab_enter: { action: "press_key", keyPayload: "enter" },
-        spline_reanchor: {
-          action: "click",
-          x: obs.detectedCoords.x,
-          y: obs.detectedCoords.y,
-        },
-      };
-      const act = actionMap[obs.workaroundMethod] || {
-        action: "click",
-        x: 100,
-        y: 100,
-      };
-      await fetch("/api/execute-task", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetDevice: "desktop",
-          task: {
-            id: `workaround_${Date.now()}`,
-            name: `Workaround: ${obs.title}`,
-            action: act.action,
-            targetPosition: { x: act.x || 100, y: act.y || 100 },
-            keyPayload: act.keyPayload || "escape",
-            textPayload: "",
-          },
-        }),
-      });
-      setStatusLog(
-        `✓ Workaround executed on live OS via PyAutoGUI at (${act.x || ""},${act.y || ""})`,
-      );
-      fetch("/api/logs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: "PyAutoGUI",
-          level: "SUCCESS",
-          message: `Workaround ${obs.workaroundMethod} dispatched @ (${act.x},${act.y})`,
-        }),
-      }).catch(() => {});
-    } catch (e) {
-      setStatusLog(`Workaround dispatch failed: ${String(e)}`);
-    }
+    // The parent verifies the live screen before dispatching the workaround.
     if (onExecuteWorkaround) onExecuteWorkaround(obs.workaroundMethod);
     setTimeout(() => setObstacles([]), 900);
   };
@@ -653,24 +611,12 @@ export const TemporalScreenshotTrioHUD: React.FC<
               <div className="flex gap-1 mt-2">
                 <Button
                   size="sm"
-                  onClick={async () => {
-                    // Actual pyautogui dispatch for selected history frame
+                  onClick={() => {
+                    // The parent verifies the live screen before dispatching.
                     const c = selectedHistory.coords || { x: 960, y: 540 };
-                    await fetch("/api/execute-task", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        targetDevice: "desktop",
-                        task: {
-                          id: `hist_${selectedHistory.id}`,
-                          name: selectedHistory.title,
-                          action: "click",
-                          targetPosition: c,
-                        },
-                      }),
-                    });
+                    onTriggerStepAction?.(c, "click");
                     setStatusLog(
-                      `Dispatched click to live OS @ (${c.x},${c.y}) via PyAutoGUI`,
+                      `Verifying screen, then clicking @ (${c.x},${c.y})...`,
                     );
                   }}
                   className="h-6 flex-1 text-[10px] bg-cyan-600 hover:bg-cyan-500 text-white font-bold"
@@ -857,46 +803,15 @@ export const TemporalScreenshotTrioHUD: React.FC<
                     <div className="pt-1">
                       <Button
                         size="sm"
-                        onClick={async () => {
+                        onClick={() => {
+                          // The parent verifies the live screen before dispatching.
                           setStatusLog(
-                            `✨ Dispatching ${fr.actionType} @ (${fr.targetCoords.x},${fr.targetCoords.y}) via PyAutoGUI...`,
+                            `Verifying screen, then dispatching ${fr.actionType} @ (${fr.targetCoords.x},${fr.targetCoords.y})...`,
                           );
-                          try {
-                            await fetch("/api/execute-task", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                targetDevice: "desktop",
-                                task: {
-                                  id: `trio_${fr.id}_${Date.now()}`,
-                                  name: fr.title,
-                                  action: fr.actionType
-                                    .toLowerCase()
-                                    .includes("type")
-                                    ? "type_text"
-                                    : fr.actionType.toLowerCase(),
-                                  targetPosition: fr.targetCoords,
-                                },
-                              }),
-                            });
-                            setStatusLog(`✓ Dispatched on live OS`);
-                            fetch("/api/logs", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                source: "PyAutoGUI",
-                                level: "SUCCESS",
-                                message: `Trio ${fr.role} executed @ (${fr.targetCoords.x},${fr.targetCoords.y})`,
-                              }),
-                            }).catch(() => {});
-                          } catch (e) {
-                            setStatusLog(`Dispatch failed: ${String(e)}`);
-                          }
-                          if (onTriggerStepAction)
-                            onTriggerStepAction(
-                              { x: fr.targetCoords.x, y: fr.targetCoords.y },
-                              fr.actionType,
-                            );
+                          onTriggerStepAction?.(
+                            { x: fr.targetCoords.x, y: fr.targetCoords.y },
+                            fr.actionType,
+                          );
                         }}
                         className="w-full h-7 text-[10px] font-mono font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-sm"
                       >

@@ -196,37 +196,12 @@ export const EntitiesRadarPanel: React.FC<EntitiesRadarPanelProps> = ({
     setSelectedEntity(newEnt);
   };
 
-  const handleTellAiToMove = async (entity: TacticalEntity) => {
-    const log = `[DISPATCH] Main AI commanded to MOVE to (${entity.position.x}, ${entity.position.y}) targeting "${entity.name}". Reason: ${entity.reasoning}`;
+  const handleTellAiToMove = (entity: TacticalEntity) => {
+    const log = `[DISPATCH] Main AI asked to MOVE to (${entity.position.x}, ${entity.position.y}) targeting "${entity.name}" once the live screen verifies it. Reason: ${entity.reasoning}`;
     setAiMovementDispatchLog(log);
-    // Real pyautogui dispatch - ensure AI actually performs
-    try {
-      await fetch("/api/execute-task", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetDevice: "desktop",
-          task: {
-            id: `entity_move_${entity.id}_${Date.now()}`,
-            name: `Move to ${entity.name}`,
-            action: "click",
-            targetPosition: { x: entity.position.x, y: entity.position.y },
-            textPayload: "",
-          },
-        }),
-      });
-      fetch("/api/logs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: "PyAutoGUI",
-          level: "SUCCESS",
-          message: `Entity radar dispatched @ (${entity.position.x},${entity.position.y}) - ${entity.name}`,
-        }),
-      }).catch(() => {});
-    } catch {}
-    onDispatchAiMove?.(entity);
+    // The parent dispatches only after the screenshot analysis verifies the target.
     onSelectEntity?.(entity.position.x, entity.position.y, entity.name);
+    onDispatchAiMove?.(entity);
   };
 
   return (

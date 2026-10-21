@@ -152,7 +152,8 @@ export interface AIThinkingState {
   x: number;
   y: number;
   action: string;
-  confidence: number;
+  /** From the screen analysis that verified the target; omitted when no analysis ran. */
+  confidence?: number;
   isThinking: boolean;
   targetLabel?: string;
 }
@@ -4417,7 +4418,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
               {aiThinking.action || "Formulating Next Step"}
             </div>
             <div className="text-[9px] text-purple-400 font-mono mt-0.5">
-              Conf: {(aiThinking.confidence * 100).toFixed(0)}% • (
+              {aiThinking.confidence !== undefined && `Conf: ${(aiThinking.confidence * 100).toFixed(0)}% • `}(
               {aiThinking.x}, {aiThinking.y})
             </div>
           </div>
