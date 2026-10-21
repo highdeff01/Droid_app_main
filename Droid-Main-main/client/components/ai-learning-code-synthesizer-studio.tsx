@@ -45,6 +45,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TabContextualSettingsBar } from "./tab-contextual-settings-bar";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { synthesizedScriptPlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 
 export interface OCRTokenRecord {
   id: string;
@@ -85,6 +88,7 @@ interface AILearningCodeSynthesizerStudioProps {
 export const AILearningCodeSynthesizerStudio: React.FC<
   AILearningCodeSynthesizerStudioProps
 > = ({ currentLiveScreenshot, onFeedToStoryMode }) => {
+  const actionGate = useActionGate({ targetDevice: "desktop" });
   const [activeTab, setActiveTab] = useState<string>("synthesizer");
   const [selectedLanguage, setSelectedLanguage] = useState<
     "python" | "typescript"
@@ -335,22 +339,13 @@ def dismiss_and_bypass_overlay(bypass_x=620, bypass_y=380):
 
   // Execute Code on Real PC
   const handleExecuteCodeOnRealPC = async () => {
-    setStatusLog("⚡ Executing synthesized script natively on your real PC...");
+    setStatusLog("🔍 Verifying the live screen before executing the synthesized script...");
     try {
-      await fetch("/api/execute-task", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetDevice: "desktop",
-          task: {
-            id: `script_exec_${Date.now()}`,
-            name: "Execute Synthesized Script",
-            action: "click",
-            targetPosition: { x: 960, y: 540 },
-            textPayload: "",
-          },
-        }),
-      });
+      const failure = gateFailure(await actionGate.run(synthesizedScriptPlan()));
+      if (failure) {
+        setStatusLog(`⛔ Script not executed: ${failure}`);
+        return;
+      }
       setStatusLog("✓ Script executed successfully on Desktop OS.");
     } catch (err) {
       console.error(err);

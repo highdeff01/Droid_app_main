@@ -51,6 +51,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { mirrorAiMovePlan } from "@/lib/gated-plans";
 import { calibrateCoordinates, getStoredCalibration } from "@/lib/coordinate-calibration";
 import { InteractiveContextMenu, ContextMenuTarget } from "@/components/interactive-context-menu";
 
@@ -69,6 +71,7 @@ export interface SimulatedWindow {
 }
 
 export const VirtualDesktopMirrorStudio: React.FC = () => {
+  const actionGate = useActionGate({ targetDevice: "desktop" });
   // Mode: "browser_screen" (Real getDisplayMedia), "camera" (Webcam/HDMI), "virtual_os" (Interactive 60FPS Canvas)
   const [mirrorMode, setMirrorMode] = useState<"virtual_os" | "real_screen" | "camera">("virtual_os");
   const [isLiveStreaming, setIsLiveStreaming] = useState<boolean>(false);
@@ -1161,17 +1164,8 @@ export const VirtualDesktopMirrorStudio: React.FC = () => {
           });
         }}
         onTellMainAiToMove={(x, y) => {
-          toast.info(`AI Navigation Cue dispatched to (${x}, ${y})`);
-          fetch("/api/pyautogui/interactive-action", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "click",
-              x,
-              y,
-              deviceMode: "desktop_mirror",
-            }),
-          }).catch(() => {});
+          toast.info(`Verifying screen, then sending AI Navigation Cue to (${x}, ${y})`);
+          void actionGate.run(mirrorAiMovePlan(x, y));
         }}
         onTag3WayEntity={(type, x, y) => {
           toast.success(`Tagged (${x}, ${y}) as ${type.toUpperCase()} entity`);

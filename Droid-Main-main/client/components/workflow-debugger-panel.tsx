@@ -42,6 +42,9 @@ import {
   AutoCalibrationResult,
 } from "@/lib/drift-calibration";
 import { SyncStatusIndicator } from "./sync-status-indicator";
+import { useActionGate } from "@/hooks/use-action-gate";
+import { retrySegmentPlan, stepSequencePlan } from "@/lib/gated-plans";
+import { gateFailure } from "@/lib/gated-dispatch";
 
 interface WorkflowDebuggerPanelProps {
   initialSteps?: WorkflowStep[];
@@ -62,6 +65,7 @@ export const WorkflowDebuggerPanel: React.FC<WorkflowDebuggerPanelProps> = ({
   screenshotUrl,
   className = "",
 }) => {
+  const actionGate = useActionGate({ targetDevice: "desktop" });
   const [steps, setSteps] = useState<WorkflowStep[]>(
     initialSteps && initialSteps.length > 0 ? initialSteps : loadStoredWorkflowSteps()
   );
@@ -458,21 +462,28 @@ export const WorkflowDebuggerPanel: React.FC<WorkflowDebuggerPanelProps> = ({
           isClick ? "success" : "info"
         );
 
-        // Send to PC execution endpoint
-        fetch("/api/execute-task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            targetDevice: "desktop",
-            task: {
-              id: `frame_${frameNum}`,
-              name: currentStepData.name,
-              action: currentStepData.action || "click",
-              targetPosition: { x: targetX, y: targetY },
-              text: (currentStepData as any).text,
-            },
-          }),
-        }).catch(() => {});
+        // Verify the live screen, then send to the PC execution endpoint; stop at the first failed check or Stop
+        const failure = gateFailure(
+          await actionGate.run(
+            stepSequencePlan(
+              [
+                {
+                  id: `frame_${frameNum}`,
+                  name: currentStepData.name,
+                  action: currentStepData.action || "click",
+                  x: targetX,
+                  y: targetY,
+                  text: (currentStepData as any).text,
+                },
+              ],
+              { targetDevice: "desktop" },
+            ),
+          ),
+        );
+        if (failure) {
+          addLog(`Replay stopped at frame ${frameNum}: ${failure}`, "warn");
+          return;
+        }
 
         // Pacing delay between frames
         await new Promise((resolve) => setTimeout(resolve, 750));
@@ -501,23 +512,27 @@ export const WorkflowDebuggerPanel: React.FC<WorkflowDebuggerPanelProps> = ({
       if (onExecuteStepOnPC) {
         await onExecuteStepOnPC(activeStep);
       } else {
-        await fetch("/api/execute-task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            targetDevice: "desktop",
-            task: {
-              id: activeStep.id,
-              name: activeStep.name,
-              action: activeStep.action,
-              targetPosition: {
-                x: (activeStep.originalX ?? activeStep.x) + (activeStep.offsetX || 0),
-                y: (activeStep.originalY ?? activeStep.y) + (activeStep.offsetY || 0),
-              },
-              text: activeStep.text,
-            },
-          }),
-        });
+        const failure = gateFailure(
+          await actionGate.run(
+            stepSequencePlan(
+              [
+                {
+                  id: activeStep.id,
+                  name: activeStep.name,
+                  action: activeStep.action,
+                  x: (activeStep.originalX ?? activeStep.x) + (activeStep.offsetX || 0),
+                  y: (activeStep.originalY ?? activeStep.y) + (activeStep.offsetY || 0),
+                  text: activeStep.text,
+                },
+              ],
+              { targetDevice: "desktop" },
+            ),
+          ),
+        );
+        if (failure) {
+          addLog(`Step #${activeStep.stepNumber} not executed: ${failure}`, "warn");
+          return;
+        }
       }
       addLog(
         `Step #${activeStep.stepNumber} successfully executed on physical hardware!`,
@@ -542,24 +557,25 @@ export const WorkflowDebuggerPanel: React.FC<WorkflowDebuggerPanelProps> = ({
     );
 
     try {
-      const res = await fetch("/api/pyautogui/retry-segment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          steps: targetSteps,
+      const result = await actionGate.run(
+        retrySegmentPlan(targetSteps, {
           segmentStartIndex: startIdx,
           segmentEndIndex: endIdx,
           reason: `Debugger retry segment: Steps #${startIdx + 1} to #${endIdx + 1}`,
         }),
-      });
-
-      if (res.ok) {
+      );
+      const failure = gateFailure(result);
+      if (failure) {
+        addLog(`[RETRY SEGMENT BLOCKED] ${failure}`, "warn");
+        return;
+      }
+      const data = result!.results[0] as { success?: boolean; error?: string };
+      if (data.success !== false) {
         addLog(
           `[RETRY SEGMENT SUCCESS] Segment [Steps #${startIdx + 1} to #${endIdx + 1}] executed via PyAutoGUI bridge.`,
           "success"
         );
       } else {
-        const data = await res.json();
         addLog(`[RETRY SEGMENT WARN] ${data.error || "Execution completed with warnings."}`, "warn");
       }
     } catch (err) {
@@ -646,8 +662,7 @@ export const WorkflowDebuggerPanel: React.FC<WorkflowDebuggerPanelProps> = ({
           {/* AI Replay Drift & Execute Actions on PC for Frames 1-10 */}
           <Button
             size="sm"
-            onClick={handleReplayFrames1To10OnPC}
-            disabled={isReplayingDrift10}
+            onClick={isReplayingDrift10 ? actionGate.stop : handleReplayFrames1To10OnPC}
             className={`h-8 px-3 font-mono font-bold gap-1.5 border shadow-md ${
               isReplayingDrift10
                 ? "bg-purple-600 hover:bg-purple-500 text-white animate-pulse border-purple-400"
@@ -658,7 +673,7 @@ export const WorkflowDebuggerPanel: React.FC<WorkflowDebuggerPanelProps> = ({
             <PlayCircle className="w-3.5 h-3.5 text-purple-200" />
             <span>
               {isReplayingDrift10
-                ? `REPLAYING FRAME ${currentReplayFrame || 1}/10...`
+                ? `REPLAYING FRAME ${currentReplayFrame || 1}/10... (STOP)`
                 : "REPLAY DRIFT (FRAMES 1-10)"}
             </span>
           </Button>

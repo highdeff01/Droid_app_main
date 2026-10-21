@@ -44,6 +44,22 @@ None of these paths checked `aiThinking` or `verificationBadge` before executing
 
 Also fixed: the standalone Perceive button used to leave the badge stuck on `verifying` after analysis finished. It now clears the badge, so `verifying` only means a check is in progress.
 
-### Still ungated (outside the Dashboard paths in scope)
+### Components outside the Dashboard
 
-These components still post `/api/execute-task` or `/api/pyautogui/*` directly and are not part of this change: `ai-learning-code-synthesizer-studio`, `app-relative-backprop-engine`, `click-sequence-register`, `continuous-mouse-route-player`, `dynamic-calculator-typing-hub`, `screenshot-layering-panel`, `screenshot-pack-builder-studio`, `three-ai-agents-squad`, `workflow-debugger-panel`, `interactive-device-control-deck`, `virtual-desktop-mirror-studio`, `MobileRemote`, the bridge console `LiveExecutionConsole`, and the sequence fallback in `AIDecideActionHUD`, which only runs when no `onRunSequence` is supplied.
+These components gate AI-, autonomous- and replay-driven actions through `useActionGate` (`client/hooks/use-action-gate.ts`). The hook calls `runGatedSequence` (`client/lib/gated-dispatch.ts`), which runs `runActionGate` before every step. Each path's plan in `client/lib/gated-plans.ts` keeps the endpoint and body the component already sent. A failed check shows the toast `Action blocked: …` and dispatches nothing. Stop, or unmounting the component, aborts the check that is running. A second run while one is pending is rejected with a toast. Phone actions use 0–1 coordinates, so the gate scales them by the captured frame's width and height before it checks for a matching element.
+
+| Component | Gated path | Left ungated (manual) |
+|---|---|---|
+| `ai-learning-code-synthesizer-studio` | Execute synthesized script | — |
+| `click-sequence-register` | AI Repeat while recording | — |
+| `continuous-mouse-route-player` | Play route on actual PC | — |
+| `dynamic-calculator-typing-hub` | Dispatch typing / Solve & type | — |
+| `three-ai-agents-squad` | Automate habit routine | — |
+| `workflow-debugger-panel` | Replay frames 1–10 (gated per frame), execute active step, retry segment | — |
+| `interactive-device-control-deck` | Run saved test workflow (gated per step) | Send text, hardware keys, launch app |
+| `virtual-desktop-mirror-studio` | Tell main AI to move | Canvas click, context-menu direct hardware action |
+| `MobileRemote` | AI chat actions, synced workflow run (gated per step) | PC text/keys/hotkeys/swipes, live-view taps, incoming desktop action queue |
+| `LiveExecutionConsole` | Dispatch to PC test action | Logs fetch/clear |
+| `AIDecideActionHUD` fallback (no `onRunSequence`) | Sequence (gated per step) | — |
+
+`/api/pyautogui/stop`, `pause`, `resume`, `logs`, `status` and `health` are control or read-only endpoints, so they stay ungated. `app-relative-backprop-engine`, `screenshot-layering-panel` and `screenshot-pack-builder-studio` are still ungated.
