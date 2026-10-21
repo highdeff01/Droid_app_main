@@ -1,6 +1,10 @@
+import type { AddressInfo } from "net";
+import type { Server } from "http";
+import express from "express";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createApiRateLimiter,
+  createCorsMiddleware,
   requireApiAccess,
   validateAdbEndpoint,
 } from "./security";
@@ -62,6 +66,91 @@ describe("production security boundaries", () => {
     const second = response();
     limiter(request(), second.res, () => undefined);
     expect(second.status).toBe(429);
+  });
+
+  it("defaults to a 1000 requests/minute safety ceiling", () => {
+    const limiter = createApiRateLimiter();
+    const statuses: number[] = [];
+    for (let i = 0; i < 1001; i++) {
+      const result = response();
+      limiter({ ...(request() as object), originalUrl: "/api/goal-workflows" } as never, result.res, () => undefined);
+      statuses.push(result.status);
+    }
+    expect(statuses.slice(0, 1000).every((s) => s === 200)).toBe(true);
+    expect(statuses[1000]).toBe(429);
+  });
+
+  it("never limits the streaming/polling whitelist", () => {
+    const limiter = createApiRateLimiter();
+    for (const path of ["/api/mobile-stream/frame", "/api/screen", "/api/health"]) {
+      let passed = 0;
+      for (let i = 0; i < 1100; i++) {
+        limiter({ ...(request() as object), originalUrl: path } as never, response().res, () => {
+          passed += 1;
+        });
+      }
+      expect(passed).toBe(1100);
+    }
+  });
+});
+
+describe("CORS allowlist", () => {
+  const original = { ...process.env };
+  let server: Server | undefined;
+
+  afterEach(async () => {
+    process.env = { ...original };
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    server = undefined;
+  });
+
+  async function corsRequest(origin: string | undefined, method = "GET") {
+    const app = express();
+    app.use(createCorsMiddleware());
+    app.get("/api/ping", (_req, res) => {
+      res.json({ ok: true });
+    });
+    server = app.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => server!.once("listening", () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    const headers: Record<string, string> = origin ? { Origin: origin } : {};
+    if (method === "OPTIONS") headers["Access-Control-Request-Method"] = "GET";
+    return fetch(`http://127.0.0.1:${port}/api/ping`, { method, headers });
+  }
+
+  it("echoes an exactly matching configured origin with credentials", async () => {
+    process.env.CORS_ORIGINS = " https://a.com , https://b.com ";
+    const res = await corsRequest("https://b.com");
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://b.com");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
+  });
+
+  it.each(["https://evil.com", "https://a.com.evil.com", "https://a.com/"])(
+    "rejects non-matching origin %s when an allowlist is configured",
+    async (origin) => {
+      process.env.CORS_ORIGINS = "https://a.com";
+      for (const method of ["GET", "OPTIONS"]) {
+        const res = await corsRequest(origin, method);
+        expect(res.headers.get("access-control-allow-origin")).toBeNull();
+        await new Promise<void>((resolve) => server!.close(() => resolve()));
+        server = undefined;
+      }
+    },
+  );
+
+  it.each([undefined, "", ",, "])("denies every cross-origin request when CORS_ORIGINS is %j", async (value) => {
+    if (value === undefined) delete process.env.CORS_ORIGINS;
+    else process.env.CORS_ORIGINS = value;
+    const res = await corsRequest("https://evil.com");
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull();
+  });
+
+  it("still serves same-origin requests that send no Origin header", async () => {
+    delete process.env.CORS_ORIGINS;
+    const res = await corsRequest(undefined);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 });
 

@@ -15,7 +15,8 @@ export interface ReplanStepItem {
   originalY?: number;
   status?: "kept" | "modified" | "inserted" | "removed";
   replanReason?: string;
-  confidence?: number;
+  /** Model-reported confidence; null when no model analysed this re-plan. */
+  confidence?: number | null;
 }
 
 export interface ReplanResult {
@@ -26,10 +27,60 @@ export interface ReplanResult {
   originalStepCount: number;
   newStepCount: number;
   summary: string;
-  confidence: number;
+  /** Model-reported confidence; null when the re-plan is heuristic only. */
+  confidence: number | null;
+  /** "model" when a vision model returned a readable analysis, else "heuristic". */
+  source: "model" | "heuristic";
+  /** False when nothing in this re-plan was checked by a model. */
+  verified: boolean;
   suggestedSteps: ReplanStepItem[];
   mitigationStrategies: string[];
   executionPlan: string;
+}
+
+/** Reads the model's own `confidence` from a JSON reply, clamped to [0, 1]; null when absent or unreadable. */
+export function readModelConfidence(content: string | null | undefined): number | null {
+  if (!content) return null;
+  try {
+    const value = Number(parseModelJson<{ confidence?: unknown }>(content).confidence);
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Measured drift from real verification (step.offsetX/offsetY); null when the step carries none. */
+export function measuredOffset(step: any): { dx: number; dy: number } | null {
+  const dx = Number(step?.offsetX);
+  const dy = Number(step?.offsetY);
+  const hasX = step?.offsetX !== undefined && step?.offsetX !== null && Number.isFinite(dx);
+  const hasY = step?.offsetY !== undefined && step?.offsetY !== null && Number.isFinite(dy);
+  if (!hasX && !hasY) return null;
+  return { dx: hasX ? dx : 0, dy: hasY ? dy : 0 };
+}
+
+function healClickStep(step: any, idx: number, origX: number, origY: number, confidence: number | null): ReplanStepItem {
+  const offset = measuredOffset(step);
+  const healedX = offset ? Math.max(10, Math.min(1910, origX + offset.dx)) : origX;
+  const healedY = offset ? Math.max(10, Math.min(1070, origY + offset.dy)) : origY;
+  const replanReason = offset
+    ? `Recalibrated target by measured verification offset (Δx: ${healedX - origX}, Δy: ${healedY - origY}) and added +250ms settling delay.`
+    : "No measured drift for this step: coordinates unchanged (unverified); added +250ms settling delay only.";
+  return {
+    id: step.id,
+    name: step.name || `Step #${idx + 1}`,
+    action: step.action || "click",
+    x: healedX,
+    y: healedY,
+    text: step.text,
+    keyPayload: step.keyPayload,
+    delayMs: Math.max(300, (step.delayMs || 200) + 250),
+    originalX: origX,
+    originalY: origY,
+    status: "modified",
+    replanReason,
+    confidence,
+  };
 }
 
 export async function handleGoalReplan(req: Request, res: Response) {
@@ -51,6 +102,7 @@ export async function handleGoalReplan(req: Request, res: Response) {
     // Check if Gemini API key exists
     let geminiApiKey = process.env.GEMINI_API_KEY;
     let geminiAnalysis: string | null = null;
+    let modelConfidence: number | null = null;
 
     if (geminiApiKey && geminiApiKey.length > 5 && screenshotUrl && screenshotUrl.startsWith("data:image")) {
       try {
@@ -90,6 +142,7 @@ Analyze the live screen and propose an optimal healed step sequence. Return conc
           ],
         });
         geminiAnalysis = response.text || null;
+        modelConfidence = readModelConfidence(geminiAnalysis);
       } catch (aiErr) {
         console.warn("[GoalReplan] Gemini vision call skipped/failed:", aiErr);
       }
@@ -118,6 +171,7 @@ Analyze the live screen and propose an optimal healed step sequence. Return conc
         if (qwenResult.success) {
           const parsed = parseModelJson<{ summary?: string }>(qwenResult.content);
           geminiAnalysis = parsed.summary || qwenResult.content;
+          modelConfidence = readModelConfidence(qwenResult.content);
         }
       } catch (qwenErr) {
         console.warn("[GoalReplan] Qwen vision call skipped/failed:", qwenErr);
@@ -139,64 +193,35 @@ Analyze the live screen and propose an optimal healed step sequence. Return conc
       mitigations.push("Micro-drift detected: smoothed coordinate targeting to closest UI cluster bounding box.");
     }
 
-    // Transform and auto-heal steps
+    // Transform and auto-heal steps. Confidence is only ever the model's own figure.
+    const confidence = modelConfidence;
+    const verified = confidence !== null;
     steps.forEach((step: any, idx: number) => {
       const isProblemStep = failedStepId ? step.id === failedStepId : idx === steps.length - 1 || ((step.driftDistancePx || 0) > driftThreshold);
       const origX = step.x || 960;
       const origY = step.y || 540;
 
-      if (isProblemStep) {
-        // If it's a click that drifted or failed, insert a pre-hover / stabilization step
-        if (step.action === "click" || step.action === "double_click" || !step.action) {
-          // Compensate coordinates
-          const driftCorrectionX = Math.round((Math.random() * 8 - 4) * (currentDriftDistancePx / 10));
-          const driftCorrectionY = Math.round((Math.random() * 6 - 3) * (currentDriftDistancePx / 10));
-          const healedX = Math.max(10, Math.min(1910, origX + (step.offsetX || driftCorrectionX)));
-          const healedY = Math.max(10, Math.min(1070, origY + (step.offsetY || driftCorrectionY)));
-
-          suggestedSteps.push({
-            id: step.id,
-            name: step.name || `Step #${idx + 1}`,
-            action: step.action || "click",
-            x: healedX,
-            y: healedY,
-            text: step.text,
-            keyPayload: step.keyPayload,
-            delayMs: Math.max(300, (step.delayMs || 200) + 250),
-            originalX: origX,
-            originalY: origY,
-            status: "modified",
-            replanReason: `Recalibrated target coordinates by vector (Δx: ${healedX - origX}, Δy: ${healedY - origY}) and added +250ms settling delay to prevent race conditions.`,
-            confidence: 0.94,
-          });
-        } else if (step.action === "type_text" || step.action === "clear_and_type") {
-          suggestedSteps.push({
-            id: step.id,
-            name: step.name || `Step #${idx + 1}`,
-            action: "clear_and_type",
-            x: origX,
-            y: origY,
-            text: step.text || "",
-            delayMs: (step.delayMs || 300) + 200,
-            originalX: origX,
-            originalY: origY,
-            status: "modified",
-            replanReason: "Upgraded typing action to 'clear_and_type' to ensure clean input field clearing before string injection.",
-            confidence: 0.96,
-          });
-        } else {
-          suggestedSteps.push({
-            ...step,
-            status: "kept",
-            confidence: 0.91,
-          });
-        }
-      } else {
+      if (!isProblemStep) {
+        suggestedSteps.push({ ...step, status: "kept", confidence });
+      } else if (step.action === "click" || step.action === "double_click" || !step.action) {
+        suggestedSteps.push(healClickStep(step, idx, origX, origY, confidence));
+      } else if (step.action === "type_text" || step.action === "clear_and_type") {
         suggestedSteps.push({
-          ...step,
-          status: "kept",
-          confidence: 0.95,
+          id: step.id,
+          name: step.name || `Step #${idx + 1}`,
+          action: "clear_and_type",
+          x: origX,
+          y: origY,
+          text: step.text || "",
+          delayMs: (step.delayMs || 300) + 200,
+          originalX: origX,
+          originalY: origY,
+          status: "modified",
+          replanReason: "Upgraded typing action to 'clear_and_type' to ensure clean input field clearing before string injection.",
+          confidence,
         });
+      } else {
+        suggestedSteps.push({ ...step, status: "kept", confidence });
       }
     });
 
@@ -212,12 +237,13 @@ Analyze the live screen and propose an optimal healed step sequence. Return conc
         delayMs: 400,
         status: "inserted",
         replanReason: "Inserted viewport anchor click to bring window to foreground and eliminate background displacement drift.",
-        confidence: 0.98,
+        confidence,
       };
       suggestedSteps.unshift(anchorStep);
       mitigations.unshift("Inserted foreground anchor alignment step at sequence index 0.");
     }
 
+    const changedCount = suggestedSteps.filter((s) => s.status === "modified" || s.status === "inserted").length;
     const replanResult: ReplanResult = {
       replanId: `replan_${Date.now()}`,
       timestamp: Date.now(),
@@ -225,8 +251,12 @@ Analyze the live screen and propose an optimal healed step sequence. Return conc
       maxDriftPx: currentDriftDistancePx,
       originalStepCount: steps.length,
       newStepCount: suggestedSteps.length,
-      summary: `AI Re-Planner successfully generated an optimized step sequence. Corrected ${suggestedSteps.filter((s) => s.status === "modified" || s.status === "inserted").length} step(s) with adaptive coordinate snapping and settling delays to overcome the ${currentDriftDistancePx.toFixed(1)}px drift.`,
-      confidence: 0.94,
+      summary: verified
+        ? `Model-assisted re-plan proposes changes to ${changedCount} step(s) for the reported ${currentDriftDistancePx.toFixed(1)}px drift.`
+        : `Unverified heuristic re-plan (no model analysis available): proposes changes to ${changedCount} step(s) for the reported ${currentDriftDistancePx.toFixed(1)}px drift; coordinates move only where a measured offset exists.`,
+      confidence,
+      source: verified ? "model" : "heuristic",
+      verified,
       suggestedSteps,
       mitigationStrategies: mitigations,
       executionPlan: `Execute re-planned ${suggestedSteps.length}-step workflow using PyAutoGUI with adaptive settling delays and element bounding re-anchoring.`,

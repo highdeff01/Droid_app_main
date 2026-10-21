@@ -35,7 +35,7 @@ export interface ReplanStepItem {
   originalY?: number;
   status?: "kept" | "modified" | "inserted" | "removed";
   replanReason?: string;
-  confidence?: number;
+  confidence?: number | null;
 }
 
 export interface ReplanResult {
@@ -46,7 +46,9 @@ export interface ReplanResult {
   originalStepCount: number;
   newStepCount: number;
   summary: string;
-  confidence: number;
+  confidence: number | null;
+  source: "model" | "heuristic";
+  verified: boolean;
   suggestedSteps: ReplanStepItem[];
   mitigationStrategies: string[];
   executionPlan: string;
@@ -212,7 +214,9 @@ export const AIGoalReplannerModal: React.FC<AIGoalReplannerModalProps> = ({
                     <span>AI Re-Planner Recommendation Summary</span>
                   </div>
                   <Badge className="bg-emerald-950 text-emerald-300 border-emerald-600 text-[10px]">
-                    Confidence: {(replanData.confidence * 100).toFixed(0)}%
+                    {replanData.confidence === null
+                      ? "Unverified (heuristic)"
+                      : `Confidence: ${(replanData.confidence * 100).toFixed(0)}%`}
                   </Badge>
                 </div>
                 <p className="text-xs text-slate-200 leading-relaxed">{replanData.summary}</p>

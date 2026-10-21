@@ -204,6 +204,8 @@ export function createServer() {
 
   // CORS is an explicit allowlist; a failure here fails server creation (closed), never permissive.
   app.use(createCorsMiddleware());
+  // Per-IP safety limit on /api (streaming/polling routes are whitelisted inside the limiter).
+  app.use("/api", createApiRateLimiter());
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
