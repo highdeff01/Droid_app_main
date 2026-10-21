@@ -1,5 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { centralLogHub } from "./log-hub";
+import {
+  sendQwenChatRequest,
+  buildVisionMessage,
+  toBase64Image,
+  parseModelJson,
+} from "./ai-endpoint";
 
 let genAIClient: GoogleGenAI | null = null;
 
@@ -112,6 +118,49 @@ function cleanBase64(imageData: string): { data: string; mimeType: string } {
 }
 
 /**
+ * Runs a vision+JSON prompt through Gemini when GEMINI_API_KEY is configured,
+ * otherwise through the Qwen vision-language model, and returns the parsed
+ * JSON reply.
+ */
+export async function generateVisionJson(
+  prompt: string,
+  images: string[],
+): Promise<any> {
+  const ai = getGenAIClient();
+
+  if (ai) {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            ...images.map((imageData) => {
+              const { data, mimeType } = cleanBase64(imageData);
+              return { inlineData: { data, mimeType } };
+            }),
+            { text: prompt },
+          ],
+        },
+      ],
+    });
+
+    return parseModelJson(response.text || "");
+  }
+
+  const message =
+    images.length === 1
+      ? buildVisionMessage(prompt, images[0])
+      : { role: "user" as const, content: prompt, images: images.map(toBase64Image) };
+
+  const result = await sendQwenChatRequest([message], { format: "json" });
+  if (!result.success) {
+    throw new Error(result.error);
+  }
+  return parseModelJson(result.content);
+}
+
+/**
  * 1. AI Check After Every Action:
  * Evaluates whether the action succeeded visually, if target was hit, or if goal finished early.
  */
@@ -127,21 +176,19 @@ export async function verifyStepAccuracy(params: {
   };
   userObjective?: string;
 }): Promise<StepVerificationResult> {
-  const ai = getGenAIClient();
   const { imageData, step, userObjective = "Automate user task on screen" } = params;
 
-  if (!ai || !imageData) {
+  if (!imageData) {
     return {
       verified: true,
       accuracyScore: 0.88,
       status: "verified",
-      analysis: "Heuristic verification passed (Gemini API key not configured).",
+      analysis: "Heuristic verification passed (no image captured).",
       goalFinished: false,
     };
   }
 
   try {
-    const imgPart = cleanBase64(imageData);
     const prompt = `You are a precision AI Quality Inspector for GUI and desktop computer automation.
 An action was just physically executed:
 - Action Type: ${step.action}
@@ -170,22 +217,7 @@ Return a STRICT JSON response only (no markdown, no backticks, just valid JSON):
 "status" must be one of: "verified", "missed", "obstructed", "completed_early".
 "goalFinished": set true if the overall task goal is visibly 100% finished on screen.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { inlineData: { data: imgPart.data, mimeType: imgPart.mimeType } },
-            { text: prompt },
-          ],
-        },
-      ],
-    });
-
-    const text = response.text?.trim() || "";
-    const cleanJson = text.replace(/^```(json)?\n?|\n?```$/g, "").trim();
-    const parsed = JSON.parse(cleanJson);
+    const parsed = await generateVisionJson(prompt, [imageData]);
 
     centralLogHub.addLog(
       "AI-Verifier",
@@ -205,9 +237,9 @@ Return a STRICT JSON response only (no markdown, no backticks, just valid JSON):
   } catch (err) {
     centralLogHub.addLog("AI-Verifier", "WARN", `AI Verification fallback: ${err instanceof Error ? err.message : String(err)}`);
     return {
-      verified: true,
-      accuracyScore: 0.85,
-      status: "verified",
+      verified: false,
+      accuracyScore: 0,
+      status: "missed",
       analysis: `Heuristic fallback verification: ${err instanceof Error ? err.message : String(err)}`,
       goalFinished: false,
     };
@@ -226,7 +258,6 @@ export async function resolveStuckState(params: {
   targetSeconds?: number;
   lastError?: string;
 }): Promise<StuckResolutionResult> {
-  const ai = getGenAIClient();
   const {
     imageData,
     currentStep,
@@ -236,7 +267,7 @@ export async function resolveStuckState(params: {
     lastError = "Task took longer than anticipated or element unresponsive",
   } = params;
 
-  if (!ai || !imageData) {
+  if (!imageData) {
     return {
       isStuck: true,
       reason: "Execution time limit or element timeout reached.",
@@ -250,7 +281,6 @@ export async function resolveStuckState(params: {
   }
 
   try {
-    const imgPart = cleanBase64(imageData);
     const prompt = `You are an autonomous cognitive automation troubleshooter.
 The user's automation workflow is STUCK or took too long:
 - User Objective: "${userObjective}"
@@ -276,22 +306,7 @@ Return a STRICT JSON response only:
 
 "obstacleType" must be one of: "modal_popup", "loading_spinner", "target_shifted", "unresponsive", "none".`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { inlineData: { data: imgPart.data, mimeType: imgPart.mimeType } },
-            { text: prompt },
-          ],
-        },
-      ],
-    });
-
-    const text = response.text?.trim() || "";
-    const cleanJson = text.replace(/^```(json)?\n?|\n?```$/g, "").trim();
-    const parsed = JSON.parse(cleanJson);
+    const parsed = await generateVisionJson(prompt, [imageData]);
 
     centralLogHub.addLog(
       "AI-StuckResolver",

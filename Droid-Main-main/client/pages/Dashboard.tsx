@@ -149,7 +149,7 @@ import { AssistantWorkspace } from "@/components/assistant-workspace";
 import { AutonomousWorkflowModal } from "@/components/autonomous-workflow-modal";
 import { MainAIOmniExecutive } from "@/components/main-ai-omni-executive";
 import { InteractiveDeviceControlDeck } from "@/components/interactive-device-control-deck";
-import { GlobalSettingsModal, DEFAULT_MODEL_URL } from "@/components/global-settings-modal";
+import { GlobalSettingsModal, DEFAULT_MODEL_URL, QUANTUMCLAW_FALLBACK_URL } from "@/components/global-settings-modal";
 import { CoordinateCalibrationModal } from "@/components/coordinate-calibration-modal";
 import { ThreeAiAgentsSquad } from "@/components/three-ai-agents-squad";
 const CAPTURE_POLL_MS = 600;
@@ -2813,7 +2813,7 @@ export default function Dashboard({
                       type="text"
                       value={configuredModelUrl}
                       onChange={(e) => setConfiguredModelUrl(e.target.value)}
-                      placeholder="https://quantumclaw.net/ollama/api/chat"
+                      placeholder={DEFAULT_MODEL_URL}
                       className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
                     />
                     <Button
@@ -2863,11 +2863,21 @@ export default function Dashboard({
                       onClick={() => {
                         setConfiguredModelUrl(DEFAULT_MODEL_URL);
                         localStorage.setItem("ai_model_url", DEFAULT_MODEL_URL);
-                        toast.success("Loaded QuantumClaw Remote default");
+                        toast.success("Loaded LAN Ollama default");
                       }}
                       className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-cyan-500 text-cyan-300 font-bold"
                     >
-                      ⚡ QuantumClaw Remote (https://quantumclaw.net/ollama/api/chat)
+                      🏠 LAN Ollama 192.168.1.100 (Default)
+                    </button>
+                    <button
+                      onClick={() => {
+                        setConfiguredModelUrl(QUANTUMCLAW_FALLBACK_URL);
+                        localStorage.setItem("ai_model_url", QUANTUMCLAW_FALLBACK_URL);
+                        toast.success("Loaded QuantumClaw Remote fallback");
+                      }}
+                      className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-cyan-500 text-cyan-300 font-bold"
+                    >
+                      ⚡ QuantumClaw Remote (Fallback)
                     </button>
                     <button
                       onClick={() => {

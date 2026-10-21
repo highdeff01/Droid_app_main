@@ -32,6 +32,7 @@ import {
 import { toast } from "sonner";
 
 export const DEFAULT_MODEL_URL = "http://192.168.1.100:11434/api/chat";
+export const QUANTUMCLAW_FALLBACK_URL = "https://quantumclaw.net/ollama/api/chat";
 export const DEFAULT_MODEL_NAME = "qwen3.5:2b";
 
 export interface GlobalSettingsModalProps {

@@ -6,6 +6,7 @@
 
 import { RequestHandler } from "express";
 import { GoogleGenAI } from "@google/genai";
+import { sendQwenChatRequest, buildVisionMessage, parseModelJson } from "../ai-endpoint";
 
 let genAIClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI | null {
@@ -80,6 +81,12 @@ export const handleAnalyzeAndAct: RequestHandler = async (req, res) => {
     const ai = getGenAI();
     let geminiSummary = "";
 
+    const visionPrompt = `Analyze this automation screen. Cross-reference with:
+User Instructions: "${userInstructions || "Automate navigation and form workflows"}"
+Previous Tasks: ${JSON.stringify(previousTasks.slice(0, 3))}
+Current Goals: ${JSON.stringify(currentGoals.slice(0, 3))}
+Give a 2-sentence visual summary of the active viewport, any visible drift or interactive fields, and what action to execute next.`;
+
     if (ai && activeImage && activeImage.startsWith("data:image/")) {
       try {
         const base64Data = activeImage.split(",")[1];
@@ -96,13 +103,7 @@ export const handleAnalyzeAndAct: RequestHandler = async (req, res) => {
                     data: base64Data,
                   },
                 },
-                {
-                  text: `Analyze this automation screen. Cross-reference with:
-User Instructions: "${userInstructions || "Automate navigation and form workflows"}"
-Previous Tasks: ${JSON.stringify(previousTasks.slice(0, 3))}
-Current Goals: ${JSON.stringify(currentGoals.slice(0, 3))}
-Give a 2-sentence visual summary of the active viewport, any visible drift or interactive fields, and what action to execute next.`,
-                },
+                { text: visionPrompt },
               ],
             },
           ],
@@ -110,6 +111,17 @@ Give a 2-sentence visual summary of the active viewport, any visible drift or in
         geminiSummary = response.text || "";
       } catch (geminiErr) {
         console.warn("Gemini vision analysis fallback triggered:", geminiErr);
+      }
+    } else if (activeImage && activeImage.startsWith("data:image/")) {
+      try {
+        const qwenResult = await sendQwenChatRequest(
+          [buildVisionMessage(visionPrompt, activeImage)],
+        );
+        if (qwenResult.success) {
+          geminiSummary = qwenResult.content;
+        }
+      } catch (qwenErr) {
+        console.warn("Qwen vision analysis fallback triggered:", qwenErr);
       }
     }
 

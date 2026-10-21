@@ -120,11 +120,8 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
       this.lastDescription = report.screenDescription;
       return report;
     } catch (err) {
-      console.warn(
-        "Qwen Vision perception failed, providing Gemini fallback:",
-        err,
-      );
-      // Fall back to Gemini heuristic detection when Qwen endpoint is unavailable
+      if (!process.env.GEMINI_API_KEY) throw err;
+      console.warn("Qwen Vision perception failed, using configured Gemini:", err);
       return this.analyzeWithLocalProvider(imageData, browserContext);
     }
   }
