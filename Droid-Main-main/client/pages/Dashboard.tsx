@@ -70,6 +70,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
 import { gateTargetForSteps, runActionGate } from "@/lib/action-gate";
+import { buildRetryStep, toReplayStepPayload } from "@/lib/step-replay";
 import {
   LiveScreenHUD,
   SequenceStep,
@@ -864,7 +865,7 @@ export default function Dashboard({
   const dispatchVerifiedReplay = async (steps: SequenceStep[]) => {
     if (!(await verifyBeforeDispatch(steps)) || replayStopRequested.current) return undefined;
     const data = await replayRequest("/api/replay", { targetDevice, deviceId: selectedAdbDevice || undefined,
-      steps: steps.map(step => ({ ...step, referenceScreenshotUrl: step.referenceScreenshotUrl || undefined })), iterations: 1, confirmation: true });
+      steps: steps.map(toReplayStepPayload), iterations: 1, confirmation: true });
     replayIdRef.current = data.run.id;
     sessionStorage.setItem("screen-replay-id", data.run.id);
     applyReplay(data.run);
@@ -2001,6 +2002,10 @@ export default function Dashboard({
               <CardContent className="p-2">
                 <LiveScreenHUD
                   onReplaySteps={steps => { void handleRunSequence(steps); }}
+                  replayRun={replayRun}
+                  onReplayControl={command => { void handleReplayControl(command); }}
+                  onRetryStep={step => { void handleRunSequence([buildRetryStep(step)]); }}
+                  onToggleCapture={toggleCapture}
                   onExecuteTask={executeHubTask}
                   screenshotUrl={activeCanvasUrl || screenshotUrl}
                   isCapturing={isCapturing}

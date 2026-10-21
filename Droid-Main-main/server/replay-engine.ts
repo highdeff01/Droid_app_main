@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   replayRequestSchema,
+  replayActionCount,
   type ReplayRequest,
   type ReplayRun,
   type ReplayStep,
@@ -123,7 +124,7 @@ export class ReplayEngine {
       currentStep: 0,
       iteration: 1,
       completed: 0,
-      total: request.steps.length * request.iterations,
+      total: replayActionCount(request.steps, request.iterations),
       steps: request.steps.map((s) => ({ id: s.id, status: "pending" })),
       events: [],
       startedAt: Date.now(),
@@ -221,120 +222,18 @@ export class ReplayEngine {
           }
           await this.checkpoint(item);
           run.steps[index].status = "running";
-          await new Promise((r) =>
-            setTimeout(r, step.action === "wait" ? 0 : step.delayMs),
-          );
-          let before: PhoneFrame | undefined,
-            planned = { ...step },
-            ready = false;
-          // Retry perception and target location only; no blind re-execution after uncertain effects.
-          for (let attempt = 1; attempt <= 2; attempt++) {
-            await this.checkpoint(item);
-            before = await this.capture(item);
-            this.event(item, "perception", "Captured current device screen", {
-              stepId: step.id,
-              attempt,
-              beforeHash: before.hash,
-            });
-            const decision = decisionSchema.parse(
-              await this.judge("planning", step, before),
-            );
-            this.event(item, "planning", decision.explanation, {
-              stepId: step.id,
-              attempt,
-              beforeHash: before.hash,
-            });
-            await this.checkpoint(item);
-            if (!decision.certain) {
+          for (let repeat = 1; repeat <= step.repeatCount; repeat++) {
+            if (step.repeatCount > 1)
               this.event(
                 item,
-                "recovery",
-                "Target uncertain: inspect a fresh screenshot again",
-                { stepId: step.id, attempt },
+                "system",
+                `Repeat ${repeat}/${step.repeatCount} of ${step.name}`,
+                { stepId: step.id },
               );
-              continue;
-            }
-            const pointer = [
-              "click",
-              "double_click",
-              "right_click",
-              "clear_and_type",
-            ].includes(step.action);
-            if (
-              pointer &&
-              (decision.x === undefined || decision.y === undefined)
-            )
-              throw new Error("AI did not locate the target");
-            planned = {
-              ...step,
-              x: pointer ? decision.x! : step.x,
-              y: pointer ? decision.y! : step.y,
-            };
-            if (planned.x >= before.width || planned.y >= before.height)
-              throw new Error("Target lies outside the screenshot");
-            const current = await this.capture(item);
-            if (current.hash !== before.hash) {
-              this.event(
-                item,
-                "recovery",
-                "Screen changed during planning; locating again",
-                { stepId: step.id, attempt },
-              );
-              continue;
-            }
-            before = current;
-            ready = true;
-            break;
+            await this.performAction(item, step);
+            run.completed++;
           }
-          if (!ready || !before)
-            throw new Error(
-              "Could not confirm a stable target after two inspections. Review the screen and edit the step.",
-            );
-          // Cancellation/pause may arrive during capture. Never execute across that boundary.
-          if (item.pause) {
-            await this.checkpoint(item);
-            throw new Error(
-              "Paused after planning; replay again against the current screen",
-            );
-          }
-          await this.checkpoint(item);
-          this.event(item, "execution", `Executing ${step.name}`, {
-            stepId: step.id,
-            beforeHash: before.hash,
-          });
-          await item.adapter.execute(planned, before);
-          const executedAt = Date.now();
-          await this.checkpoint(item);
-          await new Promise((r) => setTimeout(r, 500));
-          let after = await this.capture(item);
-          for (
-            let wait = 0;
-            after.capturedAt <= executedAt && wait < 10;
-            wait++
-          ) {
-            await this.checkpoint(item);
-            await new Promise((r) => setTimeout(r, 200));
-            after = await this.capture(item);
-          }
-          if (after.capturedAt <= executedAt)
-            throw new Error(
-              "Device has not supplied a new screenshot after execution",
-            );
-          const review = decisionSchema.parse(
-            await this.judge("verification", planned, before, after),
-          );
-          this.event(item, "verification", review.explanation, {
-            stepId: step.id,
-            beforeHash: before.hash,
-            afterHash: after.hash,
-          });
-          await this.checkpoint(item);
-          if (!review.certain || review.verified !== true)
-            throw new Error(
-              "Outcome not confirmed. Inspect the evidence before retrying; the action may already have taken effect.",
-            );
           run.steps[index].status = "completed";
-          run.completed++;
         }
       }
       run.status = "completed";
@@ -353,6 +252,114 @@ export class ReplayEngine {
       this.locks.delete(run.target);
       aiMonitorStore.setStatus({ status: "idle", currentAction: null });
     }
+  }
+  /** One verified action: perceive, plan, execute, then confirm the outcome on a fresh frame. */
+  private async performAction(item: InternalRun, step: ReplayStep) {
+    await new Promise((r) =>
+      setTimeout(r, step.action === "wait" ? 0 : step.delayMs),
+    );
+    let before: PhoneFrame | undefined,
+      planned = { ...step },
+      ready = false;
+    // Retry perception and target location only; no blind re-execution after uncertain effects.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await this.checkpoint(item);
+      before = await this.capture(item);
+      this.event(item, "perception", "Captured current device screen", {
+        stepId: step.id,
+        attempt,
+        beforeHash: before.hash,
+      });
+      const decision = decisionSchema.parse(
+        await this.judge("planning", step, before),
+      );
+      this.event(item, "planning", decision.explanation, {
+        stepId: step.id,
+        attempt,
+        beforeHash: before.hash,
+      });
+      await this.checkpoint(item);
+      if (!decision.certain) {
+        this.event(
+          item,
+          "recovery",
+          "Target uncertain: inspect a fresh screenshot again",
+          { stepId: step.id, attempt },
+        );
+        continue;
+      }
+      const pointer = [
+        "click",
+        "double_click",
+        "right_click",
+        "clear_and_type",
+      ].includes(step.action);
+      if (pointer && (decision.x === undefined || decision.y === undefined))
+        throw new Error("AI did not locate the target");
+      planned = {
+        ...step,
+        x: pointer ? decision.x! : step.x,
+        y: pointer ? decision.y! : step.y,
+      };
+      if (planned.x >= before.width || planned.y >= before.height)
+        throw new Error("Target lies outside the screenshot");
+      const current = await this.capture(item);
+      if (current.hash !== before.hash) {
+        this.event(
+          item,
+          "recovery",
+          "Screen changed during planning; locating again",
+          { stepId: step.id, attempt },
+        );
+        continue;
+      }
+      before = current;
+      ready = true;
+      break;
+    }
+    if (!ready || !before)
+      throw new Error(
+        "Could not confirm a stable target after two inspections. Review the screen and edit the step.",
+      );
+    // Cancellation/pause may arrive during capture. Never execute across that boundary.
+    if (item.pause) {
+      await this.checkpoint(item);
+      throw new Error(
+        "Paused after planning; replay again against the current screen",
+      );
+    }
+    await this.checkpoint(item);
+    this.event(item, "execution", `Executing ${step.name}`, {
+      stepId: step.id,
+      beforeHash: before.hash,
+    });
+    await item.adapter.execute(planned, before);
+    const executedAt = Date.now();
+    await this.checkpoint(item);
+    await new Promise((r) => setTimeout(r, 500));
+    let after = await this.capture(item);
+    for (let wait = 0; after.capturedAt <= executedAt && wait < 10; wait++) {
+      await this.checkpoint(item);
+      await new Promise((r) => setTimeout(r, 200));
+      after = await this.capture(item);
+    }
+    if (after.capturedAt <= executedAt)
+      throw new Error(
+        "Device has not supplied a new screenshot after execution",
+      );
+    const review = decisionSchema.parse(
+      await this.judge("verification", planned, before, after),
+    );
+    this.event(item, "verification", review.explanation, {
+      stepId: step.id,
+      beforeHash: before.hash,
+      afterHash: after.hash,
+    });
+    await this.checkpoint(item);
+    if (!review.certain || review.verified !== true)
+      throw new Error(
+        "Outcome not confirmed. Inspect the evidence before retrying; the action may already have taken effect.",
+      );
   }
 }
 export const replayEngine = new ReplayEngine();

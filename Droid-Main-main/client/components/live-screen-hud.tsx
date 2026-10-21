@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { InteractivePhoneVirtualOS } from "@/components/interactive-phone-virtual-os";
-import { InteractiveDesktopVirtualOS } from "@/components/interactive-desktop-virtual-os";
 import {
   Activity,
   Monitor,
@@ -112,6 +110,33 @@ import {
   getContainedFrameViewport,
   percentBoxToFrame,
 } from "@/lib/frame-viewport";
+import {
+  HUD_CONTROL_STRIP_PX,
+  HUD_LAYERS,
+  HUD_SIZE_MAX_VIEWPORT,
+  SECOND_HUD_SPACE,
+  anchoredLabelClass,
+  clampBoxToArea,
+  clampedPointStyle,
+  fitFrameRect,
+  polylinePointsPx,
+  trajectoryPointToPercent,
+  viewportHeightForWidth,
+} from "@/lib/hud-layout";
+import {
+  MAX_REPEAT_COUNT,
+  MIN_REPEAT_COUNT,
+  clampRepeatCount,
+  findRetryableStep,
+  replayProgressLabel,
+} from "@/lib/step-replay";
+import { useElementSize } from "@/hooks/use-element-size";
+import { useBufferedFrame } from "@/hooks/use-buffered-frame";
+import { cn } from "@/lib/utils";
+import type { ReplayRun } from "@shared/replay";
+
+/** Footprint of the record popover, used to keep it inside the viewport. */
+const RECORD_POPOVER_SIZE = { width: 288, height: 420 };
 
 export interface SequenceStep {
   id: string;
@@ -150,6 +175,8 @@ export interface SequenceStep {
   breakpoint?: boolean;
   lastCalibratedAt?: number;
   confidence?: number;
+  /** How many times the replay engine performs this action in a row (default 1). */
+  repeatCount?: number;
 }
 
 export interface AIThinkingState {
@@ -245,6 +272,14 @@ interface LiveScreenHUDProps {
   onReplaySteps?: (steps: SequenceStep[]) => void;
   onExecuteTask?: (url: string, options: RequestInit) => Promise<Response>;
   onReviewStepsWithAI?: () => void;
+  /** Latest verified replay run; drives the progress readout and pause/resume/cancel. */
+  replayRun?: ReplayRun | null;
+  /** Manual replay control (ungated): pause, resume or cancel the live run. */
+  onReplayControl?: (command: "pause" | "resume" | "cancel") => void;
+  /** Re-dispatch one step through the action gate. */
+  onRetryStep?: (step: SequenceStep) => void;
+  /** Manual capture start/stop (ungated). */
+  onToggleCapture?: () => void;
 }
 
 export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
@@ -283,6 +318,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   onReplaySteps,
   onExecuteTask,
   onReviewStepsWithAI,
+  replayRun = null,
+  onReplayControl,
+  onRetryStep,
+  onToggleCapture,
 }) => {
   const executeVerifiedTask = (url: string, options: RequestInit) => {
     if (!onExecuteTask) return Promise.reject(new Error("Open Screen Hub to use verified device execution"));
@@ -290,6 +329,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   };
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const frameLayerRef = useRef<HTMLDivElement>(null);
+  const stepListRef = useRef<HTMLDivElement>(null);
   const streamSyncIntervalRef = useRef<number | null>(null);
   const [selectedStepIds, setSelectedStepIds] = useState<Set<string>>(new Set());
 
@@ -1854,14 +1895,37 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   const [saveAsNumberedStep, setSaveAsNumberedStep] = useState<boolean>(true);
   const [popoverSaveScreenshot, setPopoverSaveScreenshot] =
     useState<boolean>(true);
+  const [popoverRepeatCount, setPopoverRepeatCount] = useState<number>(MIN_REPEAT_COUNT);
   const [dynamicFixupMode, setDynamicFixupMode] = useState<
     "auto_fixup" | "perform_anyways" | "link_workflow"
   >("auto_fixup");
   const [fixupExplanation, setFixupExplanation] = useState<string>("");
 
-  const NATIVE_WIDTH = 1920;
-  const NATIVE_HEIGHT = 1080;
-  const NATIVE_FRAME = { width: NATIVE_WIDTH, height: NATIVE_HEIGHT };
+  // The frame on screen defines the coordinate space: its natural size once loaded, 1920x1080 before.
+  const bufferedFrame = useBufferedFrame(screenshotUrl || frozenSnapshotUrl, isCapturing);
+  const NATIVE_WIDTH = bufferedFrame.size.width;
+  const NATIVE_HEIGHT = bufferedFrame.size.height;
+  const NATIVE_FRAME = bufferedFrame.size;
+
+  // Measured layout: the viewport's size drives the frame layer rect (no reads of clientWidth during render).
+  const viewportSize = useElementSize(viewportRef);
+  const frameLayerRect = fitFrameRect(
+    viewportSize,
+    NATIVE_FRAME,
+    HUD_CONTROL_STRIP_PX,
+    hudFitMode === "fill" ? "cover" : "contain",
+  );
+  const frameLayerSize = { width: frameLayerRect.width, height: frameLayerRect.height };
+  const viewportHeight =
+    hudSizeMode === "fullscreen"
+      ? undefined
+      : Math.min(
+          viewportHeightForWidth(viewportSize.width, NATIVE_FRAME, HUD_CONTROL_STRIP_PX),
+          customHudHeight || Number.POSITIVE_INFINITY,
+          Math.round(window.innerHeight * HUD_SIZE_MAX_VIEWPORT[hudSizeMode]),
+        );
+  const retryableStep = findRetryableStep(sequence, replayRun, activeStepId);
+  const isReplayLive = replayRun?.status === "running" || replayRun?.status === "paused";
 
   // Single conversion point: native frame pixels -> CSS percentages of the frame.
   const toPercent = (nativeX: number, nativeY: number) =>
@@ -1889,16 +1953,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   );
 
   const getNativeCoordinates = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = viewportRef.current?.getBoundingClientRect();
+    // The frame layer has exactly the frame's aspect ratio, so its rect is the displayed frame.
+    const rect = frameLayerRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0, pctX: 50, pctY: 50 };
-    const viewport = getContainedFrameViewport(rect, {
-      width: NATIVE_WIDTH,
-      height: NATIVE_HEIGHT,
-    });
-    const point = framePointFromClient(e.clientX, e.clientY, viewport, {
-      width: NATIVE_WIDTH,
-      height: NATIVE_HEIGHT,
-    });
+    const viewport = getContainedFrameViewport(rect, NATIVE_FRAME);
+    const point = framePointFromClient(e.clientX, e.clientY, viewport, NATIVE_FRAME);
 
     return { ...point, ...toPercentPair(point.x, point.y) };
   };
@@ -2321,7 +2380,9 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     if (!recordingClickPos) return;
     const stepNumber = sequence.length + 1;
     // Capture screenshot for save if enabled - use current screenshotUrl prop
-    const refUrl = popoverSaveScreenshot ? screenshotUrl : undefined;
+    const refUrl = popoverSaveScreenshot
+      ? bufferedFrame.url || screenshotUrl || frozenSnapshotUrl || undefined
+      : undefined;
     onAddStep({
       stepNumber,
       name: popoverName || `Step ${stepNumber}`,
@@ -2333,39 +2394,46 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       delayMs: popoverDelay,
       status: "pending",
       referenceScreenshotUrl: refUrl,
+      repeatCount: clampRepeatCount(popoverRepeatCount),
     } as any);
     setRecordingClickPos(null);
+    setPopoverRepeatCount(MIN_REPEAT_COUNT);
   };
 
-  const polylinePoints = sequence
-    .map((step) => {
-      const { pctX, pctY } = toPercentPair(step.x, step.y);
-      return `${pctX},${pctY}`;
-    })
-    .join(" ");
+  // Leaving record mode drops a half-filled popover so it cannot reappear later at a stale point.
+  useEffect(() => {
+    if (!isRecordMode) setRecordingClickPos(null);
+  }, [isRecordMode]);
+
+  // Follow the replay: keep the active step visible in the step list as it advances.
+  useEffect(() => {
+    if (!activeStepId) return;
+    stepListRef.current
+      ?.querySelector<HTMLElement>(`[data-step-id="${CSS.escape(activeStepId)}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeStepId]);
+
+  // SVG points must be numbers: draw in the measured frame layer's pixel space.
+  const polylinePoints = polylinePointsPx(sequence, NATIVE_FRAME, frameLayerSize);
+  const secondHudTrajectory = secondHudActivePath?.remappedTrajectory || [
+    { x: 192, y: 180 },
+    { x: 537, y: 414 },
+    { x: 806, y: 648 },
+  ];
 
   return (
     <div
       ref={containerRef}
       tabIndex={0}
-      style={{
-        height: hudSizeMode !== "fullscreen" && customHudHeight ? `${customHudHeight}px` : undefined,
-      }}
-      className={`relative w-full bg-slate-950 rounded-xl overflow-hidden select-none border-2 transition-all duration-300 outline-none flex flex-col ${
-        hudSizeMode === "fullscreen"
-          ? "fixed inset-0 z-50 w-screen h-screen bg-black rounded-none border-0"
-          : hudSizeMode === "theater"
-          ? "w-full min-h-[840px] md:min-h-[920px] lg:min-h-[980px]"
-          : hudSizeMode === "large"
-          ? "w-full min-h-[700px] md:min-h-[780px] lg:min-h-[860px]"
-          : "w-full min-h-[560px] md:min-h-[640px] lg:min-h-[720px]"
-      } ${
+      className={cn(
+        "relative w-full bg-slate-950 rounded-xl overflow-hidden select-none border-2 transition-all duration-300 outline-none flex flex-col",
+        hudSizeMode === "fullscreen" && "fixed inset-0 z-50 w-screen h-screen bg-black rounded-none border-0",
         deviceBridgeMode
           ? "border-cyan-400 shadow-[0_0_25px_rgba(6,182,212,0.4)]"
           : isRecordMode
           ? "border-amber-500 shadow-[0_0_25px_rgba(245,158,11,0.3)]"
-          : "border-slate-800 shadow-xl"
-      }`}
+          : "border-slate-800 shadow-xl",
+      )}
       onKeyDown={(e) => {
         if (e.key === "Escape" && hudSizeMode === "fullscreen") {
           setHudSizeMode("large");
@@ -2375,7 +2443,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     >
       {/* Fullscreen Floating Controls */}
       {hudSizeMode === "fullscreen" && (
-        <div onClick={(e) => e.stopPropagation()} className="absolute top-4 right-4 z-50 flex items-center gap-2 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded-xl shadow-2xl backdrop-blur-md">
+        <div onClick={(e) => e.stopPropagation()} className={cn("absolute top-14 right-4 flex items-center gap-2 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded-xl shadow-2xl backdrop-blur-md", HUD_LAYERS.floating)}>
           <span className="text-xs font-mono text-cyan-300 font-bold">FULLSCREEN HUD</span>
           <button
             onClick={() => setHudSizeMode("large")}
@@ -3640,10 +3708,14 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         </div>
       </div>
 
-      {/* Dedicated Unobscured Screen & Automation Viewport */}
+      {/* Dedicated Unobscured Screen & Automation Viewport: height follows the frame's aspect ratio */}
       <div
         ref={viewportRef}
-        className="relative flex-1 w-full min-h-[440px] bg-slate-950 flex items-center justify-center overflow-hidden cursor-crosshair select-none"
+        style={{ height: viewportHeight }}
+        className={cn(
+          "relative w-full bg-black overflow-hidden cursor-crosshair select-none",
+          hudSizeMode === "fullscreen" ? "flex-1" : "shrink-0",
+        )}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={() => {
@@ -3653,6 +3725,12 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         onClick={handleContainerClick}
         onDoubleClick={handleContainerDoubleClick}
         onContextMenu={handleContainerContextMenu}
+      >
+      {/* Frame layer: exactly the displayed frame rect, so every %-positioned overlay lines up with the screenshot */}
+      <div
+        ref={frameLayerRef}
+        style={frameLayerRect}
+        className={cn("absolute", HUD_LAYERS.frame)}
       >
         {/* Native WebRTC Live Real Screen Video Stream (only when active srcObject exists) */}
         {isLiveStreamActive && antiTunnelMode === "live_stream" && (
@@ -3688,60 +3766,28 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           </div>
         )}
 
-        {/* Primary Screen / Phone Stream Frame */}
-        {(screenshotUrl || frozenSnapshotUrl) &&
+        {/* Primary Screen Frame: last decoded frame, so polls never flash blank and a stalled stream keeps its last image */}
+        {bufferedFrame.url &&
         (!isLiveStreamActive || (isLiveStreamActive && !videoRef.current?.srcObject)) ? (
-          <div className="w-full h-full flex items-center justify-center relative z-0 bg-slate-950">
-            {isMobileMode ? (
-              <div className="relative h-full max-h-full aspect-[9/16] max-w-full mx-auto flex items-center justify-center bg-black rounded-2xl overflow-hidden border-2 border-slate-700 shadow-2xl">
-                <div className="w-full h-full relative flex-1 flex flex-col overflow-hidden">
-                  <InteractivePhoneVirtualOS
-                    onContextMenu={handleContainerContextMenu}
-                    currentStepAction={activeStep ? {
-                      id: activeStep.id,
-                      action: activeStep.action,
-                      x: activeStep.x,
-                      y: activeStep.y,
-                      text: activeStep.text,
-                      name: activeStep.name,
-                    } : null}
-                    forwardTrigger={forwardStepTriggerCount}
-                    onActionLogged={(action, details) => {
-                      // Virtual OS user action logged
-                    }}
-                  />
-                </div>
-                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 text-[9px] font-mono font-bold flex items-center gap-1 shadow-lg pointer-events-none z-10 backdrop-blur-sm">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                  <span>📱 INTERACTIVE PHONE OS • 1080x1920</span>
-                </div>
-              </div>
-            ) : (
-              <div className="w-full h-full relative flex-1 flex flex-col overflow-hidden">
-                <InteractiveDesktopVirtualOS
-                  onContextMenu={handleContainerContextMenu}
-                  currentStepAction={activeStep ? {
-                    id: activeStep.id,
-                    action: activeStep.action,
-                    x: activeStep.x,
-                    y: activeStep.y,
-                    text: activeStep.text,
-                    name: activeStep.name,
-                  } : null}
-                  forwardTrigger={forwardStepTriggerCount}
-                  onActionLogged={(action, details) => {
-                    // Virtual OS user action logged
-                  }}
-                />
+          <div className="absolute inset-0 bg-black">
+            <img
+              src={bufferedFrame.url}
+              alt="Live screen"
+              draggable={false}
+              className={cn(
+                "w-full h-full pointer-events-none select-none",
+                hudFitMode === "fill" ? "object-cover" : "object-contain",
+              )}
+            />
+            {bufferedFrame.stalled && (
+              <div className={cn("absolute top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-md bg-amber-950/90 border border-amber-500/60 text-amber-300 text-[10px] font-mono font-bold pointer-events-none", HUD_LAYERS.decoration)}>
+                Stream stalled: showing last frame
               </div>
             )}
-            {/* Phone Stream Badge when viewing Mobile outside frame */}
-            {!isMobileMode && (selectedCanvasTitle?.toLowerCase().includes("mobile") ||
-              selectedCanvasTitle?.toLowerCase().includes("phone") ||
-              selectedTabName === "mobile") && (
-              <div className="absolute top-3 left-3 px-2 py-1 rounded-lg bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 text-[10px] font-mono font-bold flex items-center gap-1.5 shadow-lg pointer-events-none z-10 backdrop-blur-sm">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span>📱 LIVE PHONE STREAM • 1080x1920 NATIVE</span>
+            {isMobileMode && (
+              <div className={cn("absolute top-2 left-2 px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 text-[9px] font-mono font-bold flex items-center gap-1 shadow-lg pointer-events-none backdrop-blur-sm", HUD_LAYERS.decoration)}>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                <span>LIVE PHONE STREAM • {NATIVE_WIDTH}x{NATIVE_HEIGHT}</span>
               </div>
             )}
           </div>
@@ -3870,14 +3916,9 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
       {/* High-Fidelity Recorded User Mouse Trail (Glowing Cyan Polyline & Waypoints) */}
       {liveMouseTrail.length > 1 && (
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-30">
+        <svg className={cn("absolute inset-0 w-full h-full pointer-events-none", HUD_LAYERS.decoration)}>
           <polyline
-            points={liveMouseTrail
-              .map(
-                (pt) =>
-                  `${toPercent(pt.x, pt.y).left},${toPercent(pt.x, pt.y).top}`
-              )
-              .join(" ")}
+            points={polylinePointsPx(liveMouseTrail, NATIVE_FRAME, frameLayerSize)}
             fill="none"
             stroke="#22d3ee"
             strokeWidth="2.5"
@@ -4024,8 +4065,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       {/* Focus Attention Spotlight Visual Overlay Layer */}
       <FocusAttentionOverlay
         config={focusAttentionConfig}
-        containerWidth={containerRef.current?.clientWidth || NATIVE_WIDTH}
-        containerHeight={containerRef.current?.clientHeight || NATIVE_HEIGHT}
+        containerWidth={frameLayerSize.width || NATIVE_WIDTH}
+        containerHeight={frameLayerSize.height || NATIVE_HEIGHT}
         onClose={() => setFocusAttentionConfig((prev) => ({ ...prev, enabled: false }))}
         onFocusPointClick={(x, y) => {
           toast.info(`Target element locked at (${x}, ${y})`);
@@ -4117,8 +4158,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             action: "click",
           });
         }}
-        containerWidth={containerRef.current?.clientWidth || NATIVE_WIDTH}
-        containerHeight={containerRef.current?.clientHeight || NATIVE_HEIGHT}
+        containerWidth={frameLayerSize.width || NATIVE_WIDTH}
+        containerHeight={frameLayerSize.height || NATIVE_HEIGHT}
       />
 
       {/* 1. Realistic Human Mouse Cursor & Glowing Spline Trail Overlay */}
@@ -4141,15 +4182,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           </defs>
           {splineMotionTrail.length > 1 && (
             <polyline
-              points={splineMotionTrail
-                .map((pt) => {
-                  const pct = framePointAsPercent(pt.x, pt.y, {
-                    width: NATIVE_WIDTH,
-                    height: NATIVE_HEIGHT,
-                  });
-                  return `${parseFloat(pct.left)}%,${parseFloat(pct.top)}%`;
-                })
-                .join(" ")}
+              points={polylinePointsPx(splineMotionTrail, NATIVE_FRAME, frameLayerSize)}
               fill="none"
               stroke="url(#cursorSplineGrad)"
               strokeWidth="3.5"
@@ -4287,7 +4320,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
       {/* 2nd HUD Navigation Path Projection Overlay on Live View */}
       {(showSecondHudOverlay ?? localShow2ndHudOverlay) && (
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
+        <svg
+          className={cn("absolute inset-0 w-full h-full pointer-events-none", HUD_LAYERS.vision)}
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
           <defs>
             <linearGradient id="hud2Grad" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#a855f7" stopOpacity="0.9" />
@@ -4301,59 +4338,51 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
           {/* Render 2nd HUD Path Spline */}
           <polyline
-            points={(secondHudActivePath?.remappedTrajectory || [
-              { x: 192, y: 180 },
-              { x: 537, y: 414 },
-              { x: 806, y: 648 },
-            ])
+            points={secondHudTrajectory
               .map((p) => {
-                const px = (p.x / 1000) * (containerRef.current?.clientWidth || 1000);
-                const py = (p.y / 600) * (containerRef.current?.clientHeight || 600);
-                return `${px},${py}`;
+                const { pctX, pctY } = trajectoryPointToPercent(p);
+                return `${pctX},${pctY}`;
               })
               .join(" ")}
             fill="none"
             stroke="url(#hud2Grad)"
             strokeWidth="4.5"
             strokeDasharray="8 4"
+            vectorEffect="non-scaling-stroke"
             filter="url(#glowPurple)"
             className="animate-[dash_12s_linear_infinite]"
           />
 
-          {/* Render 2nd HUD Waypoints */}
-          {(secondHudActivePath?.remappedTrajectory || [
-            { x: 192, y: 180 },
-            { x: 537, y: 414 },
-            { x: 806, y: 648 },
-          ]).map((wp, idx) => {
-            const px = (wp.x / 1000) * (containerRef.current?.clientWidth || 1000);
-            const py = (wp.y / 600) * (containerRef.current?.clientHeight || 600);
-            return (
-              <g key={idx}>
-                <circle
-                  cx={px}
-                  cy={py}
-                  r={idx === 2 ? 10 : 7}
-                  fill={idx === 2 ? "#22c55e" : "#a855f7"}
-                  stroke="#ffffff"
-                  strokeWidth="2"
-                />
-                <text
-                  x={px + 12}
-                  y={py + 4}
-                  fill="#d8b4fe"
-                  fontSize="11"
-                  fontWeight="bold"
-                  fontFamily="monospace"
-                  className="drop-shadow-[0_0_8px_rgba(0,0,0,0.9)]"
-                >
-                  2nd HUD #{idx + 1}
-                </text>
-              </g>
-            );
-          })}
         </svg>
       )}
+
+      {(showSecondHudOverlay ?? localShow2ndHudOverlay) &&
+        secondHudTrajectory.map((wp, idx) => {
+          const { pctX, pctY } = trajectoryPointToPercent(wp);
+          const isLast = idx === secondHudTrajectory.length - 1;
+          return (
+            <div
+              key={`hud2_wp_${idx}`}
+              style={{ left: `${pctX}%`, top: `${pctY}%` }}
+              className={cn("absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none", HUD_LAYERS.vision)}
+            >
+              <div
+                className={cn(
+                  "rounded-full border-2 border-white",
+                  isLast ? "w-5 h-5 bg-green-500" : "w-3.5 h-3.5 bg-purple-500",
+                )}
+              />
+              <span
+                className={cn(
+                  "absolute whitespace-nowrap text-[11px] font-bold font-mono text-purple-300 drop-shadow-[0_0_8px_rgba(0,0,0,0.9)]",
+                  anchoredLabelClass(pctX, pctY),
+                )}
+              >
+                2nd HUD #{idx + 1}
+              </span>
+            </div>
+          );
+        })}
 
       {/* AI #1 Qwen Vision Detected UI Element Bounding Boxes */}
       {nativeUiElements.map((el, elIdx) => {
@@ -4362,7 +4391,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           <div
             key={`hud_el_${el.id || "el"}_${elIdx}`}
             style={boxStyle}
-            className="absolute border border-cyan-400/60 bg-cyan-500/5 hover:bg-cyan-500/20 hover:border-cyan-300 transition-all rounded pointer-events-none z-10 group"
+            className={cn("absolute border border-cyan-400/60 bg-cyan-500/5 rounded pointer-events-none", HUD_LAYERS.vision)}
           >
             <div className="absolute -top-4 left-0 bg-slate-950/90 border border-cyan-500/40 text-[9px] font-mono text-cyan-300 px-1 py-0.2 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
               {el.name} ({el.type}) • {(el.confidence * 100).toFixed(0)}%
@@ -4393,7 +4422,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       {aiThinking && aiThinking.isThinking && (
         <div
           style={toPercent(aiThinking.x, aiThinking.y)}
-          className="absolute transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30"
+          className={cn("absolute transform -translate-x-1/2 -translate-y-1/2 pointer-events-none", HUD_LAYERS.cursor)}
         >
           <div className="absolute -inset-10 border-2 border-purple-500/60 rounded-full animate-ping" />
           <div className="absolute -inset-6 border border-cyan-400/80 rounded-full animate-pulse" />
@@ -4411,8 +4440,9 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
               {aiThinking.action || "Formulating Next Step"}
             </div>
             <div className="text-[9px] text-purple-400 font-mono mt-0.5">
-              {aiThinking.confidence !== undefined && `Conf: ${(aiThinking.confidence * 100).toFixed(0)}% • `}(
-              {aiThinking.x}, {aiThinking.y})
+              {aiThinking.confidence !== undefined &&
+                `Conf: ${(aiThinking.confidence * 100).toFixed(0)}% • `}
+              ({aiThinking.x}, {aiThinking.y})
             </div>
           </div>
         </div>
@@ -4420,8 +4450,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
       {/* Click Sequence Step Nodes (Interactive & Draggable) */}
       {sequence.map((step, idx) => {
-        const pos = toPercent(step.x, step.y);
+        const pos = clampedPointStyle(step.x, step.y, NATIVE_FRAME, 1.5);
+        const { pctX, pctY } = toPercentPair(step.x, step.y);
         const isActive = activeStepId === step.id;
+        const repeats = clampRepeatCount(step.repeatCount);
         const isDragging = draggingStepId === step.id;
 
         return (
@@ -4459,9 +4491,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
               });
               setIsContextMenuOpen(true);
             }}
-            className={`absolute transform -translate-x-1/2 -translate-y-1/2 z-20 cursor-grab active:cursor-grabbing group transition-transform ${
-              isDragging ? "scale-125 z-40" : "hover:scale-110"
-            }`}
+            className={cn(
+              "absolute transform -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing group transition-transform",
+              isDragging || isActive ? HUD_LAYERS.cursor : HUD_LAYERS.steps,
+              isDragging ? "scale-125" : "hover:scale-110",
+            )}
           >
             {isActive && (
               <div className="absolute -inset-3 bg-amber-500/40 rounded-full animate-ping pointer-events-none" />
@@ -4487,7 +4521,18 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
             <div className="absolute -inset-2 border border-dashed border-cyan-400/60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none animate-[spin_8s_linear_infinite]" />
 
-            <div className="absolute top-9 left-1/2 transform -translate-x-1/2 bg-slate-950/95 border border-slate-700 px-2 py-1 rounded text-[10px] font-mono text-slate-200 shadow-xl whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
+            {repeats > 1 && (
+              <span className="absolute -top-2 -right-3 px-1 rounded bg-fuchsia-600 border border-white text-[9px] font-mono font-bold text-white pointer-events-none">
+                ×{repeats}
+              </span>
+            )}
+
+            <div
+              className={cn(
+                "absolute bg-slate-950/95 border border-slate-700 px-2 py-1 rounded text-[10px] font-mono text-slate-200 shadow-xl whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none",
+                anchoredLabelClass(pctX, pctY),
+              )}
+            >
               <div className="font-bold text-cyan-300">{step.name}</div>
               <div className="text-slate-300">
                 {step.action} {step.text ? `"${step.text}"` : ""} •{" "}
@@ -4500,7 +4545,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
       {/* Real-Time Motion Particle Ribbon Trail */}
       {splineMotionTrail.length > 1 && (
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-30">
+        <svg
+          className={cn("absolute inset-0 w-full h-full pointer-events-none", HUD_LAYERS.decoration)}
+          viewBox="0 0 1000 562.5"
+          preserveAspectRatio="none"
+        >
           <defs>
             <linearGradient
               id="spline-ribbon-grad"
@@ -4745,15 +4794,50 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         </div>
       )}
 
+      {/* Drift Diagnostic Overlay - Highlights UI Elements in Red & Provides Re-calibrate CTA */}
+      <DriftDiagnosticOverlay
+        isVisible={showDriftDiagnostic}
+        onToggleVisibility={() => setShowDriftDiagnostic(!showDriftDiagnostic)}
+        thresholdPx={localDriftThreshold}
+        elements={sequence.map((s, idx) => ({
+          id: s.id,
+          name: s.name || `Step #${idx + 1}`,
+          templateX: (s as any).originalX ?? s.x,
+          templateY: (s as any).originalY ?? s.y,
+          liveX: s.x,
+          liveY: s.y,
+          confidence: (s as any).confidence ?? 0.92,
+          actionType: s.action as any,
+          isDrifted: ((s as any).driftDistancePx ?? 0) > localDriftThreshold,
+          driftDistancePx: (s as any).driftDistancePx ?? 0,
+          deltaX: s.offsetX ?? 0,
+          deltaY: s.offsetY ?? 0,
+          recalibrated: s.recalibrated,
+        }))}
+        onRecalibrateElement={(stepId, correctedX, correctedY) => {
+          onRepositionStep(stepId, correctedX, correctedY);
+        }}
+        onRecalibrateAll={handleTriggerHudAutoCalibration}
+      />
+
+      </div>
+
       {/* Interactive Quick Action Recording Popover */}
       {recordingClickPos && isRecordMode && (
         <div
-          style={{
-            left: `${Math.min(75, Math.max(25, recordingClickPos.pctX))}%`,
-            top: `${Math.min(70, Math.max(30, recordingClickPos.pctY))}%`,
-          }}
+          style={clampBoxToArea(
+            {
+              x: frameLayerRect.left + (recordingClickPos.pctX / 100) * frameLayerRect.width,
+              y: frameLayerRect.top + (recordingClickPos.pctY / 100) * frameLayerRect.height,
+            },
+            RECORD_POPOVER_SIZE,
+            viewportSize,
+          )}
           onClick={(e) => e.stopPropagation()}
-          className="absolute transform -translate-x-1/2 -translate-y-1/2 bg-slate-950/95 border-2 border-amber-500/80 rounded-xl p-3.5 shadow-2xl backdrop-blur-md z-50 w-72 space-y-2.5 text-xs text-slate-100"
+          className={cn(
+            "absolute bg-slate-950/95 border-2 border-amber-500/80 rounded-xl p-3.5 shadow-2xl backdrop-blur-md w-72 max-h-[calc(100%-16px)] overflow-y-auto space-y-2.5 text-xs text-slate-100",
+            HUD_LAYERS.popover,
+          )}
         >
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <div className="flex items-center gap-1.5 text-amber-400 font-bold font-mono text-xs">
@@ -4894,6 +4978,23 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             />
           </div>
 
+          <label className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-300">
+            <span>Repeat this action:</span>
+            <span className="flex items-center gap-1">
+              <Input
+                type="number"
+                aria-label="Repeat count"
+                min={MIN_REPEAT_COUNT}
+                max={MAX_REPEAT_COUNT}
+                step={1}
+                value={popoverRepeatCount}
+                onChange={(e) => setPopoverRepeatCount(clampRepeatCount(Number(e.target.value)))}
+                className="h-6 w-14 px-1 text-xs bg-slate-900 border-slate-700 text-fuchsia-300"
+              />
+              <span className="text-fuchsia-300 font-bold">times</span>
+            </span>
+          </label>
+
           <label className="flex items-center gap-1.5 text-[11px] font-mono cursor-pointer select-none">
             <input
               type="checkbox"
@@ -4936,32 +5037,6 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         </div>
       )}
 
-      {/* Drift Diagnostic Overlay - Highlights UI Elements in Red & Provides Re-calibrate CTA */}
-      <DriftDiagnosticOverlay
-        isVisible={showDriftDiagnostic}
-        onToggleVisibility={() => setShowDriftDiagnostic(!showDriftDiagnostic)}
-        thresholdPx={localDriftThreshold}
-        elements={sequence.map((s, idx) => ({
-          id: s.id,
-          name: s.name || `Step #${idx + 1}`,
-          templateX: (s as any).originalX ?? s.x,
-          templateY: (s as any).originalY ?? s.y,
-          liveX: s.x,
-          liveY: s.y,
-          confidence: (s as any).confidence ?? 0.92,
-          actionType: s.action as any,
-          isDrifted: ((s as any).driftDistancePx ?? 0) > localDriftThreshold,
-          driftDistancePx: (s as any).driftDistancePx ?? 0,
-          deltaX: s.offsetX ?? 0,
-          deltaY: s.offsetY ?? 0,
-          recalibrated: s.recalibrated,
-        }))}
-        onRecalibrateElement={(stepId, correctedX, correctedY) => {
-          onRepositionStep(stepId, correctedX, correctedY);
-        }}
-        onRecalibrateAll={handleTriggerHudAutoCalibration}
-      />
-
       {/* Autonomous Analyze & Act Modal */}
       <AnalyzeAndActModal
         isOpen={isAnalyzeAndActOpen}
@@ -4994,7 +5069,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       />
 
         {/* Floating Live Step Forwarding, Progression & Template Mutation HUD Bar */}
-        <div onClick={(e) => e.stopPropagation()} className="absolute bottom-3 inset-x-4 mx-auto max-w-2xl bg-slate-950/90 backdrop-blur-md border border-cyan-500/60 rounded-xl p-2 shadow-2xl z-30 flex items-center justify-between gap-2 text-xs font-mono">
+        <div onClick={(e) => e.stopPropagation()} className={cn("absolute bottom-2 inset-x-4 mx-auto max-w-3xl bg-slate-950/90 backdrop-blur-md border border-cyan-500/60 rounded-xl p-2 shadow-2xl flex items-center justify-between gap-2 text-xs font-mono", HUD_LAYERS.controls)}>
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-6 h-6 rounded-lg bg-cyan-600/30 border border-cyan-400/50 flex items-center justify-center text-cyan-300 shrink-0 font-bold text-[11px]">
               {sequence.length === 0 ? "0" : (sequence.findIndex((s) => s.id === activeStepId) >= 0 ? sequence.findIndex((s) => s.id === activeStepId) + 1 : 1)}
@@ -5014,11 +5089,69 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 <span className={sequence.length > 0 ? "text-emerald-400 font-bold" : "text-slate-500"}>
                   {sequence.length > 0 ? "Template Linked" : "Awaiting Actions"}
                 </span>
+                {replayRun && (
+                  <>
+                    <span>•</span>
+                    <span className="text-fuchsia-300 font-bold" data-testid="hud-replay-progress">
+                      {replayProgressLabel(replayRun)}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-1 shrink-0 flex-wrap">
+            {onToggleCapture && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onToggleCapture}
+                className={cn(
+                  "h-6 px-1.5 text-[10px] gap-0.5 border",
+                  isCapturing
+                    ? "bg-emerald-950 border-emerald-600 text-emerald-300"
+                    : "bg-slate-900 border-slate-700 text-slate-300",
+                )}
+                title={isCapturing ? "Stop screen capture" : "Start screen capture"}
+              >
+                <Camera className="w-3 h-3" />
+                {isCapturing ? "Capture On" : "Capture Off"}
+              </Button>
+            )}
+            {isReplayLive && onReplayControl && (
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => onReplayControl(replayRun?.status === "paused" ? "resume" : "pause")}
+                  className="h-6 px-1.5 text-[10px] font-bold bg-amber-700 hover:bg-amber-600 text-white gap-0.5"
+                  title="Pause or resume the live replay"
+                >
+                  {replayRun?.status === "paused" ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                  {replayRun?.status === "paused" ? "Resume" : "Pause"}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => onReplayControl("cancel")}
+                  className="h-6 px-1.5 text-[10px] font-bold bg-rose-800 hover:bg-rose-700 text-white gap-0.5"
+                  title="Cancel the live replay"
+                >
+                  <StopCircle className="w-3 h-3" />
+                  Cancel
+                </Button>
+              </>
+            )}
+            {retryableStep && onRetryStep && !isReplayLive && (
+              <Button
+                size="sm"
+                onClick={() => onRetryStep(retryableStep)}
+                className="h-6 px-1.5 text-[10px] font-bold bg-fuchsia-800 hover:bg-fuchsia-700 text-white gap-0.5"
+                title="Re-run just this step through the action gate"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Retry step {retryableStep.stepNumber}
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={handleStepBack}
@@ -6102,13 +6235,14 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                   </div>
                 </div>
 
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                <div ref={stepListRef} className="space-y-2 max-h-60 overflow-y-auto pr-1">
                   {sequence.map((step, idx) => {
                     const isCur = step.id === activeStepId;
                     const isChecked = selectedStepIds.has(step.id);
                     return (
                       <div
                         key={`hud_drawer_step_${step.id || "step"}_${idx}`}
+                        data-step-id={step.id}
                         onClick={() => {
                           onSelectStep?.(step.id);
                           setForwardStepTriggerCount((prev) => prev + 1);

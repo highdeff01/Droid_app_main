@@ -285,6 +285,9 @@ export const WorkflowTimeline: React.FC<WorkflowTimelineProps> = ({
           toast.success(`Segment Retried: Steps #${fromIdx + 1} to #${(toIdx ?? snapshots.length - 1) + 1}`, {
             description: "Re-executed targeted segment natively via PyAutoGUI bridge.",
           });
+        } else {
+          const body = await res.json().catch(() => null);
+          toast.error(`Retry Segment failed: ${body?.error || `HTTP ${res.status}`}`);
         }
       }
     } catch (err: any) {
