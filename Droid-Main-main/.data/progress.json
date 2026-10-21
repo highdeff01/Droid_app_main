@@ -51,8 +51,15 @@
   {
     "kind": "progress",
     "message": "Stored on disk",
-    "id": "progress_1792574736585_t8tkmc04",
-    "sessionId": "session_1792574736581_cmk73ird",
-    "createdAt": "2026-10-21T09:25:36.585Z"
+    "id": "progress_1792575554359_i5owigxn",
+    "sessionId": "session_1792575554354_6ooqd9my",
+    "createdAt": "2026-10-21T09:39:14.359Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792575623976_ghq6egpp",
+    "sessionId": "session_1792575623972_2defhrlz",
+    "createdAt": "2026-10-21T09:40:23.976Z"
   }
 ]
