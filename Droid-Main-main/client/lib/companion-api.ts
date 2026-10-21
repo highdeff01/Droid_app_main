@@ -37,6 +37,15 @@ export const companionApi = {
     companionRequest<CompanionChatResponse>("/chat", "POST", request),
   notes: (withScreenshots = false) =>
     companionRequest<{ notes: CompanionNote[] }>(`/notes${withScreenshots ? "?screenshots=true" : ""}`).then((d) => d.notes),
+  /** Saves a goal_reached important-event note with the screenshot at that moment. */
+  recordGoalReached: (title: string, screenshot?: string) =>
+    companionRequest<{ note: CompanionNote }>("/notes", "POST", {
+      category: "goal_state",
+      event: "goal_reached",
+      title: `Goal reached: ${title}`,
+      tags: ["goal_reached", "goal"],
+      screenshot,
+    }).then((d) => d.note),
   reportError: (event: CompanionErrorEvent) =>
     companionRequest<{ task: FixTask }>("/errors", "POST", event).then((d) => d.task),
   tasks: () => companionRequest<{ tasks: FixTask[] }>("/tasks").then((d) => d.tasks),

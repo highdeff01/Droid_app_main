@@ -2778,11 +2778,18 @@ export default function Dashboard({
               screenshotUrl={aiLiveUrl || screenshotUrl}
               goals={goalsState.length ? (goalsState as any) : undefined}
               onAddGoal={(g: any) => setGoalsState((prev) => [...prev, g])}
-              onUpdateGoal={(id, upd) =>
+              onUpdateGoal={(id, upd) => {
+                const goal = goalsState.find((g) => g.id === id);
+                if (upd?.status === "completed" && goal && goal.status !== "completed") {
+                  const frame = aiLiveUrl || screenshotUrl;
+                  void companionApi
+                    .recordGoalReached(goal.title || goal.name || id, /^data:image\/(png|jpeg);base64,/.test(frame) ? frame : undefined)
+                    .catch(() => {});
+                }
                 setGoalsState((prev) =>
                   prev.map((g) => (g.id === id ? { ...g, ...upd } : g)),
-                )
-              }
+                );
+              }}
               onDeleteGoal={(id) =>
                 setGoalsState((prev) => prev.filter((g) => g.id !== id))
               }
