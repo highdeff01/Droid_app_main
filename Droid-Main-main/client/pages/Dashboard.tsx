@@ -68,6 +68,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { reportDeviceAction } from "@/lib/device-action-report";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
 import { companionApi } from "@/lib/companion-api";
 import type { WorkflowStepDraft } from "@shared/companion";
@@ -1964,17 +1965,7 @@ export default function Dashboard({
             <LiveExecutionConsole
               height="600px"
               onExecuteTestCommand={(cmd) => {
-                fetch("/api/pyautogui/execute", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(cmd),
-                })
-                  .then((r) => r.json())
-                  .then((d) => {
-                    if (d.success) toast.success(`Executed ${cmd.action} command`);
-                    else toast.error(d.error || "Execution failed");
-                  })
-                  .catch((e) => toast.error(e.message));
+                void reportDeviceAction("/api/pyautogui/execute", cmd, `${cmd.action} command`);
               }}
             />
           </TabsContent>

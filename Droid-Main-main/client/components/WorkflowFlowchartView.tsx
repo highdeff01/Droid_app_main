@@ -58,7 +58,7 @@ import {
 import {
   MouseTrajectoryStore,
   MouseRecordingSession,
-} from "../../src/services/mouseTrajectoryStore";
+} from "@/services/mouseTrajectoryStore";
 import { useWorkflowLayoutSync, DEFAULT_LAYOUT_STORAGE_KEY } from "../hooks/useWorkflowLayoutSync";
 
 export interface FlowNode {

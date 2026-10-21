@@ -24,7 +24,7 @@ Netlify provides integrated hosting with automatic builds and deployments.
 
    ```
    OLLAMA_ENDPOINT=https://remote.quantumpass.io/ollama/api/chat
-   OLLAMA_MODEL=qwen2.5vl:7b
+   OLLAMA_MODEL=qwen3.5:2b
    ```
 
 4. **Deploy**
@@ -94,16 +94,16 @@ For maximum control, self-host using Docker.
 1. **Create Dockerfile**
 
 ```dockerfile
-FROM node:18-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
 # Install Python for automation
 RUN apk add --no-cache python3 py3-pip xvfb
 
-# Install dependencies
-COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install
+# Install dependencies (npm only; .npmrc sets legacy-peer-deps=true)
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci
 
 # Install Python dependencies
 COPY python-service ./python-service
@@ -113,14 +113,19 @@ RUN pip install -r python-service/requirements.txt
 COPY . .
 
 # Build
-RUN pnpm build
+RUN npm run build
 
-# Expose port
+# The server binds to 127.0.0.1 by default (see SECURITY.md). Inside the
+# container it must listen on all interfaces so the published port works.
+ENV HOST=0.0.0.0
 EXPOSE 3000
 
 # Start services
-CMD ["sh", "-c", "pnpm start"]
+CMD ["npm", "start"]
 ```
+
+Publishing the port exposes the privileged control-plane API; restrict it to
+trusted networks (for example `-p 127.0.0.1:3000:3000`).
 
 2. **Build Image**
 
@@ -220,19 +225,12 @@ npm run build:client
 
 ### Environment Configuration
 
-For production API endpoints, update `client/pages/Dashboard.tsx`:
+The client calls the API with same-origin relative paths (`/api/...`), so no
+API URL variable is needed: serve the SPA and the API from the same origin
+(`npm start`, or a reverse proxy that forwards `/api` to the server).
 
-```typescript
-const API_BASE = process.env.REACT_APP_API_URL || "https://api.yourdomain.com";
-
-const response = await fetch(`${API_BASE}/api/capture-screen`);
-```
-
-Build with environment variable:
-
-```bash
-REACT_APP_API_URL=https://api.yourdomain.com npm run build:client
-```
+This is a Vite app: only variables prefixed with `VITE_` are exposed to the
+browser (via `import.meta.env`); any other variable is not visible to client code.
 
 ## Python Service Deployment
 
@@ -289,7 +287,7 @@ npm install -D vite-plugin-visualizer
 npm run build -- --analyze
 
 # Minimize bundle size
-pnpm add tailwindcss-purge
+npm install -D tailwindcss-purge
 ```
 
 ### Backend Optimization

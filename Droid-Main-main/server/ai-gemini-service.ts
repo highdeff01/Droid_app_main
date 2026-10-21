@@ -30,6 +30,9 @@ export interface StepVerificationResult {
     y?: number;
     reason: string;
   };
+  /** True when this result is a heuristic placeholder, not model analysis. */
+  simulated?: boolean;
+  simulationReason?: string;
 }
 
 export interface StuckResolutionResult {
@@ -46,6 +49,9 @@ export interface StuckResolutionResult {
     reason: string;
   }>;
   aiExplanation: string;
+  /** True when this result is a heuristic placeholder, not model analysis. */
+  simulated?: boolean;
+  simulationReason?: string;
 }
 
 export interface CheckupEvaluationResult {
@@ -60,6 +66,9 @@ export interface CheckupEvaluationResult {
     text?: string;
     explanation: string;
   };
+  /** True when this result is a heuristic placeholder, not model analysis. */
+  simulated?: boolean;
+  simulationReason?: string;
 }
 
 export interface DetectedElement {
@@ -91,6 +100,9 @@ export interface ScreenAnalysisAndStepsResult {
   }>;
   summary: string;
   primaryActionTarget?: { x: number; y: number; label: string };
+  /** True when this result is a heuristic placeholder, not model analysis. */
+  simulated?: boolean;
+  simulationReason?: string;
 }
 
 export interface ScreenMatchResult {
@@ -105,6 +117,9 @@ export interface ScreenMatchResult {
     text?: string;
     name: string;
   };
+  /** True when this result is a heuristic placeholder, not model analysis. */
+  simulated?: boolean;
+  simulationReason?: string;
 }
 
 function cleanBase64(imageData: string): { data: string; mimeType: string } {
@@ -115,6 +130,42 @@ function cleanBase64(imageData: string): { data: string; mimeType: string } {
     }
   }
   return { mimeType: "image/jpeg", data: imageData };
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Marks a result as a heuristic placeholder so the UI can label it, never as real analysis. */
+export function simulatedMarker(reason: string): { simulated: true; simulationReason: string } {
+  return { simulated: true, simulationReason: reason };
+}
+
+/** Screen match that could not be evaluated: never claims a match or a score. */
+function unverifiedScreenMatch(reason: string): ScreenMatchResult {
+  return {
+    matched: false,
+    similarityScore: 0,
+    reason: `Not compared: ${reason}`,
+    identifiedElements: [],
+    ...simulatedMarker(reason),
+  };
+}
+
+/** Visual diff that could not be evaluated: asks for intervention instead of proceeding. */
+function unverifiedVisualDiff(targetCoords: { x: number; y: number }, reason: string): VisualDiffAndDriftResult {
+  return {
+    similarityScore: 0,
+    driftDetected: false,
+    driftVector: { deltaX: 0, deltaY: 0 },
+    originalCoordinates: targetCoords,
+    autoPositionedCoordinates: targetCoords,
+    differences: [],
+    aiInterventionRequired: true,
+    interventionReason: `Not evaluated: ${reason}`,
+    recommendedAction: "stalled_abort",
+    ...simulatedMarker(reason),
+  };
 }
 
 /**
@@ -180,11 +231,12 @@ export async function verifyStepAccuracy(params: {
 
   if (!imageData) {
     return {
-      verified: true,
-      accuracyScore: 0.88,
-      status: "verified",
-      analysis: "Heuristic verification passed (no image captured).",
+      verified: false,
+      accuracyScore: 0,
+      status: "missed",
+      analysis: "Not verified: no screenshot was captured, so no AI verification ran.",
       goalFinished: false,
+      ...simulatedMarker("No screenshot supplied; step was not visually verified."),
     };
   }
 
@@ -228,20 +280,22 @@ Return a STRICT JSON response only (no markdown, no backticks, just valid JSON):
 
     return {
       verified: Boolean(parsed.verified),
-      accuracyScore: Number(parsed.accuracyScore) || 0.9,
+      accuracyScore: Number(parsed.accuracyScore) || 0,
       status: parsed.status || (parsed.verified ? "verified" : "missed"),
       analysis: parsed.analysis || "Verification completed.",
       goalFinished: Boolean(parsed.goalFinished),
       suggestedCorrection: parsed.suggestedCorrection || undefined,
+      simulated: false,
     };
   } catch (err) {
-    centralLogHub.addLog("AI-Verifier", "WARN", `AI Verification fallback: ${err instanceof Error ? err.message : String(err)}`);
+    centralLogHub.addLog("AI-Verifier", "WARN", `AI Verification fallback: ${errorText(err)}`);
     return {
       verified: false,
       accuracyScore: 0,
       status: "missed",
-      analysis: `Heuristic fallback verification: ${err instanceof Error ? err.message : String(err)}`,
+      analysis: `Not verified: AI model unavailable (${errorText(err)}).`,
       goalFinished: false,
+      ...simulatedMarker(`AI model unavailable: ${errorText(err)}`),
     };
   }
 }
@@ -269,6 +323,7 @@ export async function resolveStuckState(params: {
 
   if (!imageData) {
     return {
+      ...simulatedMarker("No screenshot supplied; recovery actions are a generic heuristic."),
       isStuck: true,
       reason: "Execution time limit or element timeout reached.",
       obstacleType: "unresponsive",
@@ -320,6 +375,7 @@ Return a STRICT JSON response only:
       obstacleType: parsed.obstacleType || "unresponsive",
       recommendedActions: Array.isArray(parsed.recommendedActions) ? parsed.recommendedActions : [],
       aiExplanation: parsed.aiExplanation || "Corrective actions planned.",
+      simulated: false,
     };
   } catch (err) {
     centralLogHub.addLog("AI-StuckResolver", "ERROR", `Stuck resolution error: ${err instanceof Error ? err.message : String(err)}`);
@@ -330,7 +386,8 @@ Return a STRICT JSON response only:
       recommendedActions: [
         { action: "click", x: 960, y: 540, reason: "Click center to restore active focus" },
       ],
-      aiExplanation: "Fallback unstick sequence engaged.",
+      aiExplanation: "Generic fallback unstick sequence (AI model unavailable).",
+      ...simulatedMarker(`AI model unavailable: ${errorText(err)}`),
     };
   }
 }
@@ -362,7 +419,8 @@ export async function evaluateCheckupAndCompletion(params: {
       isFinished: remainingStepCount === 0 || timeExceeded,
       nothingLeftToDo: remainingStepCount === 0,
       timeExceeded,
-      summary: `Checkup complete at ${elapsedSeconds}s. Remaining steps: ${remainingStepCount}.`,
+      summary: `Checkup at ${elapsedSeconds}s from step counts only (no screenshot). Remaining steps: ${remainingStepCount}.`,
+      ...simulatedMarker("No screenshot supplied; completion inferred from step counts, not AI analysis."),
     };
   }
 
@@ -402,13 +460,15 @@ Return a STRICT JSON response only:
       timeExceeded,
       summary: parsed.summary || "Checkup evaluation finished.",
       recommendedNextAction: parsed.recommendedNextAction || undefined,
+      simulated: false,
     };
   } catch (err) {
     return {
       isFinished: remainingStepCount === 0 || timeExceeded,
       nothingLeftToDo: remainingStepCount === 0,
       timeExceeded,
-      summary: `Checkup fallback: ${err instanceof Error ? err.message : String(err)}`,
+      summary: `Checkup from step counts only; AI model unavailable (${errorText(err)}).`,
+      ...simulatedMarker(`AI model unavailable: ${errorText(err)}`),
     };
   }
 }
@@ -434,7 +494,7 @@ export async function detectScreenElementsAndSteps(params: {
         width: 140,
         height: 44,
         suggestedAction: "click",
-        confidence: 0.9,
+        confidence: 0,
         description: "Standard primary action target located near center-bottom canvas",
       },
       {
@@ -447,7 +507,7 @@ export async function detectScreenElementsAndSteps(params: {
         height: 40,
         suggestedAction: "clear_and_type",
         suggestedTextPayload: "search query",
-        confidence: 0.88,
+        confidence: 0,
         description: "Text input bar located in the upper header region",
       },
       {
@@ -459,7 +519,7 @@ export async function detectScreenElementsAndSteps(params: {
         width: 100,
         height: 36,
         suggestedAction: "click",
-        confidence: 0.85,
+        confidence: 0,
         description: "Navigation route switch tab",
       },
     ];
@@ -477,8 +537,9 @@ export async function detectScreenElementsAndSteps(params: {
         delayMs: 400,
         description: el.description,
       })),
-      summary: "Identified 3 interactive UI targets using geometric screen heuristics.",
+      summary: "Placeholder targets from fixed screen geometry; no screenshot was analyzed.",
       primaryActionTarget: { x: fallbackElements[0].x, y: fallbackElements[0].y, label: fallbackElements[0].name },
+      ...simulatedMarker("No screenshot supplied; elements are geometric placeholders, not detections."),
     };
   }
 
@@ -545,6 +606,7 @@ Return a STRICT JSON response ONLY without markdown:
       suggestedSteps: parsed.suggestedSteps || [],
       summary: parsed.summary || "Screen detection completed.",
       primaryActionTarget: parsed.primaryActionTarget || undefined,
+      simulated: false,
     };
   } catch (err) {
     centralLogHub.addLog(
@@ -567,18 +629,7 @@ export async function compareScreensForMatch(params: {
 
   if (!currentScreen || !expectedScreen) {
     // If either image is missing or AI is unavailable, use heuristic comparison
-    return {
-      matched: true,
-      similarityScore: 0.88,
-      reason: "Heuristic screen match approved: visual dimensions and viewport structure align.",
-      identifiedElements: ["Header Nav", "Target Button", "Active Canvas"],
-      suggestedNextStep: {
-        action: "click",
-        x: 960,
-        y: 540,
-        name: `Auto-Act on ${expectedStepLabel}`,
-      },
-    };
+    return unverifiedScreenMatch("Both screenshots are required; no comparison ran.");
   }
 
   try {
@@ -624,10 +675,11 @@ Return a STRICT JSON response ONLY:
 
     return {
       matched,
-      similarityScore: parsed.similarityScore ?? 0.8,
+      similarityScore: Number(parsed.similarityScore) || 0,
       reason: parsed.reason || "Screen match evaluated.",
       identifiedElements: parsed.identifiedElements || [],
       suggestedNextStep: parsed.suggestedNextStep || undefined,
+      simulated: false,
     };
   } catch (err) {
     centralLogHub.addLog(
@@ -636,18 +688,7 @@ Return a STRICT JSON response ONLY:
       `Screen match fallback evaluation: ${err instanceof Error ? err.message : String(err)}`
     );
 
-    return {
-      matched: true,
-      similarityScore: 0.85,
-      reason: "Visual comparison fallback: Screen state verified compatible with pending step.",
-      identifiedElements: ["Target UI Region"],
-      suggestedNextStep: {
-        action: "click",
-        x: 960,
-        y: 540,
-        name: `Auto-Act on ${expectedStepLabel}`,
-      },
-    };
+    return unverifiedScreenMatch(`AI model unavailable: ${errorText(err)}`);
   }
 }
 
@@ -672,6 +713,9 @@ export interface VisualDiffAndDriftResult {
     y: number;
     text?: string;
   };
+  /** True when this result is a heuristic placeholder, not model analysis. */
+  simulated?: boolean;
+  simulationReason?: string;
 }
 
 /**
@@ -700,22 +744,7 @@ export async function detectVisualErrorsAndDifferenceMapping(params: {
   const ai = getGenAIClient();
 
   if (!expectedImage || !responseImage) {
-    return {
-      similarityScore: 0.89,
-      driftDetected: false,
-      driftVector: { deltaX: 0, deltaY: 0 },
-      originalCoordinates: targetCoords,
-      autoPositionedCoordinates: targetCoords,
-      differences: [
-        {
-          description: "Visual verification completed with minimal delta.",
-          area: "Target Area",
-          severity: "low",
-        },
-      ],
-      aiInterventionRequired: false,
-      recommendedAction: "proceed",
-    };
+    return unverifiedVisualDiff(targetCoords, "Both images are required; no visual diff ran.");
   }
 
   try {
@@ -769,7 +798,7 @@ Return a STRICT JSON response ONLY:
     );
 
     return {
-      similarityScore: typeof parsed.similarityScore === "number" ? parsed.similarityScore : 0.85,
+      similarityScore: typeof parsed.similarityScore === "number" ? parsed.similarityScore : 0,
       driftDetected,
       driftVector: { deltaX: driftX, deltaY: driftY },
       originalCoordinates: targetCoords,
@@ -779,6 +808,7 @@ Return a STRICT JSON response ONLY:
       interventionReason: parsed.interventionReason || undefined,
       recommendedAction: parsed.recommendedAction || (driftDetected ? "reposition_and_retry" : "proceed"),
       suggestedNewStep: parsed.suggestedNewStep || undefined,
+      simulated: false,
     };
   } catch (err) {
     centralLogHub.addLog(
@@ -787,16 +817,7 @@ Return a STRICT JSON response ONLY:
       `Visual diff fallback: ${err instanceof Error ? err.message : String(err)}`
     );
 
-    return {
-      similarityScore: 0.88,
-      driftDetected: false,
-      driftVector: { deltaX: 0, deltaY: 0 },
-      originalCoordinates: targetCoords,
-      autoPositionedCoordinates: targetCoords,
-      differences: [{ description: "Visual diff evaluation completed.", area: "Screen", severity: "low" }],
-      aiInterventionRequired: false,
-      recommendedAction: "proceed",
-    };
+    return unverifiedVisualDiff(targetCoords, `AI model unavailable: ${errorText(err)}`);
   }
 }
 

@@ -36,7 +36,7 @@ import {
   MouseTrajectoryStore,
   MouseRecordingSession,
   RecordedMousePoint,
-} from "../../src/services/mouseTrajectoryStore";
+} from "@/services/mouseTrajectoryStore";
 
 interface ReplaySessionsModalProps {
   isOpen: boolean;

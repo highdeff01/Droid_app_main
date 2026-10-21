@@ -36,7 +36,7 @@ import { toast } from "sonner";
 import {
   MouseTrajectoryStore,
   MouseRecordingSession,
-} from "../../src/services/mouseTrajectoryStore";
+} from "@/services/mouseTrajectoryStore";
 import { compareFramesPixelLevel, PixelDiffResult } from "../utils/pixelDiffEngine";
 
 interface SessionDifferentialViewerProps {

@@ -31,7 +31,7 @@ Components used:
 **Files**:
 
 - `server/index.ts` - Main server setup with routes registration
-- `server/routes/screen-capture.ts` - Screen capture endpoint
+- `server/routes/` - All API route handlers (capture, analysis, task execution, PyAutoGUI bridge, AI pipelines); see the File Structure section below
 - `server/routes/analyze-screenshot.ts` - AI analysis endpoint
 - `server/routes/execute-task.ts` - Task execution endpoint
 
@@ -86,7 +86,7 @@ Features:
 
 ### 4. Modern Homepage ✅
 
-**File**: `client/pages/Index.tsx` (271 lines)
+**Files**: `client/pages/` (landing page plus Dashboard, Workspace, MobileRemote and the other routed pages)
 
 Features:
 
@@ -227,63 +227,51 @@ Python 3.8+
 ## File Structure
 
 ```
-gameai-automation/
-├── client/                          # React frontend
-│   ├── pages/
-│   │   ├── Index.tsx               # Homepage (271 lines)
-│   │   ├── Dashboard.tsx           # Main dashboard (415 lines)
-│   │   └── NotFound.tsx
-│   ├── components/ui/              # Radix UI components
-│   ├── hooks/
-│   ├── lib/
-│   ├── App.tsx                     # Main app router (updated)
-│   └── global.css
+Droid-Main-main/
+├── client/                          # React 18 SPA (Vite)
+│   ├── pages/                      # Index, Dashboard, Workspace, MobileRemote, AiMonitor,
+│   │                               # Captures, Recordings, Workflows, Operations,
+│   │                               # Accomplishments, NotFound, agents/, automation/
+│   ├── components/                 # Feature panels, modals and HUD overlays
+│   │   └── ui/                     # Radix UI primitives
+│   ├── hooks/                      # React hooks (action gate, PWA install, ...)
+│   ├── lib/                        # Client helpers (+ *.spec.ts unit tests)
+│   ├── services/                   # Client-side stores (mouse trajectory store)
+│   ├── types/                      # Client types (automation types)
+│   ├── utils/                      # Pixel diff engine
+│   ├── App.tsx                     # Router
+│   └── main.tsx
 │
-├── server/                          # Express backend
-│   ├── routes/
-│   │   ├── screen-capture.ts       # Screen capture endpoint
-│   │   ├── analyze-screenshot.ts   # AI analysis endpoint
-│   │   ├── execute-task.ts         # Task execution endpoint
-│   │   └── demo.ts                 # Example endpoint
-│   └── index.ts                    # Server setup (updated)
+├── server/                          # Express API, mounted as Vite middleware in dev
+│   ├── routes/                     # API route handlers (+ *.spec.ts)
+│   ├── ai-endpoint.ts              # Ollama qwen3.5:2b client with fallback endpoint
+│   ├── ai-gemini-service.ts        # Optional Gemini override; simulated-flagged fallbacks
+│   ├── durable-store.ts            # JSON persistence under .data/ (gitignored)
+│   ├── security.ts                 # Control-plane auth / origin checks
+│   ├── index.ts                    # createServer(): registers all routes
+│   └── node-build.ts               # Production entry (npm start)
 │
-├── python-service/                  # Python automation
-│   ├── automation.py               # Core automation (264 lines)
-│   ├── capture.py                  # Screen capture service (62 lines)
-│   ├── execute-task.py             # Task execution (246 lines)
-│   └── requirements.txt            # Python dependencies
+├── shared/                          # Types and logic shared by client and server
+│   ├── api.ts, phone.ts, recordings.ts, replay.ts, assistant.ts, coordinates.ts
+│   └── device-execution.ts         # executed / failed / unavailable device outcomes
 │
-├── shared/                         # Shared types
-│   └── api.ts
+├── python-service/                  # PyAutoGUI automation scripts + requirements.txt
+├── android/                         # Native Android companion app (Gradle)
+├── browser-extension/               # Browser tab / page-element companion extension
+├── netlify/functions/api.ts         # Serverless wrapper for the Express API
+├── scripts/                         # Dev/startup helper scripts
+├── public/                          # Static assets, PWA manifest
+├── docs/                            # Feature docs (Android phone control, verified replay)
 │
-├── public/                         # Static assets
+├── README.md, QUICKSTART.md, SETUP.md, DEPLOYMENT.md, ELECTRON.md,
+│   SECURITY.md, AGENTS.md, IMPLEMENTATION_SUMMARY.md
 │
-├── Documentation/
-│   ├── README.md                   # Main documentation (423 lines)
-│   ├── QUICKSTART.md               # Quick start guide (217 lines)
-│   ├── SETUP.md                    # Detailed setup (388 lines)
-│   ├── DEPLOYMENT.md               # Deployment guide (488 lines)
-│   ├── ELECTRON.md                 # Desktop app guide (365 lines)
-│   └── IMPLEMENTATION_SUMMARY.md   # This file
-│
-├── Configuration/
-│   ├── vite.config.ts              # Vite build config
-│   ├── vite.config.server.ts       # Server build config
-│   ├── tailwind.config.ts          # Tailwind theming
-│   ├── tsconfig.json               # TypeScript config
-│   ├── postcss.config.js           # PostCSS config
-│   └── package.json                # Dependencies
-│
-└── .env                            # Environment variables (optional)
+└── vite.config.ts, vite.config.server.ts, tailwind.config.ts, tsconfig.json,
+    postcss.config.js, netlify.toml, package.json, package-lock.json, .npmrc
 ```
 
-## Lines of Code
-
-- **React Components**: 686 lines (Index.tsx: 271, Dashboard.tsx: 415)
-- **Express Backend**: 294 lines (screen-capture.ts: 74, analyze-screenshot.ts: 118, execute-task.ts: 102)
-- **Python Service**: 572 lines (automation.py: 264, capture.py: 62, execute-task.py: 246)
-- **Documentation**: 2,280 lines (README: 423, QUICKSTART: 217, SETUP: 388, DEPLOYMENT: 488, ELECTRON: 365, IMPLEMENTATION_SUMMARY: 399)
-- **Total Project**: ~3,832 lines
+The `.data/` directory is created at runtime by the durable store and is not
+tracked in git.
 
 ## Feature Completeness Checklist
 

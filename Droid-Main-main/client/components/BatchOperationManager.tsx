@@ -36,7 +36,7 @@ import { runVerifiedReplay, sessionToReplaySteps } from "@/lib/verified-replay";
 import {
   MouseTrajectoryStore,
   MouseRecordingSession,
-} from "../../src/services/mouseTrajectoryStore";
+} from "@/services/mouseTrajectoryStore";
 
 export interface BatchSessionItem {
   id: string; // unique batch item id

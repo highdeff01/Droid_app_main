@@ -19,6 +19,11 @@ function getGenAI(): GoogleGenAI | null {
 export interface AnalyzeAndActResponse {
   success: boolean;
   visualSummary: string;
+  /** True when no model produced `visualSummary`. */
+  simulated: boolean;
+  simulationReason?: string;
+  /** Goals, tasks, tools and preferences below are template suggestions, never model output. */
+  templateSuggestions: true;
   crossReferenceAnalysis: {
     previousActionSummary: string;
     currentScreenState: string;
@@ -131,13 +136,15 @@ Give a 2-sentence visual summary of the active viewport, any visible drift or in
     const responsePayload: AnalyzeAndActResponse = {
       success: true,
       visualSummary:
-        geminiSummary ||
-        "Live screen display analyzed: Active viewport displays primary navigation headers, interactive form input fields (#user-id-field), and verification action buttons in operational alignment.",
+        geminiSummary || "No AI analysis ran: no vision model was available or no screenshot was supplied.",
+      simulated: !geminiSummary,
+      ...(geminiSummary ? {} : { simulationReason: "No vision model response; screen was not analyzed." }),
+      templateSuggestions: true,
       crossReferenceAnalysis: {
         previousActionSummary: lastAction
           ? `Last executed step #${lastAction.stepNumber || 1}: ${lastAction.name || lastAction.action || "User interaction"}`
           : "Initial session state; no prior automation actions executed.",
-        currentScreenState: "Live screen canvas stabilized at 1920x1080. 5 primary interactive landmarks identified.",
+        currentScreenState: geminiSummary ? "See visualSummary (model output)." : "Unknown: screen was not analyzed.",
         identifiedChanges: [
           "Live canvas viewport updated with latest user cursor and form focus",
           "Euclidean template drift monitored across primary form selectors",
@@ -178,7 +185,7 @@ Give a 2-sentence visual summary of the active viewport, any visible drift or in
           action: "click",
           targetPosition: { x: 960, y: 380 },
           selector: "input[type='email']#user-id-field",
-          confidence: 0.98,
+          confidence: 0,
         },
         {
           id: `task_${Date.now()}_2`,
@@ -187,7 +194,7 @@ Give a 2-sentence visual summary of the active viewport, any visible drift or in
           action: "live_write",
           targetPosition: { x: 960, y: 380 },
           text: "operator.lead@enterprise.ai",
-          confidence: 0.95,
+          confidence: 0,
         },
         {
           id: `task_${Date.now()}_3`,
@@ -196,7 +203,7 @@ Give a 2-sentence visual summary of the active viewport, any visible drift or in
           action: "click",
           targetPosition: { x: 885, y: 490 },
           selector: ".auth-card label.checkbox-remember-session",
-          confidence: 0.93,
+          confidence: 0,
         },
         {
           id: `task_${Date.now()}_4`,
@@ -205,7 +212,7 @@ Give a 2-sentence visual summary of the active viewport, any visible drift or in
           action: "click",
           targetPosition: { x: 960, y: 560 },
           selector: "#checkout-submit-btn",
-          confidence: 0.97,
+          confidence: 0,
         },
       ],
       suggestedTools: {

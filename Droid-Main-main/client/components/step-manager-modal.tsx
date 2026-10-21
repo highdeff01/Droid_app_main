@@ -23,7 +23,7 @@ import {
   Sliders,
 } from "lucide-react";
 import { toast } from "sonner";
-import { DiffFramesTestModal } from "../../src/components/DiffFramesTestModal";
+import { DiffFramesTestModal } from "./DiffFramesTestModal";
 
 export interface WorkflowStep {
   id: string;
