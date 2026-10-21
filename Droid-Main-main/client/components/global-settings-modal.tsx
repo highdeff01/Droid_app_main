@@ -226,7 +226,7 @@ export function GlobalSettingsModal({
                 <Input
                   value={modelUrl}
                   onChange={(e) => setModelUrl(e.target.value)}
-                  placeholder="https://quantumclaw.net/ollama/api/chat"
+                  placeholder={DEFAULT_MODEL_URL}
                   className="bg-slate-950 border-slate-700 text-white font-mono text-xs h-9 focus-visible:ring-cyan-500"
                 />
                 <Button
