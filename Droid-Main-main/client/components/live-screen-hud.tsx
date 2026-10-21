@@ -141,11 +141,13 @@ import {
   fetchQwenGuide,
   inspectOcrAtPoint,
   stopBridge,
+  postHudJson,
   tagEntityAtPoint,
   verifyIntegrityAtPoint,
   type HudStepLike,
 } from "@/lib/hud-actions";
 import { HudAgentPanel } from "./hud-agent-panel";
+import type { HudSuggestedAction } from "@shared/api";
 
 /** How often the Qwen guide re-reads the live frame while enabled. */
 const QWEN_GUIDE_POLL_MS = 8000;
@@ -624,6 +626,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   const [qwenGuideEnabled, setQwenGuideEnabled] = useState<boolean>(false);
   const [qwenLiveThought, setQwenLiveThought] = useState<string | null>(null);
   const [qwenGuideIntention, setQwenGuideIntention] = useState<string | null>(null);
+  const [qwenSuggestedActions, setQwenSuggestedActions] = useState<HudSuggestedAction[]>([]);
   const [qwenIncompleteTypingAlert, setQwenIncompleteTypingAlert] = useState<string | null>(null);
   const qwenGuideBusyRef = useRef<boolean>(false);
 
@@ -1310,22 +1313,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         tags: ["sightline", "cot_verified", "zero_drift", isMobileMode ? "mobile" : "desktop"],
       };
 
-      await fetch("/api/assistant/workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }).catch(() => {});
+      await postHudJson("/api/assistant/workflows", payload);
+      if (isMobileMode) await postHudJson("/api/mobile-stream/workflows", payload);
 
-      if (isMobileMode) {
-        await fetch("/api/mobile-stream/workflows", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }).catch(() => {});
-      }
-
-      toast.success(`💾 Workflow "${name}" saved to library!`, {
-        description: `${sequence.length} step(s) recorded with clean baseline & CoT validation.`,
+      toast.success(`Workflow "${name}" saved to library`, {
+        description: `${sequence.length} step(s) saved${isMobileMode ? " (also to mobile workflows)" : ""}.`,
       });
       setShowTestModeModal(false);
     } catch (e: any) {
@@ -1834,6 +1826,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       const guide = await fetchQwenGuide(currentHudFrame() ?? "", sequence);
       setQwenLiveThought(guide.thought);
       setQwenGuideIntention(guide.intention);
+      setQwenSuggestedActions(guide.suggestedActions ?? []);
       const completion = completionStep(guide, sequence);
       setQwenIncompleteTypingAlert(completion ? `Qwen completing typing: "${completion.text}"` : null);
       if (completion) {
@@ -1850,10 +1843,22 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   const qwenGuideTickRef = useRef(runQwenGuideTick);
   qwenGuideTickRef.current = runQwenGuideTick;
 
+  /** Approve one movement the Qwen guide suggested: run it through the action gate and report the outcome. */
+  const runQwenSuggestion = async (suggestion: HudSuggestedAction, idx: number) => {
+    try {
+      await runGatedSteps([{ id: `qwen_suggest_${Date.now()}_${idx}`, ...suggestion }]);
+      setQwenSuggestedActions((prev) => prev.filter((_, i) => i !== idx));
+      toast.success(`Qwen suggestion "${suggestion.name}" executed after screen verification`);
+    } catch (err) {
+      toast.error(`Qwen suggestion blocked: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   useEffect(() => {
     if (!qwenGuideEnabled) {
       setQwenLiveThought(null);
       setQwenGuideIntention(null);
+      setQwenSuggestedActions([]);
       setQwenIncompleteTypingAlert(null);
       return;
     }
@@ -2068,7 +2073,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
     setIsContinuousScreenRecording(true);
     setScreenRecordDurationSec(0);
-    toast.success("🔴 Screen Recording Active: Capturing 1 FPS stream & sending to AI across all apps!");
+    toast.info("Local screen recording started: 1 frame/s kept in the HUD action ledger (not sent to any AI).");
 
     screenRecordIntervalRef.current = window.setInterval(() => {
       setScreenRecordDurationSec((prev) => prev + 1);
@@ -3998,6 +4003,17 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             {qwenGuideIntention && (
               <span className="text-cyan-300">Intention: {qwenGuideIntention}</span>
             )}
+            {qwenSuggestedActions.map((suggestion, idx) => (
+              <button
+                key={`${suggestion.name}-${idx}`}
+                type="button"
+                className="rounded border border-cyan-600/50 px-1.5 text-[10px] text-cyan-200 hover:bg-cyan-900/60"
+                title="Run this Qwen-suggested movement through the action gate"
+                onClick={() => void runQwenSuggestion(suggestion, idx)}
+              >
+                Run (gated): {suggestion.action} "{suggestion.name}" @ ({suggestion.x}, {suggestion.y})
+              </button>
+            ))}
           </div>
           <Badge className="bg-cyan-900/60 text-cyan-300 border-cyan-600/50 text-[9px]">
             QWEN LIVE (every {QWEN_GUIDE_POLL_MS / 1000}s)
