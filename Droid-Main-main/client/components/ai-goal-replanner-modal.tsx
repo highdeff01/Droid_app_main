@@ -21,38 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { SequenceStep } from "./live-screen-hud";
+import type { ReplanResult, ReplanStepItem } from "@shared/goal-replan";
 
-export interface ReplanStepItem {
-  id: string;
-  name: string;
-  action: string;
-  x: number;
-  y: number;
-  text?: string;
-  keyPayload?: string;
-  delayMs?: number;
-  originalX?: number;
-  originalY?: number;
-  status?: "kept" | "modified" | "inserted" | "removed";
-  replanReason?: string;
-  confidence?: number | null;
-}
-
-export interface ReplanResult {
-  replanId: string;
-  timestamp: number;
-  driftDetected: boolean;
-  maxDriftPx: number;
-  originalStepCount: number;
-  newStepCount: number;
-  summary: string;
-  confidence: number | null;
-  source: "model" | "heuristic";
-  verified: boolean;
-  suggestedSteps: ReplanStepItem[];
-  mitigationStrategies: string[];
-  executionPlan: string;
-}
+export type { ReplanResult, ReplanStepItem };
 
 interface AIGoalReplannerModalProps {
   isOpen: boolean;
