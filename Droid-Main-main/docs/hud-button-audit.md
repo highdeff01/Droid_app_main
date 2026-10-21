@@ -101,16 +101,20 @@ dispatchers).
 
 ## Qwen / Agent fast-path panel (`HudAgentPanel`)
 
-Rendered inside the HUD body; every button awaits its operation via the shared `perform()`
-helper, shows the real result in a dialog, and reports success/failure with a toast built
-from the true outcome (never fired ahead of the result).
+Rendered inside the HUD body. Ask Qwen, Auto Actions, Create Plan and Test/Simulate all run
+the one Qwen turn pipeline (`client/lib/qwen-turn-loop.ts`) at different entry points of the
+operation graph (see "Operation graph & Qwen turn loop" below); the live chain is shown in
+the panel and in the intentions panel. Pack/Presentation buttons await their operation, show
+the real result in a dialog, and toast from the true outcome (never ahead of the result).
 
 | Control | Handler | API call | Return / feedback path | Status |
 |---|---|---|---|---|
-| Ask Qwen | `handleAsk` → `askQwen()` | `POST /api/hud/qwen/ask` with the current frame + question | Awaited; dialog shows the real answer; `toast.success`/`toast.error` | new (this PR) |
-| Auto Actions | `handleAutoActions` → `createPlan()` + `planNextStep()`, then `handleApprove` → `runGated([step])` | `POST /api/ai/describe-screen` → `POST /api/ai/plan-and-act` → `POST /api/workflows/save`; on approval, `/api/execute-task` through the gate (`HudAgentPanel`'s `runGated` prop is `LiveScreenHUD`'s `runGatedSteps`) | Awaited at every stage; dialog shows the agent's real proposed next action (or "proposed no executable action"); approving executes it through the action gate and reports the real outcome | new (this PR) |
-| Test/Simulate | `handleSimulate` → `simulateSequence()` | `POST /api/ai/describe-screen` (dry run only, no dispatch endpoint called) | Awaited; dialog lists each step as PASS/BLOCK against the real analyzed elements, with real confidence where available; disabled when there are no steps | new (this PR) |
-| Create Plan | `handleCreatePlan` → `createPlan()` | `POST /api/ai/describe-screen` → `POST /api/ai/plan-and-act` → `POST /api/workflows/save` | Awaited; dialog shows the real plan goals/subtasks; `toast.success` names the saved workflow; viewable/executable later from the workflows tab | new (this PR) |
+| Ask Qwen | `runTurn` → `runTurnLoop({ entry: "answer" })` | capture forwarded first (`POST /api/replay/capture`), then `POST /api/hud/qwen/ask` with that fresh frame | Awaited; dialog shows the real answer; chain reads "capturing → asking Qwen"; `toast.success`/`toast.error` from the turn result | verified (turn loop) |
+| Auto Actions | `runTurn` → `runTurnLoop({ entry: "think", saveBest })` (full turn) | capture → describe-screen + Qwen think → `POST /api/goal-workflows/propose` → simulate (gate target check, no dispatch) → replay engine via the gate → `POST /api/goal-workflows/assess` on a fresh frame → `POST /api/goal-workflows/flows` | Awaited stage by stage; failed step → retry (≤ 2 re-inspections with OCR) → error fix (Qwen replan, executed only after approval unless "Auto-approve fixes" is ticked); verified completion forwards to save-as-best (unconfirmed version); Stop aborts the in-flight request | verified (turn loop) |
+| Test/Simulate | `runTurn` → `runTurnLoop({ entry: "apply_plan", steps, stopBefore: "start" })` | capture → `POST /api/ai/describe-screen`; each step dry-run with the gate's own target check; no dispatch endpoint called | Awaited; dialog lists each step PASS/BLOCK with real confidence where reported; a blocked next step forwards to error fix (proposal shown, needs approval); disabled when there are no steps | verified (turn loop) |
+| Create Plan | `runTurn` → `runTurnLoop({ entry: "think", stopBefore: "start" })` | capture → think → `POST /api/goal-workflows/propose` → simulate | Awaited; a completed plan forwards to the dry run automatically; dialog shows the planned steps with their verification; "Load plan into HUD sequence" hands the steps to the HUD via `onLoadSteps` | verified (turn loop) |
+| Stop | `AbortController.abort()` | aborts the in-flight capture / analysis / dispatch fetch; a pending approval resolves as declined | Chain ends with the stop reason; no success toast | new (this task) |
+| Auto-approve fixes (checkbox) | local state passed as `autoApprove` | none | Default **off**: every fix/replan shows an inline approval card (Approve / Decline) before it runs | new (this task) |
 | Create Pack | `handleCreatePack` → `createPack()` | `POST /api/hud/packs` then `POST /api/workflows/save` (listing) | Awaited; bundles the current sequence, last created plan, and any data-URL reference screenshots; dialog/toast report the real saved pack id; disabled when there are no steps | new (this PR) |
 | Load Pack | `handleLoadPack` → `loadPack()` | `GET /api/hud/packs/:id` | Awaited; loads the real persisted sequence into the HUD via `onLoadSteps`; dialog/toast report the real step count and pack name; disabled until a pack id is entered | new (this PR) |
 | Presentation | `handlePresentation` → `buildPresentation()` | client-side only, built from the already-fetched `replayRun` and its real `events`/`steps` | Throws (and the panel reports) when no run has completed yet; otherwise the dialog shows each step's real status, screenshot, confidence (only where the step actually has one) and timestamped events — no fabricated values | new (this PR) |
@@ -160,3 +164,71 @@ gated replay schema (`shared/replay.ts`) has no drag action. It is labelled as a
 UNB-8 and UNB-15 cover the frame 1–10 replay de-simulation and the fabricated drift-test
 trigger, as the brief instructs. The new Qwen/agent fast-path controls (items 9–12) are
 real, awaited operations. `Test/Simulate` is verification only and dispatches nothing.
+
+## Operation graph & Qwen turn loop
+
+Every AI-driven HUD operation is a node of one explicit graph, `shared/operation-graph.ts`;
+buttons forward to each other through its `FORWARD` table, never through ad-hoc calls.
+`client/lib/qwen-turn-loop.ts` (`runTurnLoop`) runs the graph with one handler per
+operation, built on the action gate, the replay engine, the shared goal-loop primitives and
+the `/api/goal-workflows` Qwen (qwen3.5:2b) endpoints.
+
+| From | Outcome | Forwards to |
+|---|---|---|
+| think | ok | plan |
+| plan | ok / declined | apply_plan / failed |
+| apply_plan | ok | simulate (a completed plan is always dry-run) |
+| simulate | ok / blocked | start / error_fix |
+| start, continue | verified or plan_done / failed / blocked or off_track | check_completion / retry / error_fix |
+| retry | ok / exhausted | continue / error_fix |
+| error_fix | ok / declined | apply_plan / failed |
+| check_completion | complete / incomplete / off_track / needs_replan | save_best / continue / error_fix / think (new turn, same goal, accumulated history) |
+| save_best | ok | done |
+| answer | ok | done |
+
+- **Fresh capture forwarding:** every operation in `FRESH_FRAME_OPS` (think, answer, simulate,
+  start, continue, retry, error_fix, check_completion) forwards to `capture` first when the
+  turn holds no frame newer than the last plan change or retry (`STALE_FRAME_OPS`).
+- **Bounds:** retries per step are `MAX_STEP_RETRIES` (2) re-inspections with OCR on the new
+  frame, as `docs/verified-replay.md` requires; fixes and turns are bounded by the goal loop's
+  revision limit.
+- **Approval:** an error fix or replan runs only after the user approves it in the inline
+  card, unless "Auto-approve fixes" is ticked. It is off by default.
+- **Cancellation:** Stop aborts the turn's `AbortSignal`. That cancels the in-flight capture,
+  analysis or dispatch, and resolves a pending approval as declined.
+- **Chain readout:** `formatChain` renders the forwarding as it happens, for example
+  "verifying (dry run) → retrying step 3 → proposing fix". The text appears in `HudAgentPanel`
+  and in the AI intentions panel ("Qwen turn: …"), through Dashboard's `turnChain` state.
+  GoalWorkflowPanel goal runs report into the same readout, because `runGoalLoop` is now an
+  adapter over `runTurnLoop`.
+- **Honest status:** each stage reports what really happened. Confidence is shown only when
+  the analysis returned one. A dry run is never treated as run evidence for save-as-best.
+- **Manual controls** (capture, replay pause/resume/cancel, Direct PC, Stop All) stay outside
+  the graph and stay ungated.
+
+## Final audit (post-merge, PRs #1–#18)
+
+Re-audited against merged main.
+
+**Dead code removed**
+- In `live-screen-hud.tsx`: `handleIntegrateOverlayToSequence` (no caller) and the orphaned
+  `draftedOverlayPoints` state.
+- In `client/lib/hud-actions.ts`: `simulateSequence`, `createPlan` and `planNextStep`, which
+  the turn loop replaces, together with their specs.
+- In `HudAgentPanel`: the `frame` and `runGated` props.
+
+**Swallowed errors fixed**
+- The four `/api/sync-real-frame` calls in the HUD used `.catch(() => {})`. They now go
+  through `syncFrameToServer`, which checks the HTTP status and toasts the failure once per
+  failure streak, because AI capture would otherwise read a stale frame.
+
+**Misconnected or missing code restored after merges**
+- Main after PR #18 did not type-check. The HUD imports lost in the merge are restored:
+  `@/lib/hud-actions`, `HudAgentPanel`, `HudSuggestedAction` and `QWEN_GUIDE_POLL_MS`.
+- The Dashboard companion imports are restored.
+- The unclosed `onUpdateGoal` handler in Dashboard is fixed.
+- The duplicate imports in `workflow-debugger-panel.tsx` are removed.
+
+**Pre-existing failures (not caused by this work)**
+- 16 tests in `server/api-boundary.spec.ts` fail on main: the routes return 200/400/503 where
+  the spec expects 401. No server file is changed here.
