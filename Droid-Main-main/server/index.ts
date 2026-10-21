@@ -4,7 +4,6 @@ import { handleStopBridge, handleExecutePyAutoGUI, handleReplayTrail } from "./r
 import { handleAiReviewSteps, handleApplySuggestionsWithQwen } from "./routes/ai-workflow-review";
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -18,6 +17,7 @@ import {
   handleGetScreenCaptureHistory,
   getLatestSyncedRealFrame,
   getRecentDesktopFrames,
+  captureDesktopFrame,
 } from "./routes/screen-capture";
 import { handleAnalyzeScreenshot as handleMasterAnalyzeScreenshot } from "./routes/analyze-screenshot";
 import { centralLogHub } from "./log-hub";
@@ -41,7 +41,8 @@ import { assistantReportsRouter } from "./routes/assistant-reports";
 import { verificationReportsRouter } from "./routes/verification-reports";
 import { schedulingRouter } from "./routes/scheduling";
 import { methodLearningRouter } from "./routes/method-learning";
-import { mobileStreamRouter, getLatestMobileFrameSnapshot, getRecentMobileFrames } from "./routes/mobile-stream";
+import { mobileStreamRouter, getLatestRealMobileFrame, getRecentMobileFrames } from "./routes/mobile-stream";
+import { createCaptureHandler, type CaptureSource } from "./capture-frame";
 import { workflowRuntime } from "./workflow-runtime";
 import { redactSensitive } from "./security";
 
@@ -161,53 +162,64 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let lastSyncedFrame: string | null = null;
 let lastSyncedTimestamp = Date.now();
 
+/** One fallback order for every capture route: HUD share -> desktop capture -> real mobile stream. */
+const screenCaptureSources: CaptureSource[] = [
+  {
+    name: "live_hud_sync",
+    read: () =>
+      lastSyncedFrame
+        ? { imageData: lastSyncedFrame, timestamp: lastSyncedTimestamp }
+        : null,
+  },
+  {
+    name: "desktop_capture",
+    read: async () => {
+      const result = await captureDesktopFrame();
+      if (!result.success || !result.imageData) {
+        if (result.error) throw new Error(result.error);
+        return null;
+      }
+      return {
+        imageData: result.imageData,
+        timestamp: result.timestamp ?? Date.now(),
+        method: result.method,
+        metadata: result.metadata,
+      };
+    },
+  },
+  {
+    name: "mobile_stream_mirror",
+    read: () => getLatestRealMobileFrame(),
+  },
+];
+
 export function createServer() {
   const app = express();
 
-  // Middleware - merge master security + appbrief permissive CORS
-  // Use master security cors if configured, fallback to permissive
-  try {
-    app.use(createCorsMiddleware());
-  } catch {
-    app.use(cors());
-  }
+  // CORS is an explicit allowlist; a failure here fails server creation (closed), never permissive.
+  app.use(createCorsMiddleware());
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-  // === Master assistant routes (protected) ===
-  app.use("/api/assistant", requireApiAccess, assistantRouter);
-  app.use("/api/assistant/sources", requireApiAccess, assistantSourcesRouter);
-  app.use("/api/assistant/analysis", requireApiAccess, analysisRouter);
-  app.use("/api/assistant/plans", requireApiAccess, assistantPlansRouter);
-  app.use(
-    "/api/assistant/execution",
-    requireApiAccess,
-    assistantExecutionRouter,
-  );
-  app.use(
-    "/api/assistant/recordings",
-    requireApiAccess,
-    assistantRecordingsRouter,
-  );
-  app.use(
-    "/api/assistant/workflows",
-    requireApiAccess,
-    assistantWorkflowsRouter,
-  );
-  app.use(
-    "/api/assistant/conditions",
-    requireApiAccess,
-    assistantConditionsRouter,
-  );
-  app.use("/api/assistant/live", requireApiAccess, assistantLiveRouter);
-  app.use("/api/assistant/reports", requireApiAccess, assistantReportsRouter);
-  app.use("/api/assistant/verification", requireApiAccess, verificationReportsRouter);
-  app.use("/api/assistant/scheduling", requireApiAccess, schedulingRouter);
-  app.use("/api/assistant/method-learning", requireApiAccess, methodLearningRouter);
-  app.use("/api/method-learning", requireApiAccess, methodLearningRouter);
+  // Every /api route below is rate limited and behind the API authentication boundary;
+  // requireApiAccess itself lets the public health/demo routes through.
+  app.use("/api", createApiRateLimiter(), requireApiAccess);
 
-  // Global rate limiter for /api (master) - protect but don't block pyautogui in dev
-  // Only apply to /api/assistant/* already covered; for others keep open
+  // === Master assistant routes ===
+  app.use("/api/assistant", assistantRouter);
+  app.use("/api/assistant/sources", assistantSourcesRouter);
+  app.use("/api/assistant/analysis", analysisRouter);
+  app.use("/api/assistant/plans", assistantPlansRouter);
+  app.use("/api/assistant/execution", assistantExecutionRouter);
+  app.use("/api/assistant/recordings", assistantRecordingsRouter);
+  app.use("/api/assistant/workflows", assistantWorkflowsRouter);
+  app.use("/api/assistant/conditions", assistantConditionsRouter);
+  app.use("/api/assistant/live", assistantLiveRouter);
+  app.use("/api/assistant/reports", assistantReportsRouter);
+  app.use("/api/assistant/verification", verificationReportsRouter);
+  app.use("/api/assistant/scheduling", schedulingRouter);
+  app.use("/api/assistant/method-learning", methodLearningRouter);
+  app.use("/api/method-learning", methodLearningRouter);
 
   // Health and ping (master + appbrief)
   app.get("/api/ping", (_req, res) => {
@@ -219,82 +231,11 @@ export function createServer() {
   });
   app.get("/api/demo", handleDemo);
 
-  // === Screen capture & synchronization (both implementations kept) ===
-  // AppBrief HUD sync (in-memory)
-  app.get("/api/capture-screen", async (_req, res) => {
-    try {
-      if (lastSyncedFrame) {
-        return res.json({
-          success: true,
-          imageData: lastSyncedFrame,
-          timestamp: lastSyncedTimestamp,
-          source: "live_hud_sync",
-        });
-      }
-      // Fallback to master desktop capture if no HUD frame
-      const master = await import("./routes/screen-capture");
-      const result = await master.captureDesktopFrame();
-      if (result.success && result.imageData) return res.json(result);
-
-      // Fallback to live mobile stream / mirror frame
-      const mobileSnap = getLatestMobileFrameSnapshot();
-      if (mobileSnap?.imageData) {
-        return res.json({
-          success: true,
-          imageData: mobileSnap.imageData,
-          timestamp: mobileSnap.timestamp,
-          source: "mobile_stream_mirror",
-          deviceName: mobileSnap.deviceName,
-        });
-      }
-
-      res.json({
-        success: true,
-        imageData: null,
-        timestamp: Date.now(),
-        source: "standby",
-        message: "Waiting for HUD screen share frame",
-      });
-    } catch (e) {
-      res.status(500).json({ success: false, error: String(e) });
-    }
-  });
-  app.get("/api/screen/capture", async (req, res) => {
-    // Forward to screen capture
-    try {
-      if (lastSyncedFrame) {
-        return res.json({
-          success: true,
-          imageData: lastSyncedFrame,
-          timestamp: lastSyncedTimestamp,
-          source: "live_hud_sync",
-        });
-      }
-      const mobileSnap = getLatestMobileFrameSnapshot();
-      if (mobileSnap?.imageData) {
-        return res.json({
-          success: true,
-          imageData: mobileSnap.imageData,
-          timestamp: mobileSnap.timestamp,
-          source: "mobile_stream_mirror",
-          deviceName: mobileSnap.deviceName,
-        });
-      }
-      const master = await import("./routes/screen-capture");
-      const result = await master.captureDesktopFrame();
-      if (result.success && result.imageData) return res.json(result);
-      res.json({
-        success: true,
-        imageData: null,
-        timestamp: Date.now(),
-        source: "standby",
-        message: "Waiting for HUD screen share frame",
-      });
-    } catch (e) {
-      res.status(500).json({ success: false, error: String(e) });
-    }
-  });
-  app.get("/api/screen-capture", (req, res) => res.redirect("/api/screen/capture"));
+  // === Screen capture: one implementation behind every capture route ===
+  const handleCapture = createCaptureHandler(screenCaptureSources);
+  app.get("/api/capture-screen", handleCapture);
+  app.get("/api/screen/capture", handleCapture);
+  app.get("/api/screen-capture", handleCapture);
   app.post("/api/sync-real-frame", (req, res) => {
     try {
       const { imageData, metadata } = req.body;
@@ -1145,7 +1086,7 @@ except Exception as e:
   
   // Replay, Phone bridge & Review routes
   try {
-    app.use("/api/replay", requireApiAccess, replayRouter);
+    app.use("/api/replay", replayRouter);
     app.use("/api/phone", createPhoneRouter());
     app.post("/api/pyautogui/stop", handleStopBridge);
     app.post("/api/pyautogui/execute", handleExecutePyAutoGUI);

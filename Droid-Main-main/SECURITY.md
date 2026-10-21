@@ -11,16 +11,25 @@ public web API.
   boundary.
 - Set a long, random `ASSISTANT_API_KEY` for every non-local deployment. Send
   it as `X-API-Key` or `Authorization: Bearer <key>`. Production refuses
-  unauthenticated requests even if the key is accidentally omitted.
+  unauthenticated requests even if the key is accidentally omitted. Outside
+  production, loopback (`127.0.0.1`/`::1`) requests are trusted, and with no
+  key configured the local development server is open.
 - `CORS_ORIGINS` is an explicit comma-separated allowlist. It is empty by
-  default, so cross-origin browser requests are not enabled.
-- API requests are rate limited in memory. This is a safety limit, not a
+  default, so cross-origin browser requests are not enabled. Origins not on
+  the list get no CORS headers, and there is no permissive fallback.
+- API requests are rate limited in memory per client IP (`/api`, applied
+  before authentication). High-frequency frame/polling routes (screen capture,
+  mobile stream, pyautogui bridge, assistant live, health) are exempt from the
+  limit but not from authentication. This is a safety limit, not a
   replacement for a reverse-proxy rate limiter.
 
 ## Protected resources
 
-All `/api` routes except the public health/demo routes are behind the API
-authentication boundary. This includes screen capture, AI execution, logs,
+All `/api` routes except the public health/demo routes (`GET /api/ping`,
+`/api/health`, `/api/demo`) are behind the API authentication boundary,
+enforced once for the whole `/api` prefix in `createServer()`
+(`server/index.ts`). This includes screen capture, AI execution
+(`/api/execute-task`, `/api/ai/*`), the pyautogui bridge, replay, logs,
 assistant state, and ADB operations. ADB host/port and device identifiers are
 validated before being passed to the ADB process.
 
