@@ -223,6 +223,10 @@ export function createServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
+  // Every /api route below is rate limited and behind the API authentication boundary;
+  // requireApiAccess itself lets the public health/demo routes through.
+  app.use("/api", createApiRateLimiter(), requireApiAccess);
+
   // === Master assistant routes (protected) ===
   app.use("/api/assistant", requireApiAccess, assistantRouter);
   app.use("/api/assistant/sources", requireApiAccess, assistantSourcesRouter);

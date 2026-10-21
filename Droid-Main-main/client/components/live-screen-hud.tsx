@@ -137,6 +137,9 @@ import { useBufferedFrame } from "@/hooks/use-buffered-frame";
 import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
 import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
+import { MasterAiPanel, type MasterAiPanelProps } from "./master-ai-panel";
+import { useOverseerSnapshot } from "@/hooks/use-overseer";
+import { latestCheckups } from "@/lib/overseer-client";
 import {
   askQwen,
   completionStep,
@@ -303,6 +306,8 @@ interface LiveScreenHUDProps {
   onToggleCapture?: () => void;
   /** Live AI intention, goals and learning data; the collapsible panel renders only when provided. */
   intentionsPanel?: AiIntentionsPanelProps;
+  /** Master AI orchestrator; the control section renders only when provided. */
+  masterPanel?: MasterAiPanelProps;
   /** Device the Qwen turn loop (Ask Qwen, Auto Actions, Create Plan, Test/Simulate) captures from and dispatches to. */
   turnDevice?: GoalDevice;
   /** Qwen turn phases (thinking indicator / verification badge). */
@@ -352,6 +357,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   onRetryStep,
   onToggleCapture,
   intentionsPanel,
+  masterPanel,
   turnDevice = { targetDevice: "desktop" },
   onTurnEvent,
   onTurnChain,
