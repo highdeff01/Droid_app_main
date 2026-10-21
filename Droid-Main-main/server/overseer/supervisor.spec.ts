@@ -104,7 +104,7 @@ describe("OverseerSupervisor interventions", () => {
     expect(pause).toHaveBeenCalled();
   });
 
-  it("never revives a finished operation", () => {
+  it("never revives a finished operation", async () => {
     const { supervisor } = setup();
     supervisor.register({ id: "op", kind: "replay", source: "t", goal: "save" });
     const queue = supervisor.propose("op", "queue", "busy");
@@ -112,6 +112,7 @@ describe("OverseerSupervisor interventions", () => {
     expect(() => supervisor.pauseOperation("op", "x")).toThrow(/already completed/);
     expect(() => supervisor.resumeOperation("op")).toThrow(/already completed/);
     expect(() => supervisor.propose("op", "replan", "x")).toThrow(/already completed/);
+    await expect(supervisor.runCheckup("op")).rejects.toThrow(/already completed/);
     expect(supervisor.decide(queue.id, true).status).toBe("approved");
     expect(supervisor.get("op")!.status).toBe("completed");
   });

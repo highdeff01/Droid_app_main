@@ -191,7 +191,7 @@ export class OverseerSupervisor {
 
   /** Completion checkup against the declared goal; "uncertain" when no frame or no model answer. */
   async runCheckup(operationId: string): Promise<CheckupReport> {
-    const op = this.require(operationId);
+    const op = this.requireActive(operationId);
     const elapsedSeconds = Math.round((this.now() - op.startedAt) / 1000);
     const image = await this.freshCapture(op);
     const answer = image ? await this.deps.analyzer.checkup(image, op.goal, elapsedSeconds) : null;
