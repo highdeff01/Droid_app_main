@@ -956,6 +956,8 @@ export default function Dashboard({
     sequenceRunningRef.current = false; setIsSequenceRunning(false); setIsAutonomousRunning(false);
   };
   // Goal-loop phases drive the HUD truthfully: thinking/analyzing/verifying/acting/awaiting approval.
+  const [turnChain, setTurnChain] = useState<string | null>(null);
+  const turnDevice = { targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined };
   const handleGoalLoopEvent = (event: GoalLoopEvent) => {
     setVerificationBadge({ status: GOAL_PHASE_BADGE[event.phase], message: event.message });
     if (event.phase === "completed" || event.phase === "failed") { setAiThinking(null); return; }
@@ -2181,7 +2183,11 @@ export default function Dashboard({
                     onDeleteGoal: deleteGoal,
                     onExecuteGoal: (id) => { void executeGoal(id); },
                     onAdjustDelay: adjustMovementDelay,
+                    turnChain,
                   }}
+                  turnDevice={turnDevice}
+                  onTurnEvent={handleGoalLoopEvent}
+                  onTurnChain={setTurnChain}
                   onReplaySteps={steps => { void handleRunSequence(steps); }}
                   replayRun={replayRun}
                   onReplayControl={command => { void handleReplayControl(command); }}
@@ -2572,8 +2578,9 @@ export default function Dashboard({
           </TabsContent>
           <TabsContent value="goal-agent" className="space-y-6">
             <GoalWorkflowPanel
-              device={{ targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined }}
+              device={turnDevice}
               onLoopEvent={handleGoalLoopEvent}
+              onChain={setTurnChain}
               onReplay={(steps) => void handleRunSequence(steps)}
             />
             <AutonomousGoalAgentStudio currentLiveScreenshot={screenshotUrl} />

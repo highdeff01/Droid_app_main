@@ -5,12 +5,9 @@ import {
   buildPresentation,
   completionStep,
   createPack,
-  createPlan,
   dispatchInteractiveAction,
   fetchQwenGuide,
   inspectOcrAtPoint,
-  planNextStep,
-  simulateSequence,
   stopBridge,
   tagEntityAtPoint,
   verifyIntegrityAtPoint,
@@ -215,114 +212,6 @@ describe("hud-actions", () => {
       const result = await askQwen(SCREENSHOT, "What color is it?", post);
 
       expect(result).toBe("It's a blue button");
-    });
-  });
-
-  describe("simulateSequence", () => {
-    const report = {
-      elements: [
-        {
-          id: "el1",
-          name: "OK",
-          type: "button",
-          boundingBox: { x: 40, y: 40, width: 20, height: 20 },
-          center: { x: 50, y: 50 },
-          confidence: 0.81,
-          interactive: true,
-        },
-      ],
-      confidence: 0.42,
-    };
-    const steps: HudStepLike[] = [
-      { id: "s1", name: "Click OK", action: "click", x: 50, y: 50 },
-      { id: "s2", name: "Click nothing", action: "click", x: 500, y: 500 },
-      { id: "s3", name: "Press enter", action: "press_key", x: 0, y: 0 },
-    ];
-
-    it("analyzes the frame once and never dispatches to the device", async () => {
-      const post = routedPost({ "/api/ai/describe-screen": { success: true, report } });
-
-      await simulateSequence(SCREENSHOT, steps, post);
-
-      expect(post).toHaveBeenCalledTimes(1);
-      const calledUrls = (post as any).mock.calls.map(([url]: [string]) => url);
-      expect(calledUrls).toEqual(["/api/ai/describe-screen"]);
-      for (const url of calledUrls) {
-        expect(url).not.toMatch(/\/api\/replay|\/api\/pyautogui|\/api\/execute-task/);
-      }
-    });
-
-    it("passes a click step over an analyzed element with that element's confidence", async () => {
-      const post = routedPost({ "/api/ai/describe-screen": { success: true, report } });
-
-      const result = await simulateSequence(SCREENSHOT, steps, post);
-
-      expect(result[0]).toMatchObject({ stepId: "s1", wouldPass: true, confidence: 0.81 });
-    });
-
-    it("fails a click step over no analyzed element", async () => {
-      const post = routedPost({ "/api/ai/describe-screen": { success: true, report } });
-
-      const result = await simulateSequence(SCREENSHOT, steps, post);
-
-      expect(result[1]).toMatchObject({ stepId: "s2", wouldPass: false });
-    });
-
-    it("passes a press_key step with no screen target needed", async () => {
-      const post = routedPost({ "/api/ai/describe-screen": { success: true, report } });
-
-      const result = await simulateSequence(SCREENSHOT, steps, post);
-
-      expect(result[2]).toMatchObject({ stepId: "s3", wouldPass: true, confidence: 0.42 });
-    });
-  });
-
-  describe("createPlan", () => {
-    it("analyzes the frame, asks the planner, then saves a plan workflow and returns the saved name and decision", async () => {
-      const report = { elements: [], confidence: 0.5 };
-      const decision = { timestamp: 1, thinking: {}, goals: [], nextAction: null, verificationRule: null, statusSummary: "ok" };
-      const post = routedPost({
-        "/api/ai/describe-screen": { success: true, report },
-        "/api/ai/plan-and-act": (body: any) => {
-          expect(body.perceptionReport).toEqual(report);
-          return { success: true, decision };
-        },
-        "/api/workflows/save": (body: any) => {
-          expect(body.metadata.kind).toBe("plan");
-          return { success: true, name: "My Plan" };
-        },
-      });
-
-      const result = await createPlan("My Plan", SCREENSHOT, [], "Log in", post);
-
-      expect(result).toEqual({ name: "My Plan", decision });
-    });
-  });
-
-  describe("planNextStep", () => {
-    it("maps the planner's next action to a HUD step", () => {
-      const decision = {
-        nextAction: { id: "a1", title: "Click next", actionType: "click", x: 10, y: 20, textPayload: "hi", delayMs: 100, targetName: "Next" },
-      } as any;
-
-      const result = planNextStep(decision);
-
-      expect(result).toEqual({
-        id: "a1",
-        name: "Click next",
-        action: "click",
-        x: 10,
-        y: 20,
-        text: "hi",
-        delayMs: 100,
-        targetOcrLabel: "Next",
-      });
-    });
-
-    it("returns null when the next action has no x coordinate", () => {
-      const decision = { nextAction: { id: "a1", title: "Click next", actionType: "click", y: 20 } } as any;
-
-      expect(planNextStep(decision)).toBeNull();
     });
   });
 

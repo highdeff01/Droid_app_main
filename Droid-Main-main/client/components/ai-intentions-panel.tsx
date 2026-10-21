@@ -26,6 +26,8 @@ export interface AiIntentionsPanelProps {
   profile: UserHabitProfile | null;
   /** Why the learning profile could not be loaded; shown instead of metrics. */
   profileError?: string | null;
+  /** The live Qwen turn chain (e.g. "verifying (dry run) → retrying step 3 → proposing fix"); null when no turn ran. */
+  turnChain?: string | null;
   defaultOpen?: boolean;
   onCreateGoal?: (title: string) => void;
   onPauseGoal?: (id: string) => void;
@@ -47,11 +49,16 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function IntentionSection({ gateReport, replayRun, sequence, detectedElements }: Pick<AiIntentionsPanelProps, "gateReport" | "replayRun" | "sequence" | "detectedElements">) {
+function IntentionSection({ gateReport, replayRun, sequence, detectedElements, turnChain }: Pick<AiIntentionsPanelProps, "gateReport" | "replayRun" | "sequence" | "detectedElements" | "turnChain">) {
   const intention = deriveIntention(gateReport, replayRun, sequence);
   return (
     <section className="space-y-1">
       <h5 className="text-[9px] uppercase text-cyan-400 font-bold">Current intention</h5>
+      {turnChain && (
+        <p className="text-amber-300" data-turn-chain>
+          Qwen turn: {turnChain}
+        </p>
+      )}
       {intention ? (
         <div data-intention-source={intention.source}>
           <p className="text-slate-100">{intention.what}</p>
