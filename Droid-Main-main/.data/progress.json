@@ -103,5 +103,26 @@
     "id": "progress_1792576704412_s9tunx30",
     "sessionId": "session_1792576704407_pn5s1b9i",
     "createdAt": "2026-10-21T09:58:24.412Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792576997660_ynxzyu6v",
+    "sessionId": "session_1792576997655_453fz9um",
+    "createdAt": "2026-10-21T10:03:17.660Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792577096407_6lb0oky6",
+    "sessionId": "session_1792577096399_15jg9shl",
+    "createdAt": "2026-10-21T10:04:56.407Z"
+  },
+  {
+    "kind": "progress",
+    "message": "Stored on disk",
+    "id": "progress_1792577152103_7i5j9mbc",
+    "sessionId": "session_1792577152099_jsm3w1ek",
+    "createdAt": "2026-10-21T10:05:52.103Z"
   }
 ]

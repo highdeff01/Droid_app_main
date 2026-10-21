@@ -320,6 +320,16 @@ describe("verifier regressions", () => {
     expect(next.plan.map((s) => s.id)).toEqual(["a", "d"]);
     expect(next.cursor).toBe(1);
   });
+
+  it("keeps the dead route cut after the rerouted step moves on to a new screen", () => {
+    const a = makeExecuted({ step: makeStep({ id: "a" }), signatureAfter: "B" });
+    const b = makeExecuted({ step: makeStep({ id: "b" }), signatureAfter: "C" });
+    const c = makeExecuted({ step: makeStep({ id: "c" }), signatureAfter: "B" });
+    const d = makeExecuted({ step: makeStep({ id: "d" }), signatureAfter: "D" });
+    const state = { ...stateWith([a, b, c, d], ["A", "B", "C", "B", "D"]), cursor: 2 };
+
+    expect(verifiedSteps(state).map((s) => s.id)).toEqual(["a", "d"]);
+  });
 });
 
 describe("createGoalState", () => {

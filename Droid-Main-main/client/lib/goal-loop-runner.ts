@@ -296,9 +296,10 @@ async function assessGoal(ctx: LoopContext, state: GoalState, seen: Observed): P
 }
 
 function buildEvidence(state: GoalState, assessment: GoalAssessment, finalFrame: string): RunEvidence {
+  const kept = new Set(verifiedSteps(state));
   return {
     steps: state.executed
-      .filter((e) => e.verification.passed)
+      .filter((e) => e.verification.passed && kept.has(e.step))
       .map((e) => ({
         stepId: e.step.id,
         passed: true,

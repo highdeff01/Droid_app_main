@@ -404,18 +404,20 @@ export interface PlanProposal {
 }
 
 /**
- * Verified steps that still lead forward: when the current screen was already
- * visited earlier, the verified steps taken since that first visit were a dead
- * route (a loop back) and are dropped, so the rerouted flow skips them.
+ * Verified steps that still lead forward. Walking the verified steps from the
+ * start screen, a step that returns to a screen already on the path closes a
+ * loop: the steps of that dead route are cut, wherever the run went next.
+ * A verified step that leaves the screen unchanged (a wait, a typed value) stays.
  */
 function stepsOffDeadRoute(state: GoalState): GoalStep[] {
-  const current = state.visited[state.visited.length - 1];
-  const firstVisit = state.visited.indexOf(current);
-  const loopedBack = state.visited.slice(firstVisit).some((s) => s !== current);
-  return state.executed
-    .slice(0, loopedBack ? firstVisit : state.executed.length)
-    .filter((e) => e.verification.passed)
-    .map((e) => e.step);
+  const path: { signature: string; step?: GoalStep }[] = [{ signature: state.visited[0] }];
+  for (const e of state.executed) {
+    if (!e.verification.passed) continue;
+    const seenAt = path.findIndex((p) => p.signature === e.signatureAfter);
+    if (seenAt >= 0 && seenAt < path.length - 1) path.length = seenAt + 1;
+    else path.push({ signature: e.signatureAfter, step: e.step });
+  }
+  return path.slice(1).map((p) => p.step!);
 }
 
 /**
