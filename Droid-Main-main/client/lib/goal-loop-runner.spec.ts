@@ -238,7 +238,8 @@ describe("runGoalLoop", () => {
     expect((proposeCalls[1].body as { reason?: string }).reason).toBeTruthy();
     expect(approve).toHaveBeenCalledWith(reproposal);
     const replayCalls = harness.calls.filter((c) => c.kind === "post" && c.url === "/api/replay");
-    expect(replayCalls).toHaveLength(2);
+    // The dispatched step failed its check: it is never re-dispatched (docs/verified-replay.md).
+    expect(replayCalls).toHaveLength(1);
   });
 
   it("keeps the original goal and records one revision when an approved re-plan completes", async () => {

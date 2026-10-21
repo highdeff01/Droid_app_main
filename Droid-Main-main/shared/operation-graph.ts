@@ -3,9 +3,10 @@
  * forwarding between buttons is this table, not ad-hoc calls in each handler.
  *
  *   think → plan → apply_plan → simulate → start → check_completion → save_best → done
- *   start/continue  failed     → retry      (re-inspect: fresh capture + OCR)
+ *   start/continue  failed     → retry      (gate blocked before dispatch: fresh capture + OCR, re-gate)
  *   retry           exhausted  → error_fix  (Qwen proposes a fix; runs after approval)
- *   start/continue  blocked    → error_fix  (the gate already re-inspected; replan)
+ *   simulate        blocked    → error_fix  (dry run found no target on the analyzed frame)
+ *   start/continue  off_track  → error_fix  (a dispatched step failed: never re-dispatched)
  *   check_completion incomplete → continue   (next planned step)
  *   check_completion needs_replan → think   (new turn, same goal, accumulated context)
  *

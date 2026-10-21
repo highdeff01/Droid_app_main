@@ -198,10 +198,11 @@ describe("runTurnLoop", () => {
     expect(harness.gate).not.toHaveBeenCalled();
   });
 
-  it("failedStepForwardsToRetryThenErrorFix", async () => {
+  it("dispatchedFailureForwardsToErrorFixWithoutRedispatch", async () => {
     const step = makeStep({
       id: "s1",
-      action: "click",
+      action: "type_text",
+      text: "PAY 100",
       x: 10,
       y: 10,
       targetLabel: "OK",
@@ -220,13 +221,28 @@ describe("runTurnLoop", () => {
     const result = await runTurnLoop(GOAL, options, harness.deps);
 
     const ops = chain().map((l) => l.op);
-    expect(ops).toContain("retry");
-    expect(ops.lastIndexOf("error_fix")).toBeGreaterThan(ops.lastIndexOf("retry"));
+    expect(ops).not.toContain("retry");
+    expect(ops.lastIndexOf("error_fix")).toBeGreaterThan(ops.lastIndexOf("start"));
+    expect(harness.calls.filter((c) => c.kind === "post" && c.url === "/api/replay")).toHaveLength(1);
     const proposeCalls = harness.calls.filter((c) => c.kind === "post" && c.url === "/api/goal-workflows/propose");
     expect((proposeCalls[proposeCalls.length - 1].body as { reason?: string }).reason).toBeTruthy();
     expect(approve).toHaveBeenCalled();
     expect(result.status).toBe("failed");
     if (result.status === "failed") expect(result.reason).toContain("declined");
+  });
+
+  it("simulateUsesTheGateTargetCheck", async () => {
+    const step = makeStep({ id: "s1", name: "Submit", action: "click", x: 10, y: 10, targetLabel: "Submit" });
+    const harness = createHarness({
+      reports: [makeReport({ elements: [IN_PLACE_OK] })],
+      proposals: [{ goal: GOAL, reason: "", steps: [step] }],
+    });
+    const { options } = makeOptions({ stopBefore: "start" });
+
+    const result = await runTurnLoop(GOAL, options, harness.deps);
+
+    expect(result.status).toBe("planned");
+    if (result.status === "planned") expect(result.simulation[0].verdict).toBe("pass");
   });
 
   it("gateBlockForwardsToErrorFix", async () => {
@@ -246,7 +262,9 @@ describe("runTurnLoop", () => {
 
     expect(harness.calls.some((c) => c.kind === "post" && c.url === "/api/replay")).toBe(false);
     const ops = chain().map((l) => l.op);
-    expect(ops.lastIndexOf("error_fix")).toBeGreaterThan(ops.lastIndexOf("start"));
+    expect(ops.filter((op) => op === "retry")).toHaveLength(3);
+    expect(harness.gate).toHaveBeenCalledTimes(3);
+    expect(ops.lastIndexOf("error_fix")).toBeGreaterThan(ops.lastIndexOf("retry"));
     expect(approve).toHaveBeenCalledTimes(1);
     expect(result.status).toBe("failed");
   });
@@ -261,7 +279,12 @@ describe("runTurnLoop", () => {
         { goal: GOAL, reason: "", steps: [step] },
         { goal: GOAL, reason: "fix", steps: [fixStep] },
       ],
-      gateResults: [{ status: "blocked", reason: "Element not found" }, { status: "verified", frame: "x", report: makeReport(), confidence: 0.9 }],
+      gateResults: [
+        { status: "blocked", reason: "Element not found" },
+        { status: "blocked", reason: "Element not found" },
+        { status: "blocked", reason: "Element not found" },
+        { status: "verified", frame: "x", report: makeReport(), confidence: 0.9 },
+      ],
     });
     const approve = vi.fn().mockResolvedValue(true);
     const { options, events } = makeOptions({ approve, autoApprove: true });

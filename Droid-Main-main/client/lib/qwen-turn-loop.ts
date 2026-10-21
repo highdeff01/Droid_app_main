@@ -9,8 +9,10 @@
  * pending approval.
  */
 import type { SequenceStep, VerificationBadgeState } from "@/components/live-screen-hud";
+import type { ScreenPerceptionReport } from "@/components/dual-ai-copilot-panel";
 import {
   MAX_REINSPECTIONS,
+  findTargetElement,
   gateTargetForAction,
   postGateJson,
   runActionGate,
@@ -138,6 +140,8 @@ export type TurnLoopResult =
 interface Observed {
   observation: ScreenObservation;
   frame: string;
+  /** The perception report the action gate would check targets against. */
+  report: ScreenPerceptionReport;
 }
 
 interface TurnContext {
@@ -221,7 +225,7 @@ async function capture(ctx: TurnContext): Promise<OperationOutcome> {
   const analysis = await post(ctx, "/api/ai/describe-screen", { imageData: frame });
   if (!analysis.report) throw new Error("Screen analysis returned no report");
   const ocrText = await readText(ctx, frame);
-  ctx.seen = { observation: observeScreen(analysis.report, ocrText, shot.frame?.hash), frame };
+  ctx.seen = { observation: observeScreen(analysis.report, ocrText, shot.frame?.hash), frame, report: analysis.report };
   ctx.fresh = true;
   return "ok";
 }
@@ -340,37 +344,39 @@ function applyPlan(ctx: TurnContext): OperationOutcome {
 // Verify (dry run)
 // ---------------------------------------------------------------------------
 
-/** Re-grounds the next step on the held frame; null with `problem` set when its target is missing. */
-function groundNext(ctx: TurnContext): { step: GoalStep; relocation: ExecutedStep["relocation"] } | null {
-  const state = requireState(ctx);
-  const planned = nextStep(state)!;
-  const relocation = relocateTarget(planned, seen(ctx).observation);
-  if (relocation.status === "missing") {
-    ctx.problem = relocation.reason;
-    return null;
-  }
-  const step = applyRelocation(planned, relocation);
-  if (relocation.status === "moved") {
-    emit(ctx, { phase: "thinking", message: `"${planned.name}" target moved ${relocation.distancePx}px; re-grounded on the fresh screen`, x: step.x, y: step.y });
-  }
-  return { step, relocation: relocation.status };
+/** A target found moved by its label is re-grounded; otherwise the planned point stands and the gate decides. */
+function groundStep(planned: GoalStep, observation: ScreenObservation): { step: GoalStep; relocation: ExecutedStep["relocation"] } {
+  const relocation = relocateTarget(planned, observation);
+  return { step: relocation.status === "moved" ? applyRelocation(planned, relocation) : planned, relocation: relocation.status };
 }
 
-function simulateVerdict(step: GoalStep, observation: ScreenObservation, isNext: boolean): SimulatedGoalStep {
-  const base = { stepId: step.id, name: step.name };
+/** Re-grounds the next step on the held frame. */
+function groundNext(ctx: TurnContext): { step: GoalStep; relocation: ExecutedStep["relocation"] } {
+  const planned = nextStep(requireState(ctx))!;
+  const grounded = groundStep(planned, seen(ctx).observation);
+  if (grounded.relocation === "moved") {
+    emit(ctx, { phase: "thinking", message: `"${planned.name}" target moved; re-grounded on the fresh screen`, x: grounded.step.x, y: grounded.step.y });
+  }
+  return grounded;
+}
+
+/** The action gate's own target check (gateTargetForAction + findTargetElement) on the analyzed frame. */
+function simulateVerdict(planned: GoalStep, observed: Observed, isNext: boolean): SimulatedGoalStep {
+  const base = { stepId: planned.id, name: planned.name };
   if (!isNext) return { ...base, verdict: "unchecked", reason: "Acts on a later screen; verified right before it runs" };
-  const relocation = relocateTarget(step, observation);
-  if (relocation.status === "missing") return { ...base, verdict: "block", reason: relocation.reason };
-  if (relocation.status === "moved") return { ...base, verdict: "moved", reason: `Target moved ${relocation.distancePx}px; will be re-grounded` };
-  if (relocation.status === "in_place") return { ...base, verdict: "pass", reason: `Target "${relocation.element.name}" found` };
-  return { ...base, verdict: "pass", reason: "No screen target needed" };
+  const step = groundStep(planned, observed.observation).step;
+  const target = gateTargetForAction(step.action, step.x, step.y, step.targetLabel ?? step.name);
+  if (!target.needsTarget) return { ...base, verdict: "pass", reason: "No screen target needed" };
+  const element = findTargetElement(observed.report, target.x, target.y);
+  if (!element) return { ...base, verdict: "block", reason: `No element at (${target.x}, ${target.y}) in the analyzed screen` };
+  return { ...base, verdict: "pass", reason: `Target "${element.name}" found` };
 }
 
 /** Checks the remaining plan against the current analyzed frame. Dispatches nothing. */
 function simulate(ctx: TurnContext): OperationOutcome {
   const state = requireState(ctx);
-  const { observation } = seen(ctx);
-  ctx.simulation = state.plan.slice(state.cursor).map((step, i) => simulateVerdict(step, observation, i === 0));
+  const observed = seen(ctx);
+  ctx.simulation = state.plan.slice(state.cursor).map((step, i) => simulateVerdict(step, observed, i === 0));
   ctx.options.onSimulation?.(ctx.simulation);
   const blocked = ctx.simulation.find((s) => s.verdict === "block");
   emit(ctx, { phase: "verifying", message: blocked ? `Dry run blocked "${blocked.name}": ${blocked.reason}` : "Dry run passed for the next step" });
@@ -453,8 +459,9 @@ async function verifyExecuted(ctx: TurnContext, step: GoalStep, before: Observed
     return "off_track";
   }
   if (!executed.verification.passed) {
-    ctx.problem = executed.verification.checks.find((c) => !c.passed)?.detail ?? `"${step.name}" did not verify`;
-    return "failed";
+    // Already dispatched: its effect may have occurred, so it is never repeated; forward to the fix path.
+    ctx.problem = `${executed.verification.checks.find((c) => !c.passed)?.detail ?? `"${step.name}" did not verify`} (dispatched; not repeated)`;
+    return "off_track";
   }
   ctx.retries = 0;
   return nextStep(state) ? "verified" : "plan_done";
@@ -465,21 +472,21 @@ async function executeNext(ctx: TurnContext): Promise<OperationOutcome> {
   const state = requireState(ctx);
   if (!nextStep(state)) return "plan_done";
   const before = seen(ctx);
-  const grounded = groundNext(ctx);
-  if (!grounded) return "blocked";
-  const { step, relocation } = grounded;
+  const { step, relocation } = groundNext(ctx);
   try {
     const blocked = await dispatchStep(ctx, step);
     if (blocked) {
+      // Nothing was dispatched: re-inspect on a fresh capture (bounded retry) before proposing a fix.
       ctx.problem = blocked;
-      ctx.fresh = false; // the fix is proposed from new evidence, not the frame the gate rejected
-      return "blocked";
+      ctx.fresh = false;
+      return "failed";
     }
   } catch (error) {
     ensureActive(ctx);
-    ctx.problem = `"${step.name}" replay failed: ${errorMessage(error)}`;
+    // The step may already have taken effect (docs/verified-replay.md): never re-dispatch it; propose a fix.
+    ctx.problem = `"${step.name}" replay failed after dispatch (not repeated): ${errorMessage(error)}`;
     ctx.fresh = false;
-    return "failed";
+    return "off_track";
   }
   return verifyExecuted(ctx, step, before, relocation);
 }
