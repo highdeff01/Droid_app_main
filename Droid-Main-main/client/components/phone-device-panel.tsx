@@ -6,6 +6,27 @@ import type { PhoneAction, PhoneFrame, PhoneRecording } from "@shared/phone";
 
 const button = "rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm disabled:opacity-40";
 const input = "rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white min-w-0";
+/** A mirror frame older than this is shown as stale rather than live. */
+const STALE_FRAME_MS = 5000;
+type AiState = "idle" | "thinking" | "acting" | "waiting_approval";
+interface NativeStatus {
+  online: boolean; controlEnabled: boolean; name: string;
+  paired?: boolean; pairingExpires?: number; frameAgeMs?: number; aiState?: AiState;
+}
+interface WorkflowSummary { id: string; name: string; steps: number; executionCount: number }
+const aiLabels: Record<AiState, string> = { idle: "AI idle", thinking: "AI thinking", acting: "AI acting", waiting_approval: "AI waiting for your approval" };
+
+/** Pairing, connection and AI state of the native companion, from the server's real session state. */
+function NativeStatusLine({ status, now }: { status: NativeStatus; now: number }) {
+  if (status.paired === false) {
+    const left = Math.ceil(((status.pairingExpires ?? 0) - now) / 1000);
+    return <p className="text-sm">{left > 0
+      ? `Waiting for the phone to scan the QR · invitation expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`
+      : "QR invitation expired before the phone paired. Disconnect and create a new QR."}</p>;
+  }
+  return <p className="text-sm">{status.name}: {status.online ? "online" : "offline — waiting for the phone to reconnect"} · Control {status.controlEnabled ? "enabled" : "requires accessibility"} · {aiLabels[status.aiState || "idle"]}. Native recordings are saved on the phone and can be shared from its Saved recordings screen.</p>;
+}
+
 export default function PhoneDevicePanel({ pairedOnly = false, replaySteps = [] }: { pairedOnly?: boolean; replaySteps?: ReplayStep[] }) {
   const [replayRun, setReplayRun] = useState<ReplayRun | null>(null);
   const [token, setToken] = useState(() => {
@@ -15,7 +36,11 @@ export default function PhoneDevicePanel({ pairedOnly = false, replaySteps = [] 
     return fragment.get("phone") || sessionStorage.getItem("phone-session") || "";
   });
   const [pairing] = useState(() => new URLSearchParams(location.hash.slice(1)).get("pair") || "");
-  const [nativeStatus, setNativeStatus] = useState<{ online: boolean; controlEnabled: boolean; name: string } | null>(null);
+  const [nativeStatus, setNativeStatus] = useState<NativeStatus | null>(null);
+  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
+  const [iterations, setIterations] = useState(1);
+  const [repeat, setRepeat] = useState(1);
+  const [now, setNow] = useState(() => Date.now());
   const [key, setKey] = useState("");
   const [devices, setDevices] = useState<{ id: string; state: string; detail: string }[]>([]);
   const [device, setDevice] = useState("");
@@ -112,6 +137,22 @@ export default function PhoneDevicePanel({ pairedOnly = false, replaySteps = [] 
     void poll();
     return () => { disposed = true; clearTimeout(timer); };
   }, [token, mirror, plan]);
+  useEffect(() => {
+    if (!token) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [token]);
+  useEffect(() => {
+    if (!token) return;
+    api("/workflows").then(data => setWorkflows(data.workflows), e => setError(e instanceof Error ? e.message : String(e)));
+  }, [token]);
+  async function runWorkflow(id: string) {
+    const data = await api(`/workflows/${id}/run`, { iterations, repeat: repeat > 1 ? repeat : undefined });
+    setReplayRun(data.run);
+    setNotice(`Workflow started on the phone: ${data.run.total} verified actions.`);
+  }
+  const frameAge = frame?.capturedAt ? now - frame.capturedAt : undefined;
+  const stale = frameAge !== undefined && frameAge > STALE_FRAME_MS;
 
   async function action(action: PhoneAction, frameHash = frame?.hash) {
     if (!frameHash) throw new Error("Refresh the phone mirror first");
@@ -189,9 +230,24 @@ export default function PhoneDevicePanel({ pairedOnly = false, replaySteps = [] 
         })} />
       </div>}
 
-      {nativeStatus && <p className="text-sm">{nativeStatus.name}: {nativeStatus.online ? "online" : "waiting for phone"} · Control {nativeStatus.controlEnabled ? "enabled" : "requires accessibility"}. Native recordings are saved on the phone and can be shared from its Saved recordings screen.</p>}
+      {nativeStatus && <NativeStatusLine status={nativeStatus} now={now} />}
+      <div className="space-y-2"><h3 className="font-semibold">Saved workflows</h3>
+        <p className="text-xs text-slate-400">Workflows recorded on the phone run through the verified replay engine. Repeat applies to every step; runs repeat the whole workflow.</p>
+        <div className="flex gap-2 items-center flex-wrap">
+          <label className="text-sm">Runs <input className={`${input} w-20`} type="number" min={1} max={25} value={iterations} onChange={e => setIterations(Math.max(1, Math.min(25, Number(e.target.value) || 1)))} /></label>
+          <label className="text-sm">Repeat each step <input className={`${input} w-20`} type="number" min={1} max={25} value={repeat} onChange={e => setRepeat(Math.max(1, Math.min(25, Number(e.target.value) || 1)))} /></label>
+          <button className={button} disabled={busy} onClick={() => void perform(async () => { setWorkflows((await api("/workflows")).workflows); })}>Reload workflows</button>
+        </div>
+        {!workflows.length && <p className="text-sm text-slate-400">No saved workflows yet. Use "Record workflow" in the Android companion.</p>}
+        {workflows.map(w => <div key={w.id} className="flex gap-2 items-center text-sm"><span className="flex-1">{w.name} · {w.steps} step(s) · run {w.executionCount}×</span>
+          <button className={button} disabled={busy || replayRun?.status === "running" || replayRun?.status === "paused"} onClick={() => void perform(() => runWorkflow(w.id))}>Run on phone</button></div>)}
+        {pairedOnly && <ReplayMonitor run={replayRun} base="/api/phone/replay" token={token} onControl={command => void perform(async () => {
+          const data = await api(`/replay/${replayRun!.id}/${command}`, {}); setReplayRun(data.run);
+        })} />}
+      </div>
       <div className="flex flex-wrap gap-2 items-center"><span className="text-sm">Phone: {device || "Connecting…"}</span><label className="text-sm"><input type="checkbox" checked={mirror} onChange={e => setMirror(e.target.checked)} /> Live mirror</label><label className="text-sm"><input type="checkbox" checked={touchEnabled} onChange={e => setTouchEnabled(e.target.checked)} /> Tap / swipe to control</label><button className={button} disabled={busy} onClick={() => void perform(refresh)}>Refresh screen</button><button className={button} disabled={busy} onClick={() => void perform(async () => { await api("/session", undefined, false, "DELETE"); setToken(""); setLink(""); setFrame(null); setPlan(null); setNativeStatus(null); sessionStorage.removeItem(pairedOnly ? "phone-session" : "phone-admin-session"); })}>Disconnect & revoke QR</button></div>
-      {frame && <img alt="Live Android device screen" src={frame.image} className="max-h-[65vh] max-w-full w-auto mx-auto border border-slate-700" style={{ touchAction: touchEnabled ? "none" : "auto" }} draggable={false}
+      {frame && stale && <p role="status" className="text-amber-300 text-sm">Stale mirror: this screenshot is {Math.round(frameAge! / 1000)} s old and may not match the phone. Controls act only on a fresh screen.</p>}
+      {frame && <img alt="Live Android device screen" src={frame.image} className={`max-h-[65vh] max-w-full w-auto mx-auto border ${stale ? "border-amber-500 opacity-50 grayscale" : "border-slate-700"}`} style={{ touchAction: touchEnabled ? "none" : "auto" }} draggable={false}
         onPointerDown={e => { if (!touchEnabled || busy) return; e.currentTarget.setPointerCapture(e.pointerId); gesture.current = { ...point(e), hash: frame.hash }; }}
         onPointerCancel={() => { gesture.current = null; }}
         onPointerUp={e => { const start = gesture.current; gesture.current = null; if (!start || !touchEnabled || busy) return; const end = point(e); void perform(() => action(Math.hypot(start.x - end.x, start.y - end.y) < .025 ? { type: "tap", x: end.x, y: end.y } : { type: "swipe", x: start.x, y: start.y, endX: end.x, endY: end.y, duration: 350 }, start.hash)); }} />}

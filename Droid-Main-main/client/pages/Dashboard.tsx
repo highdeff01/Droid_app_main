@@ -169,6 +169,7 @@ export default function Dashboard({
       localStorage.getItem(CAPTURE_POLLING_KEY) !== "false",
   );
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [captureStandby, setCaptureStandby] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isCalibrationModalOpen, setIsCalibrationModalOpen] = useState(false);
@@ -987,7 +988,7 @@ export default function Dashboard({
     toast.error(`Live screen capture failed: ${message}`);
   };
   const captureScreen = async (signal?: AbortSignal) => {
-    const data = await safeFetchJson<{ imageData?: string; method?: string }>(
+    const data = await safeFetchJson<{ imageData?: string | null; method?: string; status?: "live" | "standby" }>(
       "/api/capture-screen",
       { signal, cache: "no-store" },
     );
@@ -995,7 +996,14 @@ export default function Dashboard({
     if (data.success && data.imageData) {
       captureFailureNotifiedRef.current = false;
       setCaptureError(null);
+      setCaptureStandby(null);
       applyCapturedFrame(data.imageData, data.method);
+      return;
+    }
+    if (data.status === "standby") {
+      // No live source yet (or only stale frames): not a failure, keep the last frame and say so.
+      setCaptureError(null);
+      setCaptureStandby(data.message || "Waiting for a live frame");
       return;
     }
     reportCaptureFailure(
@@ -1390,6 +1398,14 @@ export default function Dashboard({
                   className="px-2 py-1 rounded text-[10px] font-mono font-bold border bg-red-950 text-red-300 border-red-800"
                 >
                   Capture error: {captureError}
+                </span>
+              )}
+              {captureStandby && !captureError && (
+                <span
+                  role="status"
+                  className="px-2 py-1 rounded text-[10px] font-mono font-bold border bg-amber-950 text-amber-300 border-amber-800"
+                >
+                  Standby: {captureStandby}
                 </span>
               )}
             </div>
