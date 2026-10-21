@@ -124,5 +124,33 @@
     "id": "session_1792575879487_ao8m0ge7",
     "createdAt": "2026-10-21T09:44:39.487Z",
     "updatedAt": "2026-10-21T09:44:39.487Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:48:06.648Z",
+      "updatedAt": "2026-10-21T09:48:06.649Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576086649_l266bchh",
+    "createdAt": "2026-10-21T09:48:06.649Z",
+    "updatedAt": "2026-10-21T09:48:06.649Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:49:59.471Z",
+      "updatedAt": "2026-10-21T09:49:59.471Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576199471_sbzo3fxl",
+    "createdAt": "2026-10-21T09:49:59.471Z",
+    "updatedAt": "2026-10-21T09:49:59.471Z"
   }
 ]

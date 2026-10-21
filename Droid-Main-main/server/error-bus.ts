@@ -48,12 +48,13 @@ export class ErrorBus {
   report(event: CompanionErrorEvent): FixTask {
     const stepLabel = event.failedStep?.name || event.failedStep?.action;
     const title = `Fix ${event.source.replace("_", " ")} failure${stepLabel ? `: ${stepLabel}` : ""}`;
+    const failedRun = event.source === "replay";
     const note = this.notes.recordEvent(
-      "error",
-      title,
+      failedRun ? "workflow_failed" : "error",
+      failedRun ? `Workflow failed${stepLabel ? ` at ${stepLabel}` : ""}` : title,
       event.message,
       event.screenshot,
-      [event.source],
+      failedRun ? [event.source, "error"] : [event.source],
     );
     const task = this.tasks.insert({
       id: createCompanionId("fixtask"),

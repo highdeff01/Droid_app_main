@@ -44,12 +44,21 @@ describe("ErrorBus", () => {
     expect(bus.listTasks()).toContainEqual(task);
   });
 
-  it("report() records a matching error note linked to the task", () => {
+  it("report() records a replay failure as a workflow_failed note linked to the task", () => {
     const task = reportFailure();
-    const note = notes.list().find((n) => n.event === "error");
-    expect(note?.tags).toContain("replay");
+    const note = notes.list().find((n) => n.event === "workflow_failed");
+    expect(note?.tags).toEqual(expect.arrayContaining(["replay", "error"]));
     expect(note?.screenshot).toBe(task.screenshot);
     expect(note?.id).toBe(task.noteId);
+    const found = notes.searchScreenshots("show me the screenshot when the workflow failed", 5);
+    expect(found[0]?.id).toBe(note?.id);
+  });
+
+  it("report() records a non-replay failure as an error note", () => {
+    const task = bus.report({ source: "action_gate", message: "Target missing", screenshot: "data:image/png;base64,BBBB" });
+    const note = notes.list().find((n) => n.id === task.noteId);
+    expect(note?.event).toBe("error");
+    expect(note?.tags).toContain("action_gate");
   });
 
   it("notifies onError listeners with the event and task, and unsubscribe stops further calls", () => {
