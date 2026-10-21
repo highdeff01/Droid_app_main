@@ -13,6 +13,7 @@ import type { PhoneFrame } from "../shared/phone";
 import { type ReplayAdapter, createReplayAdapter } from "./replay-adapter";
 import { sendQwenChatRequest } from "./ai-endpoint";
 import { aiMonitorStore } from "./ai-monitor-store";
+import { companionEvents } from "./companion-events";
 
 const decisionSchema = z.object({
   certain: z.boolean(),
@@ -251,7 +252,31 @@ export class ReplayEngine {
     } finally {
       this.locks.delete(run.target);
       aiMonitorStore.setStatus({ status: "idle", currentAction: null });
+      this.publishOutcome(item);
     }
+  }
+  /** Tells the companion layer how the run ended, with the last evidence frame. */
+  private publishOutcome(item: InternalRun) {
+    const { run, request } = item;
+    const frames = [...item.evidence.values()];
+    const screenshot = frames[frames.length - 1]?.image;
+    if (run.status === "completed") {
+      companionEvents.reportEvent({
+        kind: "workflow_completed",
+        title: `Replay completed on ${run.target}`,
+        detail: `${run.completed}/${run.total} actions verified`,
+        screenshot,
+      });
+      return;
+    }
+    if (run.status !== "failed") return;
+    const step = request.steps[run.currentStep];
+    companionEvents.reportError({
+      source: "replay",
+      message: run.error || "Replay failed",
+      failedStep: step && { id: step.id, name: step.name, action: step.action, x: step.x, y: step.y },
+      screenshot,
+    });
   }
   /** One verified action: perceive, plan, execute, then confirm the outcome on a fresh frame. */
   private async performAction(item: InternalRun, step: ReplayStep) {

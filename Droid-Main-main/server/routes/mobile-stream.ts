@@ -1108,6 +1108,8 @@ mobileStreamRouter.post("/api/ai/coordinate-calibration", (req, res) => {
 // ----------------------------------------------------
 
 // GET all device workflows
+export const getSavedDeviceWorkflows = (): readonly DeviceWorkflow[] => savedDeviceWorkflows;
+
 mobileStreamRouter.get("/api/mobile-stream/workflows", (_req, res) => {
   res.json({
     success: true,

@@ -22,6 +22,7 @@ import {
 import { handleAnalyzeScreenshot as handleMasterAnalyzeScreenshot } from "./routes/analyze-screenshot";
 import { centralLogHub } from "./log-hub";
 import { assistantRouter } from "./routes/assistant";
+import { companionRouter } from "./routes/companion";
 import { assistantSourcesRouter } from "./routes/assistant-sources";
 import { analysisRouter } from "./routes/analysis";
 import { assistantPlansRouter } from "./routes/assistant-plans";
@@ -205,6 +206,7 @@ export function createServer() {
   app.use("/api/assistant/scheduling", requireApiAccess, schedulingRouter);
   app.use("/api/assistant/method-learning", requireApiAccess, methodLearningRouter);
   app.use("/api/method-learning", requireApiAccess, methodLearningRouter);
+  app.use("/api/companion", requireApiAccess, companionRouter);
 
   // Global rate limiter for /api (master) - protect but don't block pyautogui in dev
   // Only apply to /api/assistant/* already covered; for others keep open
