@@ -22,6 +22,7 @@ import {
 import { handleAnalyzeScreenshot as handleMasterAnalyzeScreenshot } from "./routes/analyze-screenshot";
 import { centralLogHub } from "./log-hub";
 import { assistantRouter } from "./routes/assistant";
+import { companionRouter } from "./routes/companion";
 import { assistantSourcesRouter } from "./routes/assistant-sources";
 import { analysisRouter } from "./routes/analysis";
 import { assistantPlansRouter } from "./routes/assistant-plans";
@@ -201,9 +202,38 @@ export function createServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-  // Every /api route below is rate limited and behind the API authentication boundary;
-  // requireApiAccess itself lets the public health/demo routes through.
-  app.use("/api", createApiRateLimiter(), requireApiAccess);
+  // === Master assistant routes (protected) ===
+  app.use("/api/assistant", requireApiAccess, assistantRouter);
+  app.use("/api/assistant/sources", requireApiAccess, assistantSourcesRouter);
+  app.use("/api/assistant/analysis", requireApiAccess, analysisRouter);
+  app.use("/api/assistant/plans", requireApiAccess, assistantPlansRouter);
+  app.use(
+    "/api/assistant/execution",
+    requireApiAccess,
+    assistantExecutionRouter,
+  );
+  app.use(
+    "/api/assistant/recordings",
+    requireApiAccess,
+    assistantRecordingsRouter,
+  );
+  app.use(
+    "/api/assistant/workflows",
+    requireApiAccess,
+    assistantWorkflowsRouter,
+  );
+  app.use(
+    "/api/assistant/conditions",
+    requireApiAccess,
+    assistantConditionsRouter,
+  );
+  app.use("/api/assistant/live", requireApiAccess, assistantLiveRouter);
+  app.use("/api/assistant/reports", requireApiAccess, assistantReportsRouter);
+  app.use("/api/assistant/verification", requireApiAccess, verificationReportsRouter);
+  app.use("/api/assistant/scheduling", requireApiAccess, schedulingRouter);
+  app.use("/api/assistant/method-learning", requireApiAccess, methodLearningRouter);
+  app.use("/api/method-learning", requireApiAccess, methodLearningRouter);
+  app.use("/api/companion", requireApiAccess, companionRouter);
 
   // === Master assistant routes ===
   app.use("/api/assistant", assistantRouter);

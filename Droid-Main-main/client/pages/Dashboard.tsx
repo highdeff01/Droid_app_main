@@ -70,6 +70,10 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
 import { gateTargetForSteps, runActionGate } from "@/lib/action-gate";
+import { companionApi } from "@/lib/companion-api";
+import type { WorkflowStepDraft } from "@shared/companion";
+import { CompanionChatPanel } from "@/components/companion-chat-panel";
+import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import { buildRetryStep, toReplayStepPayload } from "@/lib/step-replay";
 import {
   LiveScreenHUD,
@@ -217,7 +221,6 @@ export default function Dashboard({
       text: "Hi! Tell me where to click with detail. I'll dispatch via pyautogui.",
     },
   ]);
-  const [collabInput, setCollabInput] = useState("");
   const [popoutOpen, setPopoutOpen] = useState(false);
   const [sequence, setSequence] = useState<SequenceStep[]>([]);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
@@ -772,6 +775,9 @@ export default function Dashboard({
       return copy.map((s, i) => ({ ...s, stepNumber: i + 1 }));
     });
   const [replayRun, setReplayRun] = useState<ReplayRun | null>(null);
+  const [companionRunHistory, setCompanionRunHistory] = useState<
+    Array<{ id: string; name: string; status: string; at: string; error?: string }>
+  >([]);
   const replayIdRef = useRef<string | null>(null);
   const replayStopRequested = useRef(false);
   const [replayApiKey, setReplayApiKey] = useState("");
@@ -785,6 +791,11 @@ export default function Dashboard({
   };
   const applyReplay = (run: ReplayRun) => {
     setReplayRun(run);
+    if (["completed", "failed", "cancelled"].includes(run.status))
+      setCompanionRunHistory(prev => prev.some(r => r.id === run.id) ? prev : [
+        { id: run.id, name: `Replay ${run.target} (${run.total} steps)`, status: run.status, at: new Date(run.startedAt).toISOString(), error: run.error },
+        ...prev,
+      ].slice(0, 20));
     const active = run.status === "running" || run.status === "paused";
     sequenceRunningRef.current = active;
     setIsSequenceRunning(active);
@@ -818,6 +829,16 @@ export default function Dashboard({
   }, [replayApiKey]);
   const gateAbortRef = useRef<AbortController | null>(null);
   const actionBusyRef = useRef(false);
+  // Gate blocks become companion fix tasks (with the last real frame as context).
+  const reportGateBlock = (step: SequenceStep, reason: string) => {
+    const frame = aiLiveUrl || screenshotUrl;
+    void companionApi.reportError({
+      source: "action_gate",
+      message: reason,
+      failedStep: { id: step.id, name: step.name, action: step.action, x: step.x, y: step.y },
+      screenshot: /^data:image\/(png|jpeg);base64,/.test(frame) ? frame : undefined,
+    }).catch(() => {});
+  };
   // The single guard every device dispatch passes through: fresh capture → analysis → verified target.
   const verifyBeforeDispatch = async (steps: SequenceStep[]) => {
     const target = gateTargetForSteps(steps);
@@ -841,6 +862,7 @@ export default function Dashboard({
         setAiThinking(null);
         setVerificationBadge({ status: "failed", message: reason });
         toast.error(`Action blocked: ${reason}`);
+        if (result.status === "blocked") reportGateBlock(steps[0], reason);
         return false;
       }
       setScreenshotUrl(result.frame);
@@ -899,6 +921,16 @@ export default function Dashboard({
     } finally {
       actionBusyRef.current = false;
     }
+  };
+  // Approved companion proposals / trigger actions: shown in the HUD, then dispatched through the gate.
+  const runCompanionSteps = (drafts: WorkflowStepDraft[]) => {
+    const steps: SequenceStep[] = drafts.map((d, idx) => ({
+      id: d.id, stepNumber: idx + 1, name: d.name, action: d.action as SequenceStep["action"],
+      x: d.x, y: d.y, text: d.text, keyPayload: d.keyPayload, delayMs: d.delayMs ?? 400, status: "pending",
+    }));
+    setSequence(steps);
+    handleTabSwitch("screen");
+    return handleRunSequence(steps);
   };
   const handleReplayControl = async (command: "pause" | "resume" | "cancel") => {
     if (!replayIdRef.current) return;
@@ -2762,11 +2794,18 @@ export default function Dashboard({
               screenshotUrl={aiLiveUrl || screenshotUrl}
               goals={goalsState.length ? (goalsState as any) : undefined}
               onAddGoal={(g: any) => setGoalsState((prev) => [...prev, g])}
-              onUpdateGoal={(id, upd) =>
+              onUpdateGoal={(id, upd) => {
+                const goal = goalsState.find((g) => g.id === id);
+                if (upd?.status === "completed" && goal && goal.status !== "completed") {
+                  const frame = aiLiveUrl || screenshotUrl;
+                  void companionApi
+                    .recordGoalReached(goal.title || goal.name || id, /^data:image\/(png|jpeg);base64,/.test(frame) ? frame : undefined)
+                    .catch(() => {});
+                }
                 setGoalsState((prev) =>
                   prev.map((g) => (g.id === id ? { ...g, ...upd } : g)),
-                )
-              }
+                );
+              }}
               onDeleteGoal={(id) =>
                 setGoalsState((prev) => prev.filter((g) => g.id !== id))
               }
@@ -3075,60 +3114,34 @@ export default function Dashboard({
                   <Card className="bg-slate-900 border-slate-800 h-[420px] flex flex-col">
                     <CardHeader className="p-3 bg-slate-950 border-b border-slate-800">
                       <CardTitle className="text-xs font-bold text-slate-100">
-                        Chat History
+                        Companion Chat (memory)
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-3 flex-1 flex flex-col overflow-hidden">
-                      <div className="flex-1 rounded border border-slate-800 bg-slate-950 p-2 overflow-y-auto space-y-1 mb-2">
-                        {collabChat.map((m, i) => (
-                          <div
-                            key={i}
-                            className={`text-xs p-2 rounded ${m.role === "user" ? "bg-cyan-950/60 text-cyan-200 ml-8" : "bg-purple-950/40 text-purple-200 mr-8"}`}
-                          >
-                            {m.text}
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex gap-1">
-                        <Input
-                          value={collabInput}
-                          onChange={(e) => setCollabInput(e.target.value)}
-                          placeholder="Type to AI..."
-                          className="h-9 text-sm bg-slate-900 border-slate-700 flex-1"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              if (!collabInput.trim()) return;
-                              setCollabChat((prev) => [
-                                ...prev,
-                                { role: "user", text: collabInput },
-                                {
-                                  role: "ai",
-                                  text: `Noted: ${collabInput.slice(0, 40)}`,
-                                },
-                              ]);
-                              setCollabInput("");
-                            }
-                          }}
-                        />
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            if (!collabInput.trim()) return;
-                            setCollabChat((prev) => [
-                              ...prev,
-                              { role: "user", text: collabInput },
-                              {
-                                role: "ai",
-                                text: `Noted: ${collabInput.slice(0, 40)}`,
-                              },
-                            ]);
-                            setCollabInput("");
-                          }}
-                          className="h-9 text-sm bg-slate-800"
-                        >
-                          Send
-                        </Button>
-                      </div>
+                      <CompanionChatPanel
+                        currentTab={currentTab}
+                        currentScreenshot={aiLiveUrl || screenshotUrl}
+                        screenSummary={perceptionReport?.screenDescription}
+                        workflowHistory={companionRunHistory}
+                        onNavigateTab={handleTabSwitch}
+                        onShowScreenshot={(shot) => {
+                          setScreenshotUrl(shot);
+                          setAiLiveUrl(shot);
+                          handleTabSwitch("screen");
+                        }}
+                        onAttachWorkflow={handleLinkWorkflowToLiveVisionHud}
+                        onRunSteps={runCompanionSteps}
+                      />
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-slate-900 border-slate-800">
+                    <CardHeader className="p-3 bg-slate-950 border-b border-slate-800">
+                      <CardTitle className="text-xs font-bold text-slate-100">
+                        Fix Tasks & Approvals
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-2 max-h-72 overflow-y-auto">
+                      <CompanionTasksPanel onRunSteps={runCompanionSteps} />
                     </CardContent>
                   </Card>
                   <Card className="bg-slate-900 border-slate-800">

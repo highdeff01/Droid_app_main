@@ -101,28 +101,98 @@
     "project": {
       "id": "project",
       "name": "Persistent project",
-      "createdAt": "2026-10-21T09:39:14.354Z",
-      "updatedAt": "2026-10-21T09:39:14.354Z"
+      "createdAt": "2026-10-21T09:43:40.354Z",
+      "updatedAt": "2026-10-21T09:43:40.354Z"
     },
     "status": "active",
     "goals": [],
     "savedStateIds": [],
-    "id": "session_1792575554354_6ooqd9my",
-    "createdAt": "2026-10-21T09:39:14.354Z",
-    "updatedAt": "2026-10-21T09:39:14.354Z"
+    "id": "session_1792575820354_abszvoqo",
+    "createdAt": "2026-10-21T09:43:40.354Z",
+    "updatedAt": "2026-10-21T09:43:40.354Z"
   },
   {
     "project": {
       "id": "project",
       "name": "Persistent project",
-      "createdAt": "2026-10-21T09:40:23.972Z",
-      "updatedAt": "2026-10-21T09:40:23.972Z"
+      "createdAt": "2026-10-21T09:44:39.486Z",
+      "updatedAt": "2026-10-21T09:44:39.487Z"
     },
     "status": "active",
     "goals": [],
     "savedStateIds": [],
-    "id": "session_1792575623972_2defhrlz",
-    "createdAt": "2026-10-21T09:40:23.972Z",
-    "updatedAt": "2026-10-21T09:40:23.972Z"
+    "id": "session_1792575879487_ao8m0ge7",
+    "createdAt": "2026-10-21T09:44:39.487Z",
+    "updatedAt": "2026-10-21T09:44:39.487Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:48:06.648Z",
+      "updatedAt": "2026-10-21T09:48:06.649Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576086649_l266bchh",
+    "createdAt": "2026-10-21T09:48:06.649Z",
+    "updatedAt": "2026-10-21T09:48:06.649Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:49:59.471Z",
+      "updatedAt": "2026-10-21T09:49:59.471Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576199471_sbzo3fxl",
+    "createdAt": "2026-10-21T09:49:59.471Z",
+    "updatedAt": "2026-10-21T09:49:59.471Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:52:02.754Z",
+      "updatedAt": "2026-10-21T09:52:02.754Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576322754_fuqrwlky",
+    "createdAt": "2026-10-21T09:52:02.754Z",
+    "updatedAt": "2026-10-21T09:52:02.754Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:53:21.842Z",
+      "updatedAt": "2026-10-21T09:53:21.842Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576401842_81jvgpme",
+    "createdAt": "2026-10-21T09:53:21.842Z",
+    "updatedAt": "2026-10-21T09:53:21.842Z"
+  },
+  {
+    "project": {
+      "id": "project",
+      "name": "Persistent project",
+      "createdAt": "2026-10-21T09:54:00.113Z",
+      "updatedAt": "2026-10-21T09:54:00.113Z"
+    },
+    "status": "active",
+    "goals": [],
+    "savedStateIds": [],
+    "id": "session_1792576440113_60b8exse",
+    "createdAt": "2026-10-21T09:54:00.113Z",
+    "updatedAt": "2026-10-21T09:54:00.113Z"
   }
 ]
