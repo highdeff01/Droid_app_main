@@ -165,7 +165,8 @@ import {
 } from "./routes/omni-ai-controller";
 import { mainAiChatRouter } from "./routes/main-ai-chat-controller";
 import { handleCompareScreenshots } from "./routes/compare-screenshots";
-import { handleAdbDevices, createAdbCaptureHandler } from "./routes/adb-capture";
+import { handleAdbDevices, createAdbCaptureHandler, createAdbScanHandler } from "./routes/adb-capture";
+import { handleAdbConnect, createAdbDisconnectHandler } from "./routes/adb-link";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -619,68 +620,7 @@ export function createServer() {
     createAdbCaptureHandler(() => getLatestSyncedRealFrame()?.imageData || lastSyncedFrame),
   );
 
-  app.post("/api/adb/connect", async (req, res) => {
-    let responded = false;
-    const sendOnce = (obj: any) => {
-      if (!responded) {
-        responded = true;
-        res.json(obj);
-      }
-    };
-    try {
-      const { ip, port = 5555 } = req.body;
-      let target: string;
-      try { target = validateAdbEndpoint(ip, port); } catch (error) {
-        return sendOnce({ success: false, error: error instanceof Error ? error.message : "Invalid endpoint" });
-      }
-      const py = spawn("adb", ["connect", target], { stdio: ["pipe", "pipe", "pipe"] });
-      let out = ""; let er = "";
-      py.stdout.on("data", (d) => (out += d.toString()));
-      py.stderr.on("data", (d) => (er += d.toString()));
-      py.on("close", () => {
-        const success = out.includes("connected") || out.includes("already") || !er;
-        if (success) simulatedConnectedDevices.add(target);
-        sendOnce({
-          success,
-          output: out.trim() || `Connected to ${target}`,
-          error: er.trim() || undefined,
-          target,
-          hasLocalAdb: true,
-        });
-      });
-      py.on("error", () => {
-        simulatedConnectedDevices.add(target);
-        sendOnce({
-          success: true,
-          simulated: true,
-          isCloudSandbox: true,
-          target,
-          output: `Virtual link created for ${target}. (Note: Cloud sandbox cannot send LAN packets to 192.168.x.x. Run locally with 'npm run dev' to bridge your real phone).`,
-        });
-      });
-      setTimeout(() => {
-        try { py.kill(); } catch {};
-        simulatedConnectedDevices.add(target);
-        sendOnce({
-          success: true,
-          simulated: true,
-          isCloudSandbox: true,
-          output: `Virtual link timeout for ${target} in cloud preview.`,
-          target,
-        });
-      }, 8000);
-    } catch {
-      const target = `${req.body.ip || "192.168.1.50"}:${req.body.port || 5555}`;
-      simulatedConnectedDevices.add(target);
-      sendOnce({
-        success: true,
-        simulated: true,
-        isCloudSandbox: true,
-        output: `Virtual device registered for ${target}`,
-        target,
-      });
-    }
-  });
+  app.post("/api/adb/connect", handleAdbConnect);
 
   app.post("/api/adb/pair", async (req, res) => {
     let responded = false;
@@ -779,72 +719,8 @@ export function createServer() {
     }
   });
 
-  app.post("/api/adb/disconnect", async (req, res) => {
-    let responded = false;
-    const sendOnce = (obj: any) => {
-      if (!responded) {
-        responded = true;
-        res.json(obj);
-      }
-    };
-    try {
-      const { deviceId } = req.body;
-      let safeDeviceId: string | undefined;
-      if (deviceId) {
-        try { safeDeviceId = validateDeviceId(deviceId); } catch (error) {
-          return sendOnce({ success: false, error: error instanceof Error ? error.message : "Invalid device ID" });
-        }
-      }
-      if (safeDeviceId) simulatedConnectedDevices.delete(safeDeviceId);
-      else simulatedConnectedDevices.clear();
-      const args = safeDeviceId ? ["disconnect", safeDeviceId] : ["disconnect"];
-      const py = spawn("adb", args, { stdio: ["pipe", "pipe", "pipe"] });
-      let out = ""; let er = "";
-      py.stdout.on("data", (d) => (out += d.toString()));
-      py.stderr.on("data", (d) => (er += d.toString()));
-      py.on("close", () => sendOnce({ success: true, output: out.trim() || `disconnected ${safeDeviceId || "all"}`, error: er.trim() || undefined }));
-      py.on("error", () => sendOnce({ success: true, simulated: true, output: `disconnected ${safeDeviceId || "all"}` }));
-      setTimeout(() => { try { py.kill(); } catch {}; sendOnce({ success: true, simulated: true, output: `disconnected ${safeDeviceId || "all"}` }); }, 4000);
-    } catch {
-      sendOnce({ success: true, simulated: true, output: "disconnected" });
-    }
-  });
-
-  app.get("/api/adb/scan", async (_req, res) => {
-    let responded = false;
-    const sendOnce = (obj: any) => {
-      if (!responded) {
-        responded = true;
-        res.json(obj);
-      }
-    };
-    try {
-      const py = spawn("adb", ["devices"], { stdio: ["pipe", "pipe", "pipe"] });
-      let out = "";
-      py.stdout.on("data", (d) => (out += d.toString()));
-      py.on("close", () => {
-        const devices: string[] = [];
-        try {
-          const lines = out.trim().split("\n").slice(1);
-          for (const l of lines) {
-            const parts = l.trim().split("\t");
-            if (parts.length === 2 && parts[1] === "device") devices.push(parts[0]);
-          }
-        } catch {}
-        for (const s of simulatedConnectedDevices) {
-          if (!devices.includes(s)) devices.push(s);
-        }
-        sendOnce({ success: true, devices: devices.length > 0 ? devices : ["192.168.1.50:5555 (WiFi Phone)"], raw: out.trim() || "scanned", hint: "For WiFi: enable Wireless Debugging" });
-      });
-      py.on("error", () => {
-        const list = Array.from(simulatedConnectedDevices);
-        sendOnce({ success: true, devices: list.length > 0 ? list : ["192.168.1.50:5555 (WiFi Phone)"], simulated: true, raw: "Simulated scan" });
-      });
-    } catch {
-      const list = Array.from(simulatedConnectedDevices);
-      sendOnce({ success: true, devices: list.length > 0 ? list : ["192.168.1.50:5555 (WiFi Phone)"], simulated: true, raw: "Simulated scan" });
-    }
-  });
+  app.post("/api/adb/disconnect", createAdbDisconnectHandler(simulatedConnectedDevices));
+  app.get("/api/adb/scan", createAdbScanHandler(() => simulatedConnectedDevices));
 
   // Central logs (master)
   app.post("/api/logs", (req, res) => {
