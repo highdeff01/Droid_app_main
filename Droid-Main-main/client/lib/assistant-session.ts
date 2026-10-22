@@ -1,3 +1,5 @@
+import { httpFailure } from "@/lib/companion-connection";
+
 const SESSION_STORAGE_KEY = "assistant_session_id";
 
 export interface AssistantSessionOptions {
@@ -30,8 +32,7 @@ async function resolveAssistantSession({
     );
     if (existing.ok) return storedSessionId;
     if (existing.status !== 404) {
-      const body = await responseBody(existing);
-      throw new Error(body?.error || "Could not verify the Assistant session");
+      throw httpFailure(existing, await responseBody(existing), "Could not verify the Assistant session");
     }
     localStorage.removeItem(SESSION_STORAGE_KEY);
   }
@@ -42,9 +43,7 @@ async function resolveAssistantSession({
     body: JSON.stringify({ project, goals, savedStateIds }),
   });
   const body = await responseBody(response);
-  if (!response.ok) {
-    throw new Error(body?.error || "Could not create an Assistant session");
-  }
+  if (!response.ok) throw httpFailure(response, body, "Could not create an Assistant session");
   const sessionId = body?.session?.id;
   if (typeof sessionId !== "string" || !sessionId) {
     throw new Error("Assistant session response did not contain a session id");

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FRAME,
+  HUD_LAYERS,
+  HUD_NODE_MARGIN_PCT,
+  selectFrameSource,
   anchoredLabelClass,
   clampBoxToArea,
   polylinePointsPx,
@@ -186,6 +189,30 @@ describe("hud-layout", () => {
         top: 8,
       });
     });
+  });
+
+  describe("selectFrameSource", () => {
+    it("prefers a playing screen-share video", () => {
+      expect(selectFrameSource(true, "data:image/png;base64,x")).toBe("video");
+    });
+    it("uses the last decoded captured frame without a video", () => {
+      expect(selectFrameSource(false, "data:image/jpeg;base64,x")).toBe("image");
+    });
+    it("shows nothing (empty state) without any real frame", () => {
+      expect(selectFrameSource(false, null)).toBe("none");
+    });
+  });
+
+  it("node margin keeps a corner step badge clear of the frame edge", () => {
+    expect(clampedPointStyle(1920, 0, DEFAULT_FRAME, HUD_NODE_MARGIN_PCT)).toEqual({ left: "96%", top: "4%" });
+  });
+
+  it("orders layers so decoration < steps < controls < fullscreen", () => {
+    const rank = (cls: string) => Number(cls.replace(/\D/g, ""));
+    expect(rank(HUD_LAYERS.decoration)).toBeLessThan(rank(HUD_LAYERS.steps));
+    expect(rank(HUD_LAYERS.steps)).toBeLessThan(rank(HUD_LAYERS.controls));
+    expect(rank(HUD_LAYERS.controls)).toBeLessThan(rank(HUD_LAYERS.drawing));
+    expect(rank(HUD_LAYERS.floating)).toBeLessThan(rank(HUD_LAYERS.fullscreen));
   });
 
   describe("viewportHeightForWidth", () => {
