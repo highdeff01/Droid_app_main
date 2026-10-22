@@ -1,6 +1,24 @@
 import type { AddressInfo } from "net";
 import type { Server } from "http";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+/** Counts limiter instances created and limiter handler runs, keeping the real limiter behaviour. */
+const limiterCalls = vi.hoisted(() => ({ created: 0, invoked: 0 }));
+
+vi.mock("./security", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./security")>();
+  return {
+    ...actual,
+    createApiRateLimiter: (...args: Parameters<typeof actual.createApiRateLimiter>) => {
+      limiterCalls.created += 1;
+      const limiter = actual.createApiRateLimiter(...args);
+      return ((req, res, next) => {
+        limiterCalls.invoked += 1;
+        return limiter(req, res, next);
+      }) as typeof limiter;
+    },
+  };
+});
 
 /** createApiRateLimiter's default ceiling, which createServer uses unchanged. */
 const LIMIT = 1_000;
@@ -31,6 +49,14 @@ async function statusOf(path: string, init: RequestInit = {}): Promise<number> {
 }
 
 describe("createServer /api rate limiter", () => {
+  it("registers exactly one limiter and runs it once per /api request", async () => {
+    expect(limiterCalls.created).toBe(1);
+    const before = limiterCalls.invoked;
+    // A whitelisted route still runs the limiter but spends none of the budget the next test measures.
+    await statusOf("/api/health");
+    expect(limiterCalls.invoked - before).toBe(1);
+  });
+
   it("does not let whitelisted streaming/polling calls use up the budget", async () => {
     for (let i = 0; i < LIMIT + 5; i++) {
       expect(await statusOf("/api/health")).toBe(200);
