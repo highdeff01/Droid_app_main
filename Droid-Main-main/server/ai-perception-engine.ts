@@ -29,7 +29,8 @@ export interface DetectedUIElement {
     | "other";
   boundingBox: { x: number; y: number; width: number; height: number };
   center: { x: number; y: number };
-  confidence: number;
+  /** Confidence the analysis reported; null when it reported none. */
+  confidence: number | null;
   interactive: boolean;
   textValue?: string;
 }
@@ -42,8 +43,45 @@ export interface ScreenPerceptionReport {
   elements: DetectedUIElement[];
   feedbackPosition: { x: number; y: number };
   primarySuggestion: string;
-  confidence: number;
+  /** Confidence the analysis reported; null when it reported none. */
+  confidence: number | null;
   rawAnalysis?: string;
+  /** "model" for a real analysis, "heuristic" for a placeholder. */
+  source?: "model" | "heuristic";
+  /** True when the report is not real analysis of the frame. */
+  simulated?: boolean;
+  simulationReason?: string;
+}
+
+const finiteOrNull = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/** Mean of the element confidences the analysis supplied; null when none did. */
+export function meanConfidence(elements: DetectedUIElement[]): number | null {
+  const values = elements
+    .map((el) => el.confidence)
+    .filter((v): v is number => v !== null);
+  if (values.length === 0) return null;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+/** Honest report for a failed analysis: no elements, no confidence, labelled simulated. */
+export function perceptionUnavailableReport(
+  errorMsg: string,
+): ScreenPerceptionReport {
+  return {
+    timestamp: Date.now(),
+    screenDescription: `Perception unavailable: ${errorMsg}`,
+    activeWindow: "",
+    visualStateChange: "",
+    elements: [],
+    feedbackPosition: { x: 0, y: 0 },
+    primarySuggestion: "",
+    confidence: null,
+    source: "heuristic",
+    simulated: true,
+    simulationReason: errorMsg,
+  };
 }
 
 export class QwenVisionPerceptionEngine {
@@ -115,14 +153,24 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
           parsed.visualStateChange ||
           (this.lastDescription ? "State updated" : "Initial frame"),
         elements: this.mergeBrowserElements(parsed.elements, browserContext),
+        source: "model",
+        simulated: false,
       };
 
       this.lastDescription = report.screenDescription;
       return report;
     } catch (err) {
-      if (!process.env.GEMINI_API_KEY) throw err;
+      if (!process.env.GEMINI_API_KEY) {
+        return perceptionUnavailableReport(errorText(err));
+      }
       console.warn("Qwen Vision perception failed, using configured Gemini:", err);
-      return this.analyzeWithLocalProvider(imageData, browserContext);
+      try {
+        return await this.analyzeWithLocalProvider(imageData, browserContext);
+      } catch (geminiErr) {
+        return perceptionUnavailableReport(
+          `${errorText(err)}; Gemini: ${errorText(geminiErr)}`,
+        );
+      }
     }
   }
 
@@ -148,8 +196,7 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
           height: el.height || 35,
         },
         center: { x: el.x, y: el.y },
-        confidence:
-          typeof el.confidence === "number" ? el.confidence : 0.85,
+        confidence: finiteOrNull(el.confidence),
         interactive: true,
         textValue: el.suggestedTextPayload || "",
       }),
@@ -157,6 +204,7 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
 
     const focus = analysis.primaryActionTarget;
     const page = browserContext?.page;
+    const simulated = analysis.simulated === true;
     const report: ScreenPerceptionReport = {
       timestamp: Date.now(),
       screenDescription:
@@ -166,17 +214,13 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
       activeWindow:
         page?.title || browserContext?.activeTab?.title || "Active Application",
       visualStateChange: this.lastDescription ? "State updated" : "Initial frame",
-      elements: this.mergeBrowserElements(
-        elements.length > 0 ? elements : this.generateDefaultElements(),
-        browserContext,
-      ),
-      feedbackPosition: focus
-        ? { x: focus.x, y: focus.y }
-        : { x: 960, y: 540 },
-      primarySuggestion: focus?.label
-        ? `Focus ${focus.label}`
-        : "Inspect interactive targets and execute planned sequence.",
-      confidence: 0.85,
+      elements: this.mergeBrowserElements(elements, browserContext),
+      feedbackPosition: focus ? { x: focus.x, y: focus.y } : { x: 0, y: 0 },
+      primarySuggestion: focus?.label ? `Focus ${focus.label}` : "",
+      confidence: simulated ? null : meanConfidence(elements),
+      source: simulated ? "heuristic" : "model",
+      simulated,
+      ...(simulated ? { simulationReason: analysis.simulationReason } : {}),
     };
 
     this.lastDescription = report.screenDescription;
@@ -253,7 +297,7 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
           height: el.height,
         },
         center: { x: el.x, y: el.y },
-        confidence: (el as any).confidence ?? 0.95,
+        confidence: finiteOrNull(el.confidence),
         interactive: (el as any).interactive ?? true,
         textValue: (el as any).textValue || (el as any).text || "",
       }),
@@ -286,34 +330,10 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
         return "other";
     }
   }
+}
 
-  private generateDefaultElements(): DetectedUIElement[] {
-    return [
-      {
-        id: "elem_center",
-        name: "Primary Screen Center",
-        type: "target",
-        boundingBox: { x: 920, y: 500, width: 80, height: 80 },
-        center: { x: 960, y: 540 },
-        confidence: 0.9,
-        interactive: true,
-        textValue: "Focus Area",
-      },
-    ];
-  }
-
-  private generateFallbackReport(errorMsg: string): ScreenPerceptionReport {
-    return {
-      timestamp: Date.now(),
-      screenDescription: `Perception online. Live frame captured. (${errorMsg})`,
-      activeWindow: "Active Target App",
-      visualStateChange: "Ready for user commands",
-      elements: this.generateDefaultElements(),
-      feedbackPosition: { x: 960, y: 540 },
-      primarySuggestion: "Click on the live HUD or define a sequence.",
-      confidence: 0.8,
-    };
-  }
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export const qwenVisionEngine = new QwenVisionPerceptionEngine();

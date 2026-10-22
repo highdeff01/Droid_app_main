@@ -114,11 +114,6 @@ const navigation = [
   { label: "Drive Storage", path: "/drive", icon: HardDrive },
 ];
 
-const sessions = [
-  { name: "Checkout flow", detail: "24 captures", active: true },
-  { name: "Settings audit", detail: "8 captures", active: false },
-  { name: "Onboarding pass", detail: "Draft", active: false },
-];
 
 const timeline = [
   { label: "Capture", detail: "Screen ready", status: "done" },
@@ -415,6 +410,8 @@ export function AssistantWorkspace({
               size="icon"
               className="text-slate-400 hover:bg-white/5 hover:text-white lg:hidden"
               aria-label="Open navigation"
+              disabled
+              title="Unavailable: use the navigation links below"
             >
               <Menu className="h-5 w-5" />
             </Button>
@@ -472,38 +469,17 @@ export function AssistantWorkspace({
                 Sessions
               </p>
               <button
-                className="text-slate-500 transition-colors hover:text-cyan-300"
-                aria-label="Add session"
+                className="text-slate-600"
+                aria-label="Add session (unavailable)"
+                title="Saved sessions are not available yet"
+                disabled
               >
                 <Plus className="h-4 w-4" />
               </button>
             </div>
-            <div className="space-y-1">
-              {sessions.map((session) => (
-                <button
-                  key={session.name}
-                  className={cn(
-                    "flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
-                    session.active ? "bg-white/5" : "hover:bg-white/5",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "mt-1.5 h-2 w-2 rounded-full",
-                      session.active ? "bg-cyan-300" : "bg-slate-700",
-                    )}
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm text-slate-200">
-                      {session.name}
-                    </span>
-                    <span className="block text-xs text-slate-500">
-                      {session.detail}
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
+            <p className="px-3 text-xs text-slate-500">
+              No saved sessions · session storage is not available yet
+            </p>
           </div>
 
           <div className="hidden border-t border-white/10 p-3 lg:block">
@@ -551,7 +527,9 @@ export function AssistantWorkspace({
                 variant="ghost"
                 size="icon"
                 className="text-slate-400 hover:bg-white/5 hover:text-white"
-                aria-label="Help"
+                aria-label="Help (unavailable)"
+                title="Help is not available yet"
+                disabled
               >
                 <CircleHelp className="h-4 w-4" />
               </Button>
@@ -1137,7 +1115,9 @@ export function AssistantWorkspace({
                   </div>
                   <button
                     className="text-slate-500 hover:text-slate-200"
-                    aria-label="Close context panel"
+                    aria-label="Close context panel (unavailable)"
+                    title="The context panel cannot be closed yet"
+                    disabled
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -1151,7 +1131,7 @@ export function AssistantWorkspace({
                         attention.
                       </p>
                       <p className="mt-2 text-xs text-slate-500">
-                        Placeholder instruction · editable later
+                        Example instruction · not yet sent to the assistant
                       </p>
                     </div>
                   </div>
@@ -1159,51 +1139,7 @@ export function AssistantWorkspace({
                 <InstructionPlanningPanel />
                 <div className="mt-6 space-y-5">
                   <CaptureSourcePanel />
-                  <div>
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-xs font-medium text-slate-300">
-                        Context sources
-                      </p>
-                      <button className="text-xs text-cyan-300 hover:text-cyan-200">
-                        Manage
-                      </button>
-                    </div>
-                    <div className="space-y-2">
-                      {[
-                        {
-                          label: "Current screen",
-                          detail: "Live preview",
-                          icon: MonitorIcon,
-                        },
-                        {
-                          label: "Session notes",
-                          detail: "3 notes",
-                          icon: ListChecks,
-                        },
-                        {
-                          label: "Project goals",
-                          detail: "2 goals",
-                          icon: Target,
-                        },
-                      ].map(({ label, detail, icon: Icon }) => (
-                        <div
-                          key={label}
-                          className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3"
-                        >
-                          <Icon className="h-4 w-4 text-slate-500" />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs text-slate-300">
-                              {label}
-                            </p>
-                            <p className="text-[11px] text-slate-500">
-                              {detail}
-                            </p>
-                          </div>
-                          <Check className="h-3.5 w-3.5 text-emerald-400" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <ContextSourcesPanel />
                   <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-medium text-slate-300">
@@ -1226,8 +1162,10 @@ export function AssistantWorkspace({
                 <Button
                   variant="outline"
                   className="mt-6 w-full border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/10 hover:text-white"
+                  disabled
+                  title="Assistant runs are started from the instruction planner above"
                 >
-                  <Play className="h-4 w-4" /> Prepare assistant run
+                  <Play className="h-4 w-4" /> Prepare assistant run (unavailable)
                 </Button>
               </div>
             </aside>

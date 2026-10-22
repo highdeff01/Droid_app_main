@@ -57,7 +57,7 @@ export const handleDescribeScreen: RequestHandler = async (req, res) => {
       title: "Screen perceived",
       detail: report.screenDescription,
       status: "completed",
-      confidence: report.confidence,
+      confidence: report.confidence ?? undefined,
       source: "AI #1 Vision",
     });
     aiMonitorStore.setStatus({ status: "idle", currentAction: null });
@@ -334,12 +334,27 @@ export const handleAutonomousStep: RequestHandler = async (req, res) => {
       model,
       browserContext || aiMonitorStore.getBrowserContext(),
     );
+    if (perception.simulated) {
+      aiMonitorStore.record({
+        phase: "perception",
+        title: "Perception unavailable",
+        detail: perception.screenDescription,
+        status: "failed",
+        source: "AI #1 Vision",
+      });
+      aiMonitorStore.setStatus({ status: "idle", currentAction: null });
+      return res.status(502).json({
+        success: false,
+        error: perception.screenDescription,
+        perception,
+      });
+    }
     aiMonitorStore.record({
       phase: "perception",
       title: "Screen perceived",
       detail: perception.screenDescription,
       status: "completed",
-      confidence: perception.confidence,
+      confidence: perception.confidence ?? undefined,
       source: "AI #1 Vision",
     });
     aiMonitorStore.setStatus({
