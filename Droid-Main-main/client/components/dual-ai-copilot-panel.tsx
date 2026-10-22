@@ -70,7 +70,7 @@ export interface AIThinkingChain {
   observation: string;
   reasoning: string;
   strategy: string;
-  confidence: number;
+  confidence: number | null;
 }
 
 export interface SubTask {
@@ -416,7 +416,9 @@ export const DualAICopilotPanel: React.FC<DualAICopilotPanelProps> = ({
               {plannerDecision && (
                 <span className="text-[10px] font-mono bg-purple-950 text-purple-300 border border-purple-800 px-2 py-0.5 rounded">
                   Thinking Conf:{" "}
-                  {(plannerDecision.thinking.confidence * 100).toFixed(0)}%
+                  {plannerDecision.thinking.confidence === null
+                    ? "unverified fallback"
+                    : `${(plannerDecision.thinking.confidence * 100).toFixed(0)}%`}
                 </span>
               )}
             </div>
