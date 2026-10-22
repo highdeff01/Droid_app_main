@@ -60,6 +60,25 @@ interface Task {
   error?: string;
 }
 
+export const AGENT_CONFIG_UNAVAILABLE =
+  "No agent backend is connected, so agent settings cannot be saved.";
+
+/** Disabled until an agents backend exists to persist settings. */
+export function AgentConfigureButton() {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled
+      title={AGENT_CONFIG_UNAVAILABLE}
+      aria-label={`Configure (unavailable): ${AGENT_CONFIG_UNAVAILABLE}`}
+    >
+      <Settings className="w-4 h-4 mr-2" />
+      Configure (unavailable)
+    </Button>
+  );
+}
+
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -306,10 +325,7 @@ export default function AgentsPage() {
                         >
                           {agent.status}
                         </span>
-                        <Button variant="outline" size="sm">
-                          <Settings className="w-4 h-4 mr-2" />
-                          Configure
-                        </Button>
+                        <AgentConfigureButton />
                       </div>
                     </div>
                     <div className="mt-4 grid grid-cols-3 gap-4 text-sm">

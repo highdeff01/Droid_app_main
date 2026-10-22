@@ -53,6 +53,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { CaptureSourcePanel } from "./capture-source-panel";
+import { ContextSourcesPanel } from "./context-sources-panel";
 import { InstructionPlanningPanel } from "@/components/instruction-planning-panel";
 import { WorkflowDebuggerPanel } from "./workflow-debugger-panel";
 import { DriftHeatmapOverlay } from "./drift-heatmap-overlay";
@@ -1147,7 +1148,7 @@ export function AssistantWorkspace({
                         attention.
                       </p>
                       <p className="mt-2 text-xs text-slate-500">
-                        Placeholder instruction · editable later
+                        Example instruction · not yet sent to the assistant
                       </p>
                     </div>
                   </div>
@@ -1155,51 +1156,7 @@ export function AssistantWorkspace({
                 <InstructionPlanningPanel />
                 <div className="mt-6 space-y-5">
                   <CaptureSourcePanel />
-                  <div>
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-xs font-medium text-slate-300">
-                        Context sources
-                      </p>
-                      <button className="text-xs text-cyan-300 hover:text-cyan-200">
-                        Manage
-                      </button>
-                    </div>
-                    <div className="space-y-2">
-                      {[
-                        {
-                          label: "Current screen",
-                          detail: "Live preview",
-                          icon: MonitorIcon,
-                        },
-                        {
-                          label: "Session notes",
-                          detail: "3 notes",
-                          icon: ListChecks,
-                        },
-                        {
-                          label: "Project goals",
-                          detail: "2 goals",
-                          icon: Target,
-                        },
-                      ].map(({ label, detail, icon: Icon }) => (
-                        <div
-                          key={label}
-                          className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3"
-                        >
-                          <Icon className="h-4 w-4 text-slate-500" />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs text-slate-300">
-                              {label}
-                            </p>
-                            <p className="text-[11px] text-slate-500">
-                              {detail}
-                            </p>
-                          </div>
-                          <Check className="h-3.5 w-3.5 text-emerald-400" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <ContextSourcesPanel />
                   <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-medium text-slate-300">

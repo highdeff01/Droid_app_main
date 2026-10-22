@@ -255,3 +255,20 @@ Re-audited against merged main.
 **Pre-existing failures (not caused by this work)**
 - 16 tests in `server/api-boundary.spec.ts` fail on main: the routes return 200/400/503 where
   the spec expects 401. No server file is changed here.
+
+## Final sweep: perception fallback and placeholder UI
+
+- **Perception engine** (`server/ai-perception-engine.ts`): when analysis fails, the report is
+  `source: "heuristic"`, `simulated: true`, `confidence: null` with no elements, and the
+  description says "Perception unavailable: <reason>". It no longer stamps 0.85/0.9/0.95
+  confidences or substitutes a "Primary Screen Center" element for an empty detection, so the
+  action gate can no longer "verify" a center-screen click against an invented box.
+  `/api/ai/autonomous-step` returns 502 with the simulated perception instead of planning on it.
+  The copilot panel shows "Conf: unverified" when confidence is null.
+- **Workspace context sources** (`ContextSourcesPanel`): reads the connected capture source
+  (`/api/assistant/sources`), companion notes (`/api/companion/notes`) and saved goal flows
+  (`/api/goal-workflows/flows`). Empty and failed sources are labelled as such; a check mark
+  shows only for a source that provides real context. "Manage" became "Refresh", which reloads
+  all three. The example instruction is labelled as not yet sent.
+- **Agents page**: "Configure" is disabled and labelled "Configure (unavailable)", because no
+  agents backend exists to persist settings.
