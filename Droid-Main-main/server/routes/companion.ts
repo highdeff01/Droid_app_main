@@ -4,8 +4,10 @@ import type {
   CompanionChatRequest,
   CompanionErrorEvent,
 } from "@shared/companion";
+import { LEDGER_DECISIONS, LEDGER_OUTCOMES } from "../../shared/feedback";
 import { CompanionService, workflowStepsFromActions } from "../companion-service";
 import type { NoteInput } from "../notes-store";
+import type { DecisionInput, ProposalInput } from "../feedback-ledger";
 import type { ObservationTarget } from "../screen-observer";
 import type { TriggerInput } from "../trigger-engine";
 import { getSavedDeviceWorkflows } from "./mobile-stream";
@@ -97,6 +99,37 @@ const chatSchema = z.object({
 });
 
 const decisionSchema = z.object({ approved: z.boolean() });
+
+const proposalDecisionSchema = z.object({
+  approved: z.boolean(),
+  editedText: z.string().min(1).max(4000).optional(),
+  comment: z.string().max(2000).optional(),
+});
+
+const ledgerProposalSchema = z.object({
+  topic: z.string().min(1).max(60),
+  summary: z.string().min(1).max(4000),
+  source: z.string().min(1).max(100),
+  workflowId: z.string().max(200).optional(),
+});
+
+const ledgerDecisionSchema = z.object({
+  decision: z.enum(LEDGER_DECISIONS),
+  originalText: z.string().max(4000).optional(),
+  editedText: z.string().max(4000).optional(),
+  comment: z.string().max(2000).optional(),
+});
+
+const ledgerExtensionSchema = z.object({
+  description: z.string().min(1).max(4000),
+  addedSteps: z.number().int().min(0).max(500),
+  workflowId: z.string().max(200).optional(),
+});
+
+const ledgerOutcomeSchema = z.object({
+  outcome: z.enum(LEDGER_OUTCOMES),
+  detail: z.string().max(4000).default(""),
+});
 
 function fail(res: Response, error: unknown) {
   const status = error instanceof z.ZodError ? 400 : /not found/i.test(String((error as Error)?.message)) ? 404 : 409;
@@ -233,8 +266,36 @@ companionRouter.post("/workflows/:id/propose-improvement", handle(async (req, re
   res.status(201).json({ success: true, proposal: await companionService.errors.proposeImprovement(req.params.id) });
 }));
 companionRouter.post("/proposals/:id/decision", handle((req, res) => {
-  const { approved } = decisionSchema.parse(req.body);
-  res.json({ success: true, proposal: companionService.errors.decideProposal(req.params.id, approved) });
+  const { approved, editedText, comment } = proposalDecisionSchema.parse(req.body);
+  const edit = editedText ? { editedText, comment } : undefined;
+  res.json({ success: true, proposal: companionService.errors.decideProposal(req.params.id, approved, edit) });
+}));
+
+// Follow-up / feedback ledger: proposal → decision → extension → outcome.
+const ledger = () => companionService.errors.ledger;
+companionRouter.get("/ledger", handle((req, res) => {
+  res.json({ success: true, threads: ledger().threads(typeof req.query.topic === "string" ? req.query.topic : undefined) });
+}));
+companionRouter.get("/ledger/feedback/:topic", handle((req, res) => {
+  res.json({ success: true, feedback: ledger().feedbackFor(req.params.topic) });
+}));
+companionRouter.get("/ledger/:proposalId", handle((req, res) => {
+  const entries = ledger().forProposal(req.params.proposalId);
+  res.status(entries.length ? 200 : 404).json(entries.length ? { success: true, entries } : { success: false, error: "Proposal not found in the ledger" });
+}));
+companionRouter.post("/ledger/proposals", handle((req, res) => {
+  res.status(201).json({ success: true, entry: ledger().recordProposal(ledgerProposalSchema.parse(req.body) as ProposalInput) });
+}));
+companionRouter.post("/ledger/:proposalId/decision", handle((req, res) => {
+  res.status(201).json({ success: true, entry: ledger().recordDecision(req.params.proposalId, ledgerDecisionSchema.parse(req.body) as DecisionInput) });
+}));
+companionRouter.post("/ledger/:proposalId/extension", handle((req, res) => {
+  const body = ledgerExtensionSchema.parse(req.body);
+  res.status(201).json({ success: true, entry: ledger().recordExtension(req.params.proposalId, body.description, body.addedSteps, body.workflowId) });
+}));
+companionRouter.post("/ledger/:proposalId/outcome", handle((req, res) => {
+  const body = ledgerOutcomeSchema.parse(req.body);
+  res.status(201).json({ success: true, entry: ledger().recordOutcome(req.params.proposalId, body.outcome, body.detail) });
 }));
 
 companionRouter.get("/workflows/:id", handle((req, res) => {

@@ -237,24 +237,8 @@ export async function loadPack(id: string, post: HudPost = postHudJson): Promise
 
 // ---------- Presentation ----------
 
-export interface PresentationSlide {
-  stepId: string;
-  name: string;
-  status: string;
-  events: Array<{ at: number; phase: string; detail: string }>;
-  screenshotUrl?: string;
-  confidence?: number;
-}
-
-export interface Presentation {
-  runId: string;
-  status: ReplayRun["status"];
-  startedAt: number;
-  completed: number;
-  total: number;
-  error?: string;
-  slides: PresentationSlide[];
-}
+export type { Presentation, PresentationSlide } from "@shared/presentation";
+import type { Presentation } from "@shared/presentation";
 
 /** Summarize a finished replay run from its own events; confidence appears only where analysis gave one. */
 export function buildPresentation(run: ReplayRun, steps: HudStepLike[]): Presentation {

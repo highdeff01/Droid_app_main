@@ -17,6 +17,7 @@ import {
 import type { SequenceStep } from "@/components/live-screen-hud";
 import type { ChainEntry, GuidanceEntry } from "@/lib/master-ai";
 import type { CheckupReport } from "@shared/overseer";
+import type { CompanionNote } from "@shared/companion";
 import { CHECKUP_TEXT } from "@/lib/overseer-client";
 
 export interface AiIntentionsPanelProps {
@@ -47,9 +48,33 @@ export interface AiIntentionsPanelProps {
   masterChain?: ChainEntry[];
   /** User guidance given to the Master AI, with when a turn first carried it. */
   masterGuidance?: GuidanceEntry[];
+  /** The AI's notes on screen activity and control times (newest first); the section is hidden when absent. */
+  activityNotes?: CompanionNote[] | null;
+  /** Why activity notes could not be loaded. */
+  activityError?: string | null;
 }
 
 export type OverseerCheckupItem = CheckupReport & { goal: string };
+
+function ActivityNotesSection({ activityNotes, activityError }: Pick<AiIntentionsPanelProps, "activityNotes" | "activityError">) {
+  if (activityNotes === undefined && !activityError) return null;
+  return (
+    <section className="space-y-1" data-activity-notes>
+      <h5 className="text-[9px] uppercase text-violet-400 font-bold">Activity &amp; control times</h5>
+      {activityError && <p className="text-rose-300" role="alert">Activity notes unavailable: {activityError}</p>}
+      {activityNotes && activityNotes.length === 0 && <p className="text-slate-500">No activity recorded yet.</p>}
+      {(activityNotes ?? []).map((note) => (
+        <div key={note.id} data-activity-note={note.id}>
+          <p className="text-slate-100">
+            <span className="text-slate-500">{new Date(note.createdAt).toLocaleTimeString()} </span>
+            {note.title}
+          </p>
+          {note.content && <p className="text-slate-400">{note.content}</p>}
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function OverseerCheckupSection({ overseerCheckups, overseerError }: Pick<AiIntentionsPanelProps, "overseerCheckups" | "overseerError">) {
   if (overseerCheckups === undefined && !overseerError) return null;
@@ -258,6 +283,7 @@ export const AiIntentionsPanel: React.FC<AiIntentionsPanelProps> = (props) => {
           <GoalsSection {...props} />
           <LearningSection {...props} />
           <OverseerCheckupSection {...props} />
+          <ActivityNotesSection {...props} />
         </div>
       )}
     </div>

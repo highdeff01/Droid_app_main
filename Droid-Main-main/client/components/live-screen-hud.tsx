@@ -143,6 +143,8 @@ import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-
 import { MasterAiPanel, type MasterAiPanelProps } from "./master-ai-panel";
 import { useOverseerSnapshot } from "@/hooks/use-overseer";
 import { latestCheckups } from "@/lib/overseer-client";
+import { useActivityNotes } from "@/hooks/use-activity-notes";
+import { ProgressFeed } from "./progress-feed";
 import {
   askQwen,
   completionStep,
@@ -367,6 +369,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   onTurnChain,
 }) => {
   const overseer = useOverseerSnapshot(!!intentionsPanel);
+  const activity = useActivityNotes();
   const executeVerifiedTask = (url: string, options: RequestInit) => {
     if (!onExecuteTask) return Promise.reject(new Error("Open Screen Hub to use verified device execution"));
     return onExecuteTask(url, options);
@@ -5049,9 +5052,16 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             {...intentionsPanel}
             overseerCheckups={overseer.snapshot ? latestCheckups(overseer.snapshot.operations) : null}
             overseerError={overseer.error}
+            activityNotes={activity.notes}
+            activityError={activity.error}
           />
         </div>
       ) : null}
+
+      {/* Live app progress shared with every tab */}
+      <div className="px-2 py-1 bg-slate-950 border-t border-slate-800 z-30 max-h-48 overflow-y-auto">
+        <ProgressFeed title="Live app progress" limit={5} />
+      </div>
 
       {/* Bottom Docked Status & Coordinate Bar */}
       <div className="h-7 px-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono z-30 select-none">

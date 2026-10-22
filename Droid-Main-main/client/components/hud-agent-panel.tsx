@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  buildPresentation,
   createPack,
   loadPack,
   type HudStepLike,
   type Presentation,
 } from "@/lib/hud-actions";
+import { fetchCurrentPresentation } from "@/lib/companion-api";
+import { resolvePresentation } from "@/lib/presentation-source";
 import {
   runTurnLoop,
   toSequenceSteps,
@@ -200,11 +201,12 @@ export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ steps, replayRun, 
       return { kind: "pack", pack };
     });
 
+  /** Opens the background draft of the latest operation; a finished local run is the fallback. */
   const handlePresentation = () =>
-    perform("Presentation", async () => {
-      if (!replayRun) throw new Error("No completed run yet. Run the sequence first.");
-      return { kind: "presentation", presentation: buildPresentation(replayRun, steps) };
-    });
+    perform("Presentation", async () => ({
+      kind: "presentation",
+      presentation: await resolvePresentation(fetchCurrentPresentation, replayRun, steps),
+    }));
 
   /** A verified plan forwards to the HUD sequence, where Test/Simulate and Run pick it up. */
   const handleLoadPlan = (planned: GoalStep[]) => {
@@ -377,6 +379,7 @@ const PresentationView: React.FC<{ presentation: Presentation }> = ({ presentati
     <DialogHeader>
       <DialogTitle>
         Run {presentation.runId}: {presentation.status} ({presentation.completed}/{presentation.total})
+        {"draft" in presentation && presentation.draft ? " — draft, updating in the background" : ""}
       </DialogTitle>
     </DialogHeader>
     {presentation.error && <p className="text-sm text-red-500">{presentation.error}</p>}

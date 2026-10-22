@@ -25,6 +25,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import { ProgressFeed } from "./progress-feed";
 
 type SortOption = "modifiedTime" | "name" | "status" | "repeatCount";
 
@@ -204,6 +205,8 @@ export function WorkflowLibraryPanel() {
             {templates.length} Working Templates Ready
           </Badge>
         </div>
+
+        <ProgressFeed title="Live workflow progress" limit={4} className="pt-2" />
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
           <div className="flex flex-1 gap-2 min-w-[240px]">

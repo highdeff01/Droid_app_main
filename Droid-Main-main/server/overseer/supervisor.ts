@@ -29,6 +29,15 @@ import { decideVerdict } from "./verdict";
 export type AuditLevel = "INFO" | "WARN" | "ERROR" | "SUCCESS";
 export type AuditSink = (level: AuditLevel, message: string, metadata: Record<string, unknown>) => void;
 
+/** What the supervisor saw happen, for consumers that follow operations (timeline, progress, drafts). */
+export type SupervisorEvent =
+  | { type: "started"; op: SupervisedOperation }
+  | { type: "step"; op: SupervisedOperation; report: OperationStepReport }
+  | { type: "verdict"; op: SupervisedOperation; report: OperationStepReport; verdict: OverseerVerdict }
+  | { type: "finished"; op: SupervisedOperation };
+
+export type SupervisorListener = (event: SupervisorEvent) => void;
+
 export interface SupervisorDeps {
   analyzer: OverseerAnalyzer;
   /** Fallback fresh capture when the operation supplies none; null when no live frame exists. */
@@ -82,6 +91,7 @@ export class OverseerSupervisor {
   private interventions: OverseerIntervention[] = [];
   private readonly checkupsInFlight = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly listeners = new Set<SupervisorListener>();
   private readonly now: () => number;
   private readonly stallMs: number;
   private readonly checkupIntervalMs: number;
@@ -116,7 +126,24 @@ export class OverseerSupervisor {
     this.pruneFinished();
     this.deps.audit("INFO", `Supervising ${op.kind} "${op.goal}"`, { operationId: op.id, source: op.source });
     this.enforceConflicts();
+    this.emit({ type: "started", op });
     return op;
+  }
+
+  /** Follows every operation's start, steps, verdicts and finish; returns the unsubscribe. */
+  subscribe(listener: SupervisorListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private emit(event: SupervisorEvent) {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error("Supervisor listener failed:", error);
+      }
+    }
   }
 
   get(id: string): SupervisedOperation | undefined {
@@ -149,6 +176,7 @@ export class OverseerSupervisor {
       detail,
       executorReport: true,
     });
+    this.emit({ type: "finished", op });
   }
 
   /** User or overseer pause; applied immediately. */
@@ -293,6 +321,7 @@ export class OverseerSupervisor {
     if (report.region) op.region = report.region;
     const signature = actionSignature(report);
     op.ledger[signature] = (op.ledger[signature] ?? 0) + 1;
+    this.emit({ type: "step", op, report });
   }
 
   private async freshCapture(op: SupervisedOperation): Promise<string | null> {
@@ -329,6 +358,7 @@ export class OverseerSupervisor {
     op.verdicts.push(verdict);
     if (op.verdicts.length > MAX_VERDICTS_PER_OP) op.verdicts.shift();
     this.auditVerdict(op, report, verdict);
+    this.emit({ type: "verdict", op, report, verdict });
     return verdict;
   }
 

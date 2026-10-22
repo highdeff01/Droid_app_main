@@ -149,3 +149,30 @@ describe("AiIntentionsPanel overseer checkups", () => {
     expect(markup).not.toContain("data-checkup");
   });
 });
+
+describe("AiIntentionsPanel activity notes", () => {
+  const note = {
+    id: "n1",
+    category: "observation" as const,
+    title: "Workflow finished: Log in",
+    content: "Total 4200 ms, 3 step(s), retries=1. Per step — Open: 1200 ms",
+    tags: ["activity", "control_time"],
+    createdAt: "2026-01-01T10:00:00.000Z",
+  };
+
+  it("omits the section when activity notes were not wired in", () => {
+    expect(renderPanel()).not.toContain("Activity &amp; control times");
+  });
+
+  it("shows the AI's activity notes with their control times", () => {
+    const markup = renderPanel({ activityNotes: [note] });
+    expect(markup).toContain("Workflow finished: Log in");
+    expect(markup).toContain("retries=1");
+    expect(markup).toContain('data-activity-note="n1"');
+  });
+
+  it("shows a failed notes load as a failure", () => {
+    const markup = renderPanel({ activityNotes: null, activityError: "HTTP 500" });
+    expect(markup).toContain("Activity notes unavailable: HTTP 500");
+  });
+});

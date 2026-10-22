@@ -6,6 +6,7 @@ import type {
 } from "@shared/companion";
 import type { DurableStore } from "./durable-store";
 import { CompanionCollection, createCompanionId, nowIso } from "./companion-store";
+import { FeedbackLedger } from "./feedback-ledger";
 import type { NotesStore } from "./notes-store";
 import type { WorkflowProposer } from "./workflow-proposer";
 
@@ -25,6 +26,8 @@ export type WorkflowLookup = (
 export class ErrorBus {
   readonly tasks: CompanionCollection<FixTask>;
   readonly proposals: CompanionCollection<WorkflowProposal>;
+  /** Follow-up ledger on the same durable store: every proposal and decision lands here. */
+  readonly ledger: FeedbackLedger;
   private listeners: ErrorListener[] = [];
 
   constructor(
@@ -35,6 +38,7 @@ export class ErrorBus {
   ) {
     this.tasks = new CompanionCollection<FixTask>(store, "companionFixTasks");
     this.proposals = new CompanionCollection<WorkflowProposal>(store, "companionProposals");
+    this.ledger = new FeedbackLedger(store);
   }
 
   onError(listener: ErrorListener): () => void {
@@ -91,6 +95,7 @@ export class ErrorBus {
         `Source: ${task.source}`,
         task.failedStep ? `Failed step: ${JSON.stringify(task.failedStep)}` : "",
         workflow ? `Workflow: ${workflow.name}` : "",
+        ...this.ledger.feedbackFor("fix"),
       ]
         .filter(Boolean)
         .join("\n"),
@@ -116,6 +121,7 @@ export class ErrorBus {
     const draft = await this.proposer({
       goal: `Improve the workflow "${workflow.name}" so it stops failing`,
       context: [
+        ...this.ledger.feedbackFor("improvement"),
         ...failures.map((task) => `Failure: ${task.error}${task.failedStep?.name ? ` at ${task.failedStep.name}` : ""}`),
         ...events.map((note) => `Event ${note.createdAt}: ${note.title} — ${note.content}`),
       ].join("\n") || "No recorded failures yet.",
@@ -126,13 +132,19 @@ export class ErrorBus {
   }
 
   /** Marks a proposal approved or rejected; approval returns its steps for gated execution. */
-  decideProposal(proposalId: string, approved: boolean): WorkflowProposal {
+  decideProposal(proposalId: string, approved: boolean, edit?: { editedText: string; comment?: string }): WorkflowProposal {
     const proposal = this.proposals.get(proposalId);
     if (!proposal) throw new Error("Proposal not found");
     if (proposal.status !== "proposed") throw new Error(`Proposal already ${proposal.status}`);
     const status = approved ? "approved" : "rejected";
     if (proposal.taskId)
       this.tasks.update(proposal.taskId, { status: approved ? "approved" : "open" });
+    this.ledger.recordDecision(proposalId, {
+      decision: !approved ? "rejected" : edit ? "edited" : "approved",
+      originalText: proposal.summary,
+      editedText: edit?.editedText,
+      comment: edit?.comment,
+    });
     return this.proposals.update(proposalId, { status })!;
   }
 
@@ -147,7 +159,7 @@ export class ErrorBus {
     workflowId?: string,
     taskId?: string,
   ): WorkflowProposal {
-    return this.proposals.insert({
+    const proposal = this.proposals.insert({
       id: createCompanionId("proposal"),
       origin,
       taskId,
@@ -157,5 +169,7 @@ export class ErrorBus {
       status: "proposed",
       createdAt: nowIso(),
     });
+    this.ledger.recordProposal({ proposalId: proposal.id, topic: origin, summary, source: "companion", workflowId });
+    return proposal;
   }
 }

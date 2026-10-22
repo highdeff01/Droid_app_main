@@ -92,6 +92,7 @@ import { usePWAInstall } from "@/hooks/usePWAInstall";
 import { InteractiveContextMenu, ContextMenuTarget } from "@/components/interactive-context-menu";
 import { BarcodeInventoryScannerModal } from "@/components/barcode-inventory-scanner-modal";
 import { startPollLoop } from "@/lib/poll-loop";
+import { ProgressFeed } from "@/components/progress-feed";
 import {
   scanBarcodeFromVideo,
   lookupBarcodeItem,
@@ -2119,6 +2120,7 @@ export default function MobileRemote() {
       {/* ---------------------------------------------------- */}
       {/* TOP HEADER & TELEMETRY STRIP */}
       <a href="/phone-control" className="text-emerald-300 underline text-sm mb-3">Paired Android controls & background recording (scan a desktop device QR first)</a>
+      <ProgressFeed title="Live app progress" limit={3} className="w-full max-w-md mb-2" />
       {/* ---------------------------------------------------- */}
       <div className="w-full max-w-md flex flex-col gap-1.5 mb-2">
         <div className="flex items-center justify-between">

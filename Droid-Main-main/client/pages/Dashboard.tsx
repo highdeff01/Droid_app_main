@@ -75,6 +75,7 @@ import { companionApi } from "@/lib/companion-api";
 import type { WorkflowStepDraft } from "@shared/companion";
 import { CompanionChatPanel } from "@/components/companion-chat-panel";
 import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
+import { ProgressFeed } from "@/components/progress-feed";
 import { applyUserOverride, canUserOverride, gateTargetForSteps, runActionGate, USER_VERIFIED_OVERRIDE, type GateResult } from "@/lib/action-gate";
 import {
   correctionOutcomes, fetchLearningProfile, gateOutcome, gateReportFromResult, gateStepLabel, goalExecutionSteps,
@@ -3265,6 +3266,16 @@ export default function Dashboard({
                     </CardHeader>
                     <CardContent className="p-2 max-h-72 overflow-y-auto">
                       <CompanionTasksPanel onRunSteps={runCompanionSteps} />
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-slate-900 border-slate-800">
+                    <CardHeader className="p-3 bg-slate-950 border-b border-slate-800">
+                      <CardTitle className="text-xs font-bold text-slate-100">
+                        Live App Progress
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-2 max-h-72 overflow-y-auto">
+                      <ProgressFeed title="Runs, goals, triggers, errors & notes" />
                     </CardContent>
                   </Card>
                   <Card className="bg-slate-900 border-slate-800">

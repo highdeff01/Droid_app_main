@@ -9,7 +9,8 @@ import type {
   WorkflowProposal,
   WorkflowStepDraft,
 } from "@shared/companion";
-import { httpFailure } from "@/lib/companion-connection";
+import type { FollowUpThread, LedgerEntry, LedgerOutcome } from "@shared/feedback";
+import type { PresentationDraft } from "@shared/presentation";
 
 export interface CompanionWorkflow {
   id?: string;
@@ -65,4 +66,18 @@ export const companionApi = {
     companionRequest<{ action: PendingCompanionAction; workflow?: CompanionWorkflow }>(`/pending-actions/${actionId}/decision`, "POST", { approved }),
   markDispatched: (actionId: string) =>
     companionRequest<{ action: PendingCompanionAction }>(`/pending-actions/${actionId}/dispatched`, "POST", {}).then((d) => d.action),
+  /** Follow-up threads: what was suggested, what the user chose, what happened. */
+  ledger: (topic?: string) =>
+    companionRequest<{ threads: FollowUpThread[] }>(`/ledger${topic ? `?topic=${encodeURIComponent(topic)}` : ""}`).then((d) => d.threads),
+  recordOutcome: (proposalId: string, outcome: LedgerOutcome, detail: string) =>
+    companionRequest<{ entry: LedgerEntry }>(`/ledger/${proposalId}/outcome`, "POST", { outcome, detail }).then((d) => d.entry),
 };
+
+/** The background draft (or finished) presentation of the latest operation; null when none has run. */
+export async function fetchCurrentPresentation(): Promise<PresentationDraft | null> {
+  const response = await fetch("/api/presentations/current");
+  if (response.status === 404) return null;
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.success) throw new Error(data?.error || `Presentation request failed (${response.status})`);
+  return data.presentation as PresentationDraft;
+}

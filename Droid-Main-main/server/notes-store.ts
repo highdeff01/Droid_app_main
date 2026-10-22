@@ -40,6 +40,7 @@ function matchScore(note: CompanionNote, words: string[]): number {
 /** Notes the AI saves (requests, observations, decisions, goal states) and important-event screenshots. */
 export class NotesStore {
   private readonly notes: CompanionCollection<CompanionNote>;
+  private readonly listeners = new Set<(note: CompanionNote) => void>();
 
   constructor(store: DurableStore) {
     this.notes = new CompanionCollection<CompanionNote>(store, "companionNotes");
@@ -50,7 +51,7 @@ export class NotesStore {
     if (input.screenshot && !SCREENSHOT_PATTERN.test(input.screenshot))
       throw new Error("A note screenshot must be a PNG/JPEG data URL");
     const tags = (input.tags ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
-    return this.notes.insert({
+    const note = this.notes.insert({
       id: createCompanionId("note"),
       category: input.category,
       title: input.title.trim(),
@@ -60,6 +61,14 @@ export class NotesStore {
       screenshot: input.screenshot,
       createdAt: nowIso(),
     });
+    this.listeners.forEach((listener) => listener(note));
+    return note;
+  }
+
+  /** Calls the listener with every note added from now on; returns the unsubscribe. */
+  onAdd(listener: (note: CompanionNote) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   /** Records an important event, tagged with its kind; the screenshot is the frame at that moment. */
