@@ -117,3 +117,25 @@ describe("AiIntentionsPanel profile error", () => {
     expect(markup).toContain("network down");
   });
 });
+
+describe("AiIntentionsPanel orchestration chain", () => {
+  it("acknowledges master guidance and lists the operation chain", () => {
+    const markup = renderPanel({
+      masterGuidance: [{ id: "g1", text: "skip the ad", at: 5, appliedAt: null }],
+      masterChain: [
+        { at: 1, message: "Master AI started" },
+        { at: 2, operationId: "op1", kind: "replay", message: "replay failed → goal" },
+      ],
+    });
+
+    expect(markup).toContain("Guidance acknowledged");
+    expect(markup).toContain("skip the ad");
+    expect(markup).toContain('data-guidance-applied="false"');
+    expect(markup).toContain('data-chain-kind="replay"');
+    expect(markup).toContain("Master AI started");
+  });
+
+  it("omits the section when no master data is passed", () => {
+    expect(renderPanel()).not.toContain("data-orchestration");
+  });
+});

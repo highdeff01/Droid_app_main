@@ -144,6 +144,29 @@ defaults a step's missing `confidence` to `0.95`. It now maps
 modal built from a run linked this way shows a confidence figure only when one actually came
 from real analysis, instead of a fabricated 0.95 for every step.
 
+## Master AI panel (`client/components/master-ai-panel.tsx`)
+
+The panel drives one `MasterAiController` (`client/lib/master-ai.ts`). Only one
+device-touching operation (goal, replay, trigger or habit) runs at a time. They are
+taken by priority: a user request first, then a habit, then a trigger, and FIFO within
+the same priority. Qwen orchestration and flow saves run alongside. Every AI device
+action still goes through the action gate.
+
+| Control | Handler | API call | Return / feedback path | Status |
+|---|---|---|---|---|
+| Start Master AI | `MasterAiController.start` | `POST /api/companion/triggers/watch` | Arms the duration cap, enables trigger evaluation and starts the queue. The chain shows "Trigger evaluation enabled", or the server's error if it could not be enabled | real (this PR) |
+| Stop ALL AI | `MasterAiController.stop` | aborts each operation's `AbortController` (gate capture and analysis, goal turn loop), `POST /api/replay/{id}/cancel` for registered runs, `DELETE /api/companion/triggers/watch`, `handleStopSequence` | Awaited. The toast is built from the `StopReport`: operations aborted, queued operations cancelled, replays cancelled, approvals declined, and whether triggers are off. It names anything still settling, plus any errors | real (this PR) |
+| Send guidance | `MasterAiController.addGuidance` | sent as `guidance` on the next `/api/goal-workflows/propose` and `/assess` call (the "USER GUIDANCE" prompt line) and folded into the Qwen orchestrate objective | Acknowledged at once in the intentions panel "Orchestration chain" section. It shows "applied" once a turn has carried it. The in-flight step is never interrupted | real (this PR) |
+| Run goal | `enqueue({kind:"goal"})` → `runGoalLoop` | `/api/replay/capture`, `/api/ai/describe-screen`, `/api/goal-workflows/ocr`, `/propose`, `/assess`, gated `/api/replay` | Goal-loop events go to the HUD thinking indicator. Error-fix proposals wait for Approve/Decline. A completed goal forwards `save_flow` (`POST /api/goal-workflows/flows`) | real (this PR) |
+| Queue replay | `enqueue({kind:"replay"})` → `runVerifiedReplay` | action gate → `POST /api/replay` → poll `GET /api/replay/{id}` | Completion comes from the run status. A failed replay forwards a goal re-plan for the same objective | real (this PR) |
+| Queue habit routine | `fetchLearningProfile` → `enqueue({kind:"habit"})` → `runGatedSequence(habitRoutinePlan)` | `GET /api/learning/habits`, gated dispatch | Uses the learned `repeatedPattern` only. Without one, a toast says no habit has been learned yet | real (this PR) |
+| Qwen orchestrate | `enqueue({kind:"qwen_orchestrate"})` | `POST /api/ai/apply-suggestions-with-qwen` | The optimized steps replace the HUD sequence. The detail shows `adjustmentsMade` only when the server returned it | real (this PR) |
+| Trigger feed (automatic, every 5 s while active) | `newTriggerActions` → `enqueue({kind:"trigger"})` | `GET /api/companion/pending-actions`, `POST …/decide`, gated replay, `…/dispatched` | Queued behind any running device operation. Actions that require approval wait for Approve | real (this PR) |
+| Approve / Decline | `MasterAiController.answerApproval` | — (resolves the waiting runner) | Recorded in the chain. Stop declines every pending approval | real (this PR) |
+| Max iterations / Duration cap / Non-repetition | `MasterAiController.setLimits` | — | Enforced. Going past max iterations fails the operation before its next dispatch. The duration cap runs the full Stop. Non-repetition refuses any step whose method is in the failed-methods ledger, which forces a re-plan | real (this PR) |
+
+The `/api/companion` router is mounted again in `server/index.ts`, behind `requireApiAccess`. Its mount had been dropped in a merge.
+
 ## Known gaps
 
 No row is marked **remaining fake**. Two rows that were fake are now fixed in this PR:

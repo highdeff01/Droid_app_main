@@ -57,6 +57,7 @@ const proposeSchema = z.object({
   screenshot: imageSchema.optional(),
   history: z.array(historyItemSchema).max(100).default([]),
   reason: z.string().max(2000).optional(),
+  guidance: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
   endpoint: z.string().optional(),
   model: z.string().optional(),
 });
@@ -66,6 +67,7 @@ const assessSchema = z.object({
   observation: observationSchema,
   screenshot: imageSchema.optional(),
   history: z.array(historyItemSchema).max(100).default([]),
+  guidance: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
   endpoint: z.string().optional(),
   model: z.string().optional(),
 });
@@ -98,6 +100,12 @@ function describeObservation(observation: ScreenObservation): string {
   ].join("\n");
 }
 
+/** User guidance typed during the run, applied to every later step. */
+export function guidanceLines(guidance: string[] | undefined): string[] {
+  if (!guidance || guidance.length === 0) return [];
+  return [`USER GUIDANCE (follow it for every remaining step): ${guidance.map((g) => `- ${g}`).join(" ")}`];
+}
+
 function contextMessage(
   label: string,
   body: z.infer<typeof proposeSchema> | z.infer<typeof assessSchema>,
@@ -107,6 +115,7 @@ function contextMessage(
     `GOAL: ${body.goal}`,
     describeObservation(body.observation as ScreenObservation),
     `Executed steps: ${JSON.stringify(body.history)}`,
+    ...guidanceLines(body.guidance),
     ...extra,
   ].join("\n");
   return body.screenshot
