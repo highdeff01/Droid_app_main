@@ -13,8 +13,6 @@ interface StepTiming {
 interface OperationClock {
   lastAt: number;
   steps: StepTiming[];
-  seen: Set<string>;
-  retries: number;
   lastFrameHash?: string;
 }
 
@@ -53,7 +51,7 @@ export class ActivityNotes {
   }
 
   private started(op: SupervisedOperation) {
-    this.clocks.set(op.id, { lastAt: op.startedAt, steps: [], seen: new Set(), retries: 0 });
+    this.clocks.set(op.id, { lastAt: op.startedAt, steps: [] });
     return this.notes.add({
       category: "observation",
       title: `Started ${label(op)}`,
@@ -65,8 +63,6 @@ export class ActivityNotes {
   private step(op: SupervisedOperation, stepId: string, name: string, frame?: string) {
     const clock = this.clock(op);
     const at = this.now();
-    if (clock.seen.has(stepId)) clock.retries += 1;
-    clock.seen.add(stepId);
     clock.steps.push({ stepId, name, ms: Math.max(0, at - clock.lastAt) });
     clock.lastAt = at;
     return frame ? this.screenChange(op, clock, name, frame) : undefined;
@@ -92,7 +88,7 @@ export class ActivityNotes {
     this.clocks.delete(op.id);
     const times: ControlTimes = {
       totalMs: Math.max(0, (op.finishedAt ?? this.now()) - op.startedAt),
-      retries: clock.retries,
+      retries: op.retriesUsed,
       steps: clock.steps,
     };
     const goalReached = op.kind === "goal_run" && op.status === "completed";
@@ -108,7 +104,7 @@ export class ActivityNotes {
   private clock(op: SupervisedOperation): OperationClock {
     let clock = this.clocks.get(op.id);
     if (!clock) {
-      clock = { lastAt: op.startedAt, steps: [], seen: new Set(), retries: 0 };
+      clock = { lastAt: op.startedAt, steps: [] };
       this.clocks.set(op.id, clock);
     }
     return clock;

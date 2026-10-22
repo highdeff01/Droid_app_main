@@ -52,12 +52,13 @@ describe("ActivityNotes", () => {
     activity.handle(stepEvent(op, "s2"));
 
     clock = 500;
-    const finished = { ...op, status: "completed" as const, finishedAt: 500 };
+    const finished = { ...op, status: "completed" as const, finishedAt: 500, retriesUsed: 2 };
     activity.handle({ type: "finished", op: finished });
 
     const [note] = notes.list({ tag: "control_time" });
     expect(note.content).toContain("Total 500 ms");
-    expect(note.content).toContain("retries=1");
+    // A repeated stepId is a declared repeat, not a retry; retries are the supervisor's count.
+    expect(note.content).toContain("retries=2");
     expect(note.content).toContain("100 ms");
     expect(note.content).toContain("150 ms");
 

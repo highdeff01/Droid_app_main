@@ -83,9 +83,9 @@ export function connectAppPipeline(supervisor: OverseerSupervisor, companion: Co
   supervisor.subscribe((event) => {
     publishOperation(stream, event);
     drafts.handle(event);
-    const note = activity.handle(event);
-    if (note) publishNote(stream, note);
+    activity.handle(event);
   });
+  companion.notes.onAdd((note) => publishNote(stream, note));
   drafts.onRefresh((draft) => {
     if (!draft.draft || draft.slides.length)
       stream.publish({
