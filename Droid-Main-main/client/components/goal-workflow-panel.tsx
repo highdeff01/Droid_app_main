@@ -25,6 +25,7 @@ import {
   type GoalStep,
   type PlanProposal,
 } from "@shared/goal-loop";
+import { finishGoalRun, registerGoalRun, reportGoalStep } from "@/lib/overseer-goal-run";
 
 interface GoalWorkflowPanelProps {
   device: GoalDevice;
@@ -162,15 +163,33 @@ export const GoalWorkflowPanel: React.FC<GoalWorkflowPanelProps> = ({ device, on
     setPlan([]);
     setCompleted(null);
     setFailure(null);
+    const registration = await registerGoalRun(goal.trim(), `goal-workflow-panel / ${device.targetDevice}`);
+    const operationId = registration.ok === true ? registration.value : null;
+    if (registration.ok === false) toast.warning(`Overseer not supervising this run: ${registration.error}`);
+    const superviseStep = async (step: ExecutedStep) => {
+      if (!operationId) return;
+      const outcome = await reportGoalStep(operationId, step);
+      if (outcome.ok === true && (outcome.value === "pause" || outcome.value === "stop")) {
+        toast.warning(`Overseer ${outcome.value === "stop" ? "stopped" : "paused"} the run; see the Overseer console`);
+        controller.abort();
+      }
+    };
     const result = await runGoalLoop(goal, {
       device,
       signal: controller.signal,
       onEvent: handleEvent,
       onChain: (_links, text) => onChain?.(text),
       onPlan: (state) => setPlan(state.plan),
-      onStep: (step) => setExecuted((prev) => [...prev, step]),
+      onStep: (step) => {
+        setExecuted((prev) => [...prev, step]);
+        void superviseStep(step);
+      },
       approve: askApproval,
     });
+    if (operationId) {
+      const status = result.status === "completed" ? "completed" : controller.signal.aborted ? "cancelled" : "failed";
+      void finishGoalRun(operationId, status, result.status === "failed" ? result.reason : undefined);
+    }
     setRunning(false);
     if (result.status === "completed") setCompleted(result);
     else setFailure(result.reason);

@@ -242,6 +242,56 @@ describe("runGoalLoop", () => {
     expect(replayCalls).toHaveLength(1);
   });
 
+  it("sends guidance added mid-run with the next planning turn, not the earlier one", async () => {
+    const step = makeStep({ id: "s1", action: "click", x: 10, y: 10, targetLabel: "OK", expectation: { kind: "text_found", text: "Done" } });
+    const inPlace = makeElement({ name: "OK", boundingBox: { x: 0, y: 0, width: 30, height: 30 }, center: { x: 10, y: 10 } });
+    const harness = createHarness({
+      reports: [makeReport({ elements: [inPlace] })],
+      proposals: [
+        { goal: GOAL, reason: "", steps: [step] },
+        { goal: GOAL, reason: "corrected", steps: [makeStep({ id: "s2", action: "wait" })] },
+      ],
+    });
+    const guidance: string[] = [];
+    const { options } = makeOptions({
+      guidance: () => [...guidance],
+      onPlan: () => {
+        if (guidance.length === 0) guidance.push("avoid the top bar");
+      },
+    });
+
+    await runGoalLoop(GOAL, options, harness.deps);
+
+    const proposeBodies = harness.calls
+      .filter((c) => c.kind === "post" && c.url === "/api/goal-workflows/propose")
+      .map((c) => c.body as { guidance?: string[] });
+    expect(proposeBodies[0].guidance).toBeUndefined();
+    expect(proposeBodies[1].guidance).toEqual(["avoid the top bar"]);
+    const assessBodies = harness.calls
+      .filter((c) => c.kind === "post" && c.url === "/api/goal-workflows/assess")
+      .map((c) => c.body as { guidance?: string[] });
+    expect(assessBodies[0].guidance).toEqual(["avoid the top bar"]);
+  });
+
+  it("refuses a step the beforeStep hook rejects without gating or dispatching it", async () => {
+    const step = makeStep({ id: "s1", action: "click", x: 10, y: 10, targetLabel: "OK" });
+    const inPlace = makeElement({ name: "OK", boundingBox: { x: 0, y: 0, width: 30, height: 30 }, center: { x: 10, y: 10 } });
+    const harness = createHarness({
+      reports: [makeReport({ elements: [inPlace] })],
+      proposals: [{ goal: GOAL, reason: "", steps: [step] }],
+    });
+    const approve = vi.fn().mockResolvedValue(false);
+    const { options } = makeOptions({ approve, beforeStep: () => "method already failed" });
+
+    const result = await runGoalLoop(GOAL, options, harness.deps);
+
+    expect(result.status).toBe("failed");
+    expect(harness.gate).not.toHaveBeenCalled();
+    expect(harness.calls.some((c) => c.kind === "post" && c.url === "/api/replay")).toBe(false);
+    const replanBody = harness.calls.filter((c) => c.url === "/api/goal-workflows/propose")[1]?.body as { reason?: string };
+    expect(replanBody.reason).toBe("method already failed");
+  });
+
   it("keeps the original goal and records one revision when an approved re-plan completes", async () => {
     const step = makeStep({ id: "s1", action: "click", x: 10, y: 10, targetLabel: "OK", expectation: { kind: "text_found", text: "Done" } });
     const inPlace = makeElement({ name: "OK", boundingBox: { x: 0, y: 0, width: 30, height: 30 }, center: { x: 10, y: 10 } });

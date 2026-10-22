@@ -28,6 +28,12 @@ export interface GoalLoopOptions {
   onStep?: (executed: ExecutedStep, state: GoalState) => void;
   /** Resolves true only when the user approves the corrected proposal. */
   approve: (proposal: PlanProposal) => Promise<boolean>;
+  /** User guidance read fresh for every planning/assessment turn (never interrupts a step). */
+  guidance?: () => string[];
+  /** Called before a step is gated; a returned reason refuses the step and forces a re-plan. Throwing ends the run. */
+  beforeStep?: (step: GoalStep) => string | null;
+  /** Called with the replay run id each time a gated step starts on the device. */
+  onReplayStarted?: (runId: string) => void;
 }
 
 export type GoalLoopResult =

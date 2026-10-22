@@ -69,6 +69,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
+import { companionApi } from "@/lib/companion-api";
+import type { WorkflowStepDraft } from "@shared/companion";
+import { CompanionChatPanel } from "@/components/companion-chat-panel";
+import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import { applyUserOverride, canUserOverride, gateTargetForSteps, runActionGate, USER_VERIFIED_OVERRIDE, type GateResult } from "@/lib/action-gate";
 import {
   correctionOutcomes, fetchLearningProfile, gateOutcome, gateReportFromResult, gateStepLabel, goalExecutionSteps,
@@ -83,6 +87,11 @@ import type { WorkflowStepDraft } from "@shared/companion";
 import { CompanionChatPanel } from "@/components/companion-chat-panel";
 import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import { GOAL_PHASE_BADGE, type GoalLoopEvent } from "@/lib/goal-loop-runner";
+import type { MasterSnapshot } from "@/lib/master-ai";
+import { companionApi } from "@/lib/companion-api";
+import type { WorkflowStepDraft } from "@shared/companion";
+import { CompanionChatPanel } from "@/components/companion-chat-panel";
+import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import {
   LiveScreenHUD,
   SequenceStep,
@@ -311,6 +320,7 @@ export default function Dashboard({
   /** Goal id → the replay run executing it; drives automatic checkoff. */
   const goalRunsRef = useRef<Record<string, string>>({});
   const [gateReport, setGateReport] = useState<GateReport | null>(null);
+  const [masterSnapshot, setMasterSnapshot] = useState<MasterSnapshot | null>(null);
   const [learningProfile, setLearningProfile] = useState<UserHabitProfile | null>(null);
   const [learningError, setLearningError] = useState<string | null>(null);
   const [globalCursorState, setGlobalCursorState] = useState<GlobalAICursorState | null>(null);
@@ -2169,7 +2179,18 @@ export default function Dashboard({
               </CardHeader>
               <CardContent className="p-2">
                 <LiveScreenHUD
+                  masterPanel={{
+                    device: { targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined },
+                    sequence,
+                    objective: userObjective,
+                    onLoopEvent: handleGoalLoopEvent,
+                    onSequenceOptimized: setSequence,
+                    haltExternal: handleStopSequence,
+                    onSnapshot: setMasterSnapshot,
+                  }}
                   intentionsPanel={{
+                    masterChain: masterSnapshot?.chain,
+                    masterGuidance: masterSnapshot?.guidance,
                     gateReport,
                     replayRun,
                     sequence,

@@ -48,7 +48,10 @@ import { verificationReportsRouter } from "./routes/verification-reports";
 import { schedulingRouter } from "./routes/scheduling";
 import { methodLearningRouter } from "./routes/method-learning";
 import { mobileStreamRouter, getLatestRealMobileFrame, getRecentMobileFrames } from "./routes/mobile-stream";
-import { createCaptureHandler, type CaptureSource } from "./capture-frame";
+import { createCaptureHandler, resolveCaptureFrame, type CaptureSource } from "./capture-frame";
+import { createOverseer } from "./overseer";
+import type { OverseerSupervisor } from "./overseer/supervisor";
+import { createOverseerRouter } from "./routes/overseer";
 import { workflowRuntime } from "./workflow-runtime";
 import { redactSensitive } from "./security";
 
@@ -199,6 +202,17 @@ const screenCaptureSources: CaptureSource[] = [
   },
 ];
 
+let overseer: OverseerSupervisor | null = null;
+
+/** One overseer per process (createServer may run more than once); captures through the shared fallback order. */
+function getOverseer(): OverseerSupervisor {
+  if (!overseer) {
+    overseer = createOverseer(async () => (await resolveCaptureFrame(screenCaptureSources)).imageData);
+    overseer.start();
+  }
+  return overseer;
+}
+
 export function createServer() {
   const app = express();
 
@@ -243,6 +257,8 @@ export function createServer() {
   app.use("/api/method-learning", requireApiAccess, methodLearningRouter);
   // Habit profile, outcome feedback and templates (client: HUD learning strip, squad, workflow library).
   app.use("/api/learning", requireApiAccess, methodLearningRouter);
+  // Companion notes, triggers (watch on/off), pending trigger actions; the HUD Master AI panel drives it.
+  app.use("/api/companion", requireApiAccess, companionRouter);
 
   // === Master assistant routes ===
   app.use("/api/assistant", assistantRouter);
@@ -1128,6 +1144,9 @@ except Exception as e:
   app.use(mobileStreamRouter);
 
   workflowRuntime.start();
+
+  // Overseer AI: independent verification and supervision of every AI operation.
+  app.use("/api/overseer", requireApiAccess, createOverseerRouter(getOverseer()));
   
   // Replay, Phone bridge & Review routes
   try {
