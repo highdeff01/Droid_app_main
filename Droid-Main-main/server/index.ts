@@ -221,14 +221,14 @@ export function createServer() {
 
   // CORS is an explicit allowlist; a failure here fails server creation (closed), never permissive.
   app.use(createCorsMiddleware());
-  // Per-IP safety limit on /api (streaming/polling routes are whitelisted inside the limiter).
-  app.use("/api", createApiRateLimiter());
+  // The single /api rate limiter, registered before the body parsers so a limited request is
+  // rejected without parsing its body. Non-streaming /api routes are rate limited per IP; the
+  // high-frequency streaming/polling routes are whitelisted inside the limiter. Every /api route
+  // is behind the API authentication boundary; requireApiAccess itself lets the public
+  // ping/health/demo routes through.
+  app.use("/api", createApiRateLimiter(), requireApiAccess);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-
-  // Every /api route below is rate limited and behind the API authentication boundary;
-  // requireApiAccess itself lets the public health/demo routes through.
-  app.use("/api", createApiRateLimiter(), requireApiAccess);
 
   // === Master assistant routes (protected) ===
   app.use("/api/assistant", requireApiAccess, assistantRouter);
