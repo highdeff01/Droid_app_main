@@ -9,13 +9,13 @@ export const ADB_CAPTURE_TIMEOUT_MS = 8000;
 /** Reads the latest real synced phone frame, or null when none exists. */
 export type RealFrameReader = () => string | null | undefined;
 
-interface Reply {
+export interface Reply {
   status: number;
   body: Record<string, unknown>;
 }
 
 /** Calls res.json at most once, so `error`, `close` and the timeout cannot double-respond. */
-function replyOnce(res: Response) {
+export function replyOnce(res: Response) {
   let responded = false;
   return (reply: Reply) => {
     if (responded) return false;
@@ -40,9 +40,8 @@ function devicesUnavailable(reason: string): Reply {
   return { status: 503, body: { ...unavailableOutcome(reason), devices: [], hasLocalAdb: false } };
 }
 
-/** GET /api/adb/devices: only devices adb actually reports; never a fabricated entry. */
-export const handleAdbDevices: RequestHandler = (_req, res) => {
-  const send = replyOnce(res);
+/** Runs `adb devices` and hands one honest reply per outcome to `done` (callers guard it with replyOnce). */
+function listAdbDevices(done: (reply: Reply) => void): void {
   try {
     const adb = spawn("adb", ["devices"], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
@@ -51,29 +50,58 @@ export const handleAdbDevices: RequestHandler = (_req, res) => {
       try {
         adb.kill();
       } catch {}
-      send(devicesUnavailable(`adb devices timed out after ${ADB_DEVICES_TIMEOUT_MS}ms.`));
+      done(devicesUnavailable(`adb devices timed out after ${ADB_DEVICES_TIMEOUT_MS}ms.`));
     }, ADB_DEVICES_TIMEOUT_MS);
     adb.stdout.on("data", (d) => (out += d.toString()));
     adb.stderr.on("data", (d) => (err += d.toString()));
     adb.on("error", (e) => {
       clearTimeout(timer);
-      send(devicesUnavailable(`adb is not available (${e.message}); install platform-tools and add it to PATH.`));
+      done(devicesUnavailable(`adb is not available (${e.message}); install platform-tools and add it to PATH.`));
     });
     adb.on("close", (code) => {
       clearTimeout(timer);
       if (code !== 0) {
-        send({
+        done({
           status: 500,
           body: { ...failedOutcome(err.trim() || `adb devices exited with code ${code ?? "unknown"}.`), devices: [], hasLocalAdb: true },
         });
         return;
       }
-      send({ status: 200, body: { success: true, devices: parseAdbDevices(out), raw: out.trim(), hasLocalAdb: true } });
+      done({ status: 200, body: { success: true, devices: parseAdbDevices(out), raw: out.trim(), hasLocalAdb: true } });
     });
   } catch (e) {
-    send(devicesUnavailable(`adb could not be started (${e instanceof Error ? e.message : String(e)}).`));
+    done(devicesUnavailable(`adb could not be started (${e instanceof Error ? e.message : String(e)}).`));
   }
+}
+
+/** GET /api/adb/devices: only devices adb actually reports; never a fabricated entry. */
+export const handleAdbDevices: RequestHandler = (_req, res) => {
+  listAdbDevices(replyOnce(res));
 };
+
+export const ADB_SCAN_HINT = "For WiFi: enable Wireless Debugging";
+
+/** Reads the targets registered locally without a confirmed adb link. */
+export type SimulatedDeviceReader = () => Iterable<string>;
+
+/** Locally registered targets adb does not report, each explicitly marked simulated. */
+function simulatedEntries(reply: Reply, simulated: Iterable<string>) {
+  const real = (reply.body.devices as string[] | undefined) ?? [];
+  return Array.from(simulated)
+    .filter((id) => !real.includes(id))
+    .map((id) => ({ id, simulated: true }));
+}
+
+/** GET /api/adb/scan: the real device list (empty when none), simulated targets kept apart and labelled. */
+export function createAdbScanHandler(readSimulated: SimulatedDeviceReader): RequestHandler {
+  return (_req, res) => {
+    const send = replyOnce(res);
+    listAdbDevices((reply) => {
+      const body = { ...reply.body, simulatedDevices: simulatedEntries(reply, readSimulated()), hint: ADB_SCAN_HINT };
+      send({ status: reply.status, body });
+    });
+  };
+}
 
 /** True for the generic phone ids the live mobile stream stands in for. */
 function isGenericPhoneId(deviceId?: string): boolean {

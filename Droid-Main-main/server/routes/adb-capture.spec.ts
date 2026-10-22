@@ -33,7 +33,9 @@ vi.mock("child_process", () => ({ spawn: vi.fn(() => fakeChild()) }));
 import {
   ADB_CAPTURE_TIMEOUT_MS,
   ADB_DEVICES_TIMEOUT_MS,
+  ADB_SCAN_HINT,
   createAdbCaptureHandler,
+  createAdbScanHandler,
   handleAdbDevices,
   parseAdbDevices,
 } from "./adb-capture";
@@ -192,5 +194,65 @@ describe("GET /api/adb/capture", () => {
     const res = await run(noFrame, { deviceId: "bad; rm -rf /" });
     expect(res.statusCode).toBe(400);
     expect(res.body).toMatchObject({ success: false, imageData: null });
+  });
+});
+
+describe("GET /api/adb/scan", () => {
+  const scan = (simulated: string[] = []) => createAdbScanHandler(() => new Set(simulated));
+
+  function expectNoInventedDevice(res: any) {
+    expect(JSON.stringify(res.body)).not.toMatch(/WiFi Phone|192\.168\.1\.50/);
+    expect(res.calls).toBe(1);
+  }
+
+  it("passes through only the devices adb reports in the device state", async () => {
+    behaviour = { kind: "close", code: 0, stdout: "List of devices attached\nR3CN90\tdevice\n10.0.0.7:5555\tdevice\nQQ1\tunauthorized\n" };
+    const res = await run(scan());
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ success: true, devices: ["R3CN90", "10.0.0.7:5555"], simulatedDevices: [], hint: ADB_SCAN_HINT });
+    expect(res.body.simulated).toBeUndefined();
+    expectNoInventedDevice(res);
+  });
+
+  it("returns an empty device list with the hint, not an invented WiFi phone, when adb sees nothing", async () => {
+    behaviour = { kind: "close", code: 0, stdout: "List of devices attached\n" };
+    const res = await run(scan());
+    expect(res.body).toMatchObject({ success: true, devices: [], simulatedDevices: [], hint: ADB_SCAN_HINT });
+    expectNoInventedDevice(res);
+  });
+
+  it("keeps simulated targets out of devices and marks each one simulated", async () => {
+    behaviour = { kind: "close", code: 0, stdout: "List of devices attached\nR3CN90\tdevice\n" };
+    const res = await run(scan(["10.1.2.3:5555", "R3CN90"]));
+    expect(res.body.devices).toEqual(["R3CN90"]);
+    expect(res.body.simulatedDevices).toEqual([{ id: "10.1.2.3:5555", simulated: true }]);
+  });
+
+  it("is unavailable with no devices when adb is missing, listing simulated targets only as simulated", async () => {
+    behaviour = { kind: "error" };
+    const res = await run(scan(["10.1.2.3:5555"]));
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toMatchObject({ success: false, status: "unavailable", simulated: true, devices: [], hint: ADB_SCAN_HINT });
+    expect(res.body.simulatedDevices).toEqual([{ id: "10.1.2.3:5555", simulated: true }]);
+    expectNoInventedDevice(res);
+  });
+
+  it("fails with no devices when adb exits non-zero", async () => {
+    behaviour = { kind: "close", code: 1, stderr: "daemon not running" };
+    const res = await run(scan());
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toMatchObject({ success: false, status: "failed", devices: [] });
+    expectNoInventedDevice(res);
+  });
+
+  it("is unavailable with no devices when adb hangs or spawn throws", async () => {
+    behaviour = { kind: "throw" };
+    expectNoFabricatedDevice(await run(scan()));
+    vi.useFakeTimers();
+    behaviour = { kind: "hang" };
+    const res = makeRes();
+    scan()({ query: {} } as any, res, () => {});
+    await vi.advanceTimersByTimeAsync(ADB_DEVICES_TIMEOUT_MS + 1);
+    expectNoFabricatedDevice(res);
   });
 });

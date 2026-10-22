@@ -546,8 +546,9 @@ export const InteractiveDeviceControlDeck: React.FC<InteractiveDeviceControlDeck
         addLog("DEVICE", "success", `Wi-Fi Device Connected: ${devName}`, "Wireless ADB debugging bridge synchronized.");
         toast.success(`📱 Connected to ${devName}`);
       } else {
-        addLog("ERROR", "warning", `Wi-Fi Connect Warning`, data.message || "Connected with simulated fallback");
-        toast.info(`📱 Device Registered: ${wifiPairIp}:${wifiPairPort}`);
+        const reason = data.error || data.message || `HTTP ${res.status}`;
+        addLog("ERROR", "error", "Wi-Fi Connect Failed", reason);
+        toast.error(`📱 Not connected to ${wifiPairIp}:${wifiPairPort}: ${reason}`);
       }
     } catch (e: any) {
       addLog("ERROR", "error", "Wi-Fi Pairing Failed", String(e.message || e));
