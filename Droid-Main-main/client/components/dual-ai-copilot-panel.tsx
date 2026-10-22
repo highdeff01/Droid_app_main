@@ -63,7 +63,11 @@ export interface ScreenPerceptionReport {
   elements: DetectedUIElement[];
   feedbackPosition: { x: number; y: number };
   primarySuggestion: string;
-  confidence: number;
+  /** Null when the analysis reported no confidence. */
+  confidence: number | null;
+  source?: "model" | "heuristic";
+  simulated?: boolean;
+  simulationReason?: string;
 }
 
 export interface AIThinkingChain {
@@ -290,7 +294,9 @@ export const DualAICopilotPanel: React.FC<DualAICopilotPanelProps> = ({
               </CardTitle>
               {perception && (
                 <span className="text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-800 px-2 py-0.5 rounded">
-                  Conf: {(perception.confidence * 100).toFixed(0)}%
+                  {perception.confidence === null
+                    ? "Conf: unverified"
+                    : `Conf: ${(perception.confidence * 100).toFixed(0)}%`}
                 </span>
               )}
             </div>
