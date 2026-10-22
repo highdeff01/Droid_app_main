@@ -69,6 +69,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { reportDeviceAction } from "@/lib/device-action-report";
+import { PythonBridgeStatusChip } from "@/components/python-bridge-status-chip";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
 import { companionApi } from "@/lib/companion-api";
 import type { WorkflowStepDraft } from "@shared/companion";
@@ -1237,6 +1238,7 @@ export default function Dashboard({
               </span>
             </div>
           </div>
+          <PythonBridgeStatusChip className="hidden md:flex" />
           <div className="flex items-center gap-2 shrink-0">
             <div className="flex items-center gap-1 bg-slate-900 border border-cyan-500/30 rounded-lg p-0.5 shadow-sm">
               <Button
