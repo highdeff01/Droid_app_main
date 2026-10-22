@@ -120,6 +120,25 @@ describe("handleProposeGoalPlan", () => {
     expect(res.body.proposal.steps[0].y).toBe(210);
   });
 
+  it("puts mid-run user guidance into the planner prompt", async () => {
+    sendQwenChatRequestMock.mockResolvedValueOnce(
+      qwenSuccess({ steps: [{ name: "Click Submit", action: "click", x: 125, y: 210, targetLabel: "Submit" }] }),
+    );
+    const req: any = {
+      body: { goal: "Submit the form", observation: makeObservation(), guidance: ["avoid the top bar", "slow down"] },
+    };
+    const res = makeRes();
+
+    await handleProposeGoalPlan(req, res, noopNext);
+
+    expect(res.body.success).toBe(true);
+    const messages = sendQwenChatRequestMock.mock.calls[0][0] as Array<{ content: unknown }>;
+    const prompt = JSON.stringify(messages[1].content);
+    expect(prompt).toContain("USER GUIDANCE");
+    expect(prompt).toContain("avoid the top bar");
+    expect(prompt).toContain("slow down");
+  });
+
   it("returns 422 when the first step targets no element", async () => {
     sendQwenChatRequestMock.mockResolvedValueOnce(
       qwenSuccess({

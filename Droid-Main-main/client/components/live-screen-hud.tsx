@@ -304,6 +304,8 @@ interface LiveScreenHUDProps {
   onToggleCapture?: () => void;
   /** Live AI intention, goals and learning data; the collapsible panel renders only when provided. */
   intentionsPanel?: AiIntentionsPanelProps;
+  /** Master AI orchestrator; the control section renders only when provided. */
+  masterPanel?: MasterAiPanelProps;
 }
 
 export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
@@ -347,6 +349,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   onRetryStep,
   onToggleCapture,
   intentionsPanel,
+  masterPanel,
 }) => {
   const overseer = useOverseerSnapshot(!!intentionsPanel);
   const executeVerifiedTask = (url: string, options: RequestInit) => {
@@ -5399,6 +5402,13 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Master AI orchestrator */}
+      {masterPanel ? (
+        <div className="px-2 py-1 bg-slate-950 border-t border-slate-800 z-30">
+          <MasterAiPanel {...masterPanel} />
+        </div>
+      ) : null}
 
       {/* AI Intentions, Goals and Learning */}
       {intentionsPanel ? (

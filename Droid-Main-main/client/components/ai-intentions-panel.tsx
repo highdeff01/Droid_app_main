@@ -211,6 +211,7 @@ export const AiIntentionsPanel: React.FC<AiIntentionsPanelProps> = (props) => {
       {open && (
         <div className="px-2 pb-2 space-y-2">
           <IntentionSection {...props} />
+          {props.masterChain || props.masterGuidance ? <OrchestrationSection {...props} /> : null}
           <GoalsSection {...props} />
           <LearningSection {...props} />
           <OverseerCheckupSection {...props} />

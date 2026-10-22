@@ -83,6 +83,11 @@ import { applyDelayMultiplier, type LearningOutcome, type UserHabitProfile } fro
 import { buildRetryStep, toReplayStepPayload } from "@/lib/step-replay";
 import { GoalWorkflowPanel } from "@/components/goal-workflow-panel";
 import { GOAL_PHASE_BADGE, type GoalLoopEvent } from "@/lib/goal-loop-runner";
+import type { MasterSnapshot } from "@/lib/master-ai";
+import { companionApi } from "@/lib/companion-api";
+import type { WorkflowStepDraft } from "@shared/companion";
+import { CompanionChatPanel } from "@/components/companion-chat-panel";
+import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import {
   LiveScreenHUD,
   SequenceStep,
@@ -311,6 +316,7 @@ export default function Dashboard({
   /** Goal id → the replay run executing it; drives automatic checkoff. */
   const goalRunsRef = useRef<Record<string, string>>({});
   const [gateReport, setGateReport] = useState<GateReport | null>(null);
+  const [masterSnapshot, setMasterSnapshot] = useState<MasterSnapshot | null>(null);
   const [learningProfile, setLearningProfile] = useState<UserHabitProfile | null>(null);
   const [learningError, setLearningError] = useState<string | null>(null);
   const [globalCursorState, setGlobalCursorState] = useState<GlobalAICursorState | null>(null);
@@ -2167,7 +2173,18 @@ export default function Dashboard({
               </CardHeader>
               <CardContent className="p-2">
                 <LiveScreenHUD
+                  masterPanel={{
+                    device: { targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined },
+                    sequence,
+                    objective: userObjective,
+                    onLoopEvent: handleGoalLoopEvent,
+                    onSequenceOptimized: setSequence,
+                    haltExternal: handleStopSequence,
+                    onSnapshot: setMasterSnapshot,
+                  }}
                   intentionsPanel={{
+                    masterChain: masterSnapshot?.chain,
+                    masterGuidance: masterSnapshot?.guidance,
                     gateReport,
                     replayRun,
                     sequence,
