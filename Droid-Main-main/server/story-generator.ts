@@ -6,7 +6,7 @@ import {
   type StoryPerspective,
   type StoryScene,
   type StorySceneAction,
-} from "@shared/story";
+} from "../shared/story";
 import {
   buildVisionMessage,
   parseModelJson,
