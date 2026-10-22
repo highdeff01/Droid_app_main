@@ -22,7 +22,10 @@ import {
 import { handleAnalyzeScreenshot as handleMasterAnalyzeScreenshot } from "./routes/analyze-screenshot";
 import { centralLogHub } from "./log-hub";
 import { assistantRouter } from "./routes/assistant";
-import { companionRouter } from "./routes/companion";
+import { companionRouter, companionService } from "./routes/companion";
+import { createPresentationsRouter, createProgressRouter } from "./routes/progress";
+import { progressStream } from "./progress-stream";
+import { connectAppPipeline } from "./app-pipeline";
 import { assistantSourcesRouter } from "./routes/assistant-sources";
 import { analysisRouter } from "./routes/analysis";
 import { goalWorkflowsRouter } from "./routes/goal-workflows";
@@ -206,6 +209,7 @@ const screenCaptureSources: CaptureSource[] = [
 ];
 
 let overseer: OverseerSupervisor | null = null;
+let pipeline: ReturnType<typeof connectAppPipeline> | null = null;
 
 /** One overseer per process (createServer may run more than once); captures through the shared fallback order. */
 function getOverseer(): OverseerSupervisor {
@@ -214,6 +218,12 @@ function getOverseer(): OverseerSupervisor {
     overseer.start();
   }
   return overseer;
+}
+
+/** Activity notes, background presentation drafts and the progress stream, connected once per process. */
+function getPipeline() {
+  pipeline ??= connectAppPipeline(getOverseer(), companionService, progressStream);
+  return pipeline;
 }
 
 export function createServer() {
@@ -764,6 +774,9 @@ export function createServer() {
 
   // Overseer AI: independent verification and supervision of every AI operation.
   app.use("/api/overseer", requireApiAccess, createOverseerRouter(getOverseer()));
+  // Unified progress stream and background presentation drafts (every tab subscribes to /api/progress).
+  app.use("/api/progress", requireApiAccess, createProgressRouter(progressStream));
+  app.use("/api/presentations", requireApiAccess, createPresentationsRouter(getPipeline().drafts));
   
   // Replay, Phone bridge & Review routes
   try {
