@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { FixTask, PendingCompanionAction, WorkflowProposal, WorkflowStepDraft } from "@shared/companion";
+import type { FollowUpThread } from "@shared/feedback";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { companionApi } from "@/lib/companion-api";
@@ -141,14 +142,61 @@ function PendingActionRow({ action, onRunSteps, onChanged }: PendingActionRowPro
 }
 
 const POLL_MS = 5000;
+const LEDGER_SHOWN = 8;
+
+/** One follow-up thread: what the AI suggested, what the user chose, what happened. */
+export function FollowUpRow({ thread }: { thread: FollowUpThread }) {
+  const extensions = thread.entries.filter((e) => e.kind === "extension").length;
+  return (
+    <li className="rounded border border-slate-800 bg-slate-950/40 p-2 text-xs space-y-0.5" data-follow-up={thread.proposal.proposalId}>
+      <div className="flex items-center gap-1">
+        <Badge variant="outline" className="text-[10px]">{thread.proposal.topic}</Badge>
+        <span className="text-slate-200">{thread.proposal.summary}</span>
+      </div>
+      <div className="text-[10px] text-slate-400">
+        Chose: <span data-decision>{thread.decision ?? "no decision yet"}</span> • Outcome:{" "}
+        <span data-outcome>{thread.outcome ?? "not recorded"}</span>
+        {extensions > 0 && <> • {extensions} workflow extension(s)</>}
+      </div>
+    </li>
+  );
+}
+
+/** The follow-up ledger, newest first; a failed load is shown, never hidden. */
+export function FollowUpLedger({ threads, error }: { threads: FollowUpThread[]; error: string | null }) {
+  return (
+    <section className="space-y-1" aria-label="Follow-up ledger">
+      <h4 className="text-[11px] font-semibold uppercase text-slate-400">Suggestions, choices &amp; outcomes</h4>
+      {error && <p className="text-xs text-red-300">Ledger unavailable: {error}</p>}
+      {!error && threads.length === 0 && <p className="text-xs text-slate-500">No AI proposals recorded yet.</p>}
+      <ul className="space-y-1">
+        {threads.slice(-LEDGER_SHOWN).reverse().map((thread) => (
+          <FollowUpRow key={thread.proposal.id} thread={thread} />
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 /** Fix tasks from captured errors, AI-proposed workflows and trigger-queued actions awaiting the user. */
 export function CompanionTasksPanel({ onRunSteps }: { onRunSteps: RunCompanionSteps }) {
   const [tasks, setTasks] = useState<FixTask[]>([]);
   const [proposals, setProposals] = useState<WorkflowProposal[]>([]);
   const [actions, setActions] = useState<PendingCompanionAction[]>([]);
+  const [threads, setThreads] = useState<FollowUpThread[]>([]);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+
+  const refreshLedger = useCallback(async () => {
+    try {
+      setThreads(await companionApi.ledger());
+      setLedgerError(null);
+    } catch (error) {
+      setLedgerError(errorText(error));
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
+    void refreshLedger();
     try {
       const [nextTasks, nextProposals, nextActions] = await Promise.all([
         companionApi.tasks(),
@@ -182,6 +230,7 @@ export function CompanionTasksPanel({ onRunSteps }: { onRunSteps: RunCompanionSt
       {tasks.map((task) => (
         <FixTaskRow key={task.id} task={task} onChanged={refresh} />
       ))}
+      <FollowUpLedger threads={threads} error={ledgerError} />
     </div>
   );
 }

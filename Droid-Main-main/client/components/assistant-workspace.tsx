@@ -53,6 +53,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { CaptureSourcePanel } from "./capture-source-panel";
+import { ProgressFeed } from "./progress-feed";
 import { InstructionPlanningPanel } from "@/components/instruction-planning-panel";
 import { WorkflowDebuggerPanel } from "./workflow-debugger-panel";
 import { DriftHeatmapOverlay } from "./drift-heatmap-overlay";
@@ -519,6 +520,9 @@ export function AssistantWorkspace({
               <Settings2 className="h-4 w-4 text-cyan-400" />
               <span className="text-sm">Workspace settings</span>
             </button>
+          </div>
+          <div className="hidden border-t border-white/10 px-4 py-3 lg:block max-h-72 overflow-y-auto">
+            <ProgressFeed title="Live app progress" limit={5} />
           </div>
         </aside>
 
