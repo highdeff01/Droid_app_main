@@ -31,6 +31,10 @@ import { assistantExecutionRouter } from "./routes/assistant-execution";
 import { assistantRecordingsRouter } from "./routes/assistant-recordings";
 import { assistantWorkflowsRouter } from "./routes/assistant-workflows";
 import { createHudToolsRouter } from "./routes/hud-tools";
+import { createStoryPresentationRouter } from "./routes/story-presentations";
+import { fetchPageText } from "./presentation-generator";
+import { replayEngine } from "./replay-engine";
+import { companionService } from "./routes/companion";
 import { DurableStore } from "./durable-store";
 import { recognizeWithProviders } from "./ocr-provider";
 import { sendQwenChatRequest } from "./ai-endpoint";
@@ -524,6 +528,18 @@ export function createServer() {
   app.use(
     "/api/hud",
     createHudToolsRouter({ store: new DurableStore(), recognize: recognizeWithProviders, chat: sendQwenChatRequest }),
+  );
+
+  // Story mode & versatile presentations: Qwen-generated from premises, screens, runs, web pages and struggles
+  app.use(
+    "/api/ai",
+    createStoryPresentationRouter({
+      chat: sendQwenChatRequest,
+      fetchPage: fetchPageText,
+      listRuns: () => replayEngine.list(),
+      runImages: (id) => replayEngine.evidenceImages(id),
+      ledger: () => ({ tasks: companionService.errors.listTasks(), notes: companionService.notes.list() }),
+    }),
   );
 
   // Workflow Disk Persistence Endpoints (/api/workflows)

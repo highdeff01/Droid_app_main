@@ -90,6 +90,17 @@ export class ReplayEngine {
   frame(id: string, hash: string) {
     return this.runs.get(id)?.evidence.get(hash);
   }
+  /** Runs still held in memory, newest first. */
+  list() {
+    return [...this.runs.values()]
+      .map((item) => structuredClone(item.run))
+      .sort((a, b) => b.startedAt - a.startedAt);
+  }
+  /** The screenshots a run captured as evidence, in capture order. */
+  evidenceImages(id: string): string[] {
+    const item = this.runs.get(id);
+    return item ? [...item.evidence.values()].map((frame) => frame.image) : [];
+  }
   control(id: string, command: "pause" | "resume" | "cancel") {
     const item = this.runs.get(id);
     if (!item) return undefined;
