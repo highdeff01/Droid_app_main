@@ -137,21 +137,22 @@ import { useBufferedFrame } from "@/hooks/use-buffered-frame";
 import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
 import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
-import { MasterAiPanel, type MasterAiPanelProps } from "./master-ai-panel";
+import { useOverseerSnapshot } from "@/hooks/use-overseer";
+import { latestCheckups } from "@/lib/overseer-client";
+import type { HudSuggestedAction } from "@shared/api";
 import {
   askQwen,
   completionStep,
   dispatchInteractiveAction,
   fetchQwenGuide,
   inspectOcrAtPoint,
-  stopBridge,
   postHudJson,
+  stopBridge,
   tagEntityAtPoint,
   verifyIntegrityAtPoint,
   type HudStepLike,
 } from "@/lib/hud-actions";
 import { HudAgentPanel } from "./hud-agent-panel";
-import type { HudSuggestedAction } from "@shared/api";
 
 /** How often the Qwen guide re-reads the live frame while enabled. */
 const QWEN_GUIDE_POLL_MS = 8000;
@@ -350,6 +351,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   intentionsPanel,
   masterPanel,
 }) => {
+  const overseer = useOverseerSnapshot(!!intentionsPanel);
   const executeVerifiedTask = (url: string, options: RequestInit) => {
     if (!onExecuteTask) return Promise.reject(new Error("Open Screen Hub to use verified device execution"));
     return onExecuteTask(url, options);
@@ -5411,7 +5413,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       {/* AI Intentions, Goals and Learning */}
       {intentionsPanel ? (
         <div className="px-2 py-1 bg-slate-950 border-t border-slate-800 z-30">
-          <AiIntentionsPanel {...intentionsPanel} />
+          <AiIntentionsPanel
+            {...intentionsPanel}
+            overseerCheckups={overseer.snapshot ? latestCheckups(overseer.snapshot.operations) : null}
+            overseerError={overseer.error}
+          />
         </div>
       ) : null}
 

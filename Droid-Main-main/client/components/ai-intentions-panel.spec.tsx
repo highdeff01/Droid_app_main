@@ -118,24 +118,34 @@ describe("AiIntentionsPanel profile error", () => {
   });
 });
 
-describe("AiIntentionsPanel orchestration chain", () => {
-  it("acknowledges master guidance and lists the operation chain", () => {
-    const markup = renderPanel({
-      masterGuidance: [{ id: "g1", text: "skip the ad", at: 5, appliedAt: null }],
-      masterChain: [
-        { at: 1, message: "Master AI started" },
-        { at: 2, operationId: "op1", kind: "replay", message: "replay failed → goal" },
-      ],
-    });
-
-    expect(markup).toContain("Guidance acknowledged");
-    expect(markup).toContain("skip the ad");
-    expect(markup).toContain('data-guidance-applied="false"');
-    expect(markup).toContain('data-chain-kind="replay"');
-    expect(markup).toContain("Master AI started");
+describe("AiIntentionsPanel overseer checkups", () => {
+  const checkup = (outcome: "complete" | "continuing" | "off_track" | "uncertain") => ({
+    operationId: `op_${outcome}`,
+    outcome,
+    summary: `summary for ${outcome}`,
+    elapsedSeconds: 125,
+    at: 1000,
+    goal: `Goal ${outcome}`,
   });
 
-  it("omits the section when no master data is passed", () => {
-    expect(renderPanel()).not.toContain("data-orchestration");
+  it("omits the section when the overseer was not wired in", () => {
+    expect(renderPanel()).not.toContain("Overseer checkups");
+  });
+
+  it("reports continuing, complete and off-track honestly", () => {
+    const markup = renderPanel({ overseerCheckups: [checkup("continuing"), checkup("complete"), checkup("off_track")] });
+    expect(markup).toContain("Not complete, continuing after 125s");
+    expect(markup).toContain('data-checkup="complete"');
+    expect(markup).toContain("Off-track after 125s — summary for off_track");
+  });
+
+  it("shows an uncertain checkup as uncertain", () => {
+    expect(renderPanel({ overseerCheckups: [checkup("uncertain")] })).toContain("Uncertain after 125s");
+  });
+
+  it("shows the overseer error instead of fabricating checkups", () => {
+    const markup = renderPanel({ overseerCheckups: null, overseerError: "HTTP 401" });
+    expect(markup).toContain("Overseer unavailable: HTTP 401");
+    expect(markup).not.toContain("data-checkup");
   });
 });

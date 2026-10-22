@@ -15,7 +15,8 @@ import {
   type RunnableGoal,
 } from "@/lib/ai-intentions";
 import type { SequenceStep } from "@/components/live-screen-hud";
-import type { ChainEntry, GuidanceEntry } from "@/lib/master-ai";
+import type { CheckupReport } from "@shared/overseer";
+import { CHECKUP_TEXT } from "@/lib/overseer-client";
 
 export interface AiIntentionsPanelProps {
   gateReport: GateReport | null;
@@ -35,39 +36,29 @@ export interface AiIntentionsPanelProps {
   onExecuteGoal?: (id: string) => void;
   /** Set the movement delay multiplier; null returns it to learning. */
   onAdjustDelay?: (multiplier: number | null) => void;
-  /** Master AI operation chain (newest last); the section is hidden when absent. */
-  masterChain?: ChainEntry[];
-  /** User guidance given to the Master AI, with when a turn first carried it. */
-  masterGuidance?: GuidanceEntry[];
+  /** Latest overseer checkups of long-running operations; null when the overseer could not be reached. */
+  overseerCheckups?: OverseerCheckupItem[] | null;
+  /** Why the overseer could not be reached. */
+  overseerError?: string | null;
 }
 
-const CHAIN_SHOWN = 12;
+export type OverseerCheckupItem = CheckupReport & { goal: string };
 
-function OrchestrationSection({ masterChain = [], masterGuidance = [] }: Pick<AiIntentionsPanelProps, "masterChain" | "masterGuidance">) {
+function OverseerCheckupSection({ overseerCheckups, overseerError }: Pick<AiIntentionsPanelProps, "overseerCheckups" | "overseerError">) {
+  if (overseerCheckups === undefined && !overseerError) return null;
   return (
-    <section className="space-y-1" data-orchestration>
-      <h5 className="text-[9px] uppercase text-fuchsia-400 font-bold">Orchestration chain</h5>
-      {masterGuidance.length > 0 && (
-        <ul className="space-y-0.5">
-          {masterGuidance.map((g) => (
-            <li key={g.id} data-guidance-id={g.id} data-guidance-applied={g.appliedAt !== null} className="text-amber-200">
-              Guidance acknowledged: “{g.text}” — {g.appliedAt === null ? "queued for the next turn" : "applied to the next turn"}
-            </li>
-          ))}
-        </ul>
-      )}
-      {masterChain.length ? (
-        <ol className="space-y-0.5">
-          {masterChain.slice(-CHAIN_SHOWN).map((entry, index) => (
-            <li key={`${entry.at}-${index}`} className="text-slate-300" data-chain-kind={entry.kind ?? "session"}>
-              {entry.kind ? <span className="text-fuchsia-300">[{entry.kind}] </span> : null}
-              {entry.message}
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="text-slate-500">No orchestrated operations yet.</p>
-      )}
+    <section className="space-y-1">
+      <h5 className="text-[9px] uppercase text-cyan-400 font-bold">Overseer checkups</h5>
+      {overseerError && <p className="text-rose-300" role="alert">Overseer unavailable: {overseerError}</p>}
+      {overseerCheckups && overseerCheckups.length === 0 && <p className="text-slate-500">No checkups yet.</p>}
+      {(overseerCheckups ?? []).map((c) => (
+        <div key={`${c.operationId}_${c.at}`} data-checkup={c.outcome}>
+          <p className="text-slate-100">{c.goal}</p>
+          <p className={CHECKUP_TEXT[c.outcome].className}>
+            {CHECKUP_TEXT[c.outcome].label} after {Math.round(c.elapsedSeconds)}s — {c.summary}
+          </p>
+        </div>
+      ))}
     </section>
   );
 }
@@ -223,6 +214,7 @@ export const AiIntentionsPanel: React.FC<AiIntentionsPanelProps> = (props) => {
           {props.masterChain || props.masterGuidance ? <OrchestrationSection {...props} /> : null}
           <GoalsSection {...props} />
           <LearningSection {...props} />
+          <OverseerCheckupSection {...props} />
         </div>
       )}
     </div>

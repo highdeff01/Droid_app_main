@@ -11,6 +11,8 @@ import { DurableStore, type StorageOptions } from "./durable-store";
 import { verifyObservation, type Observation } from "./visual-verification";
 import { methodLearningSystem, type LearningContext } from "./method-learning";
 import { RealTimeElementTracker } from "./element-tracking";
+import { operationBus } from "./overseer/operation-bus";
+import type { OperationStepReport } from "../shared/overseer";
 
 const now = () => new Date().toISOString();
 const id = (prefix: string) =>
@@ -18,6 +20,20 @@ const id = (prefix: string) =>
 
 export const ACTION_TIMEOUT_MS = 30_000;
 export const EXECUTION_TIMEOUT_MS = 30_000;
+
+/** What the overseer is told about a step the executor just completed. */
+function stepReport(step: PlannedStep, action: AllowlistedAction): OperationStepReport {
+  return {
+    stepId: step.id,
+    name: step.title,
+    action: action.type,
+    x: action.type === "click" ? action.x : undefined,
+    y: action.type === "click" ? action.y : undefined,
+    text: action.type === "type" ? action.text : undefined,
+    expectation: step.description,
+    executorVerified: null,
+  };
+}
 
 export type SafeActionExecutor = (
   action: AllowlistedAction,
@@ -143,6 +159,7 @@ export class ExecutionStateRepository {
     execution.completedAt = now();
     this.addEvent(execution, "info", "Execution cancelled");
     this.persist();
+    operationBus.finished(executionId, "cancelled");
 
     const hooks = this.cancelHooks.get(executionId);
     if (hooks) {
@@ -173,6 +190,7 @@ export class ExecutionStateRepository {
     control.paused = false;
     execution.status = "running";
     execution.pendingApproval = undefined;
+    if (!execution.startedAt) this.announce(execution, plan);
     execution.startedAt ??= now();
     this.addEvent(execution, "started", "Execution started");
     this.persist();
@@ -219,6 +237,7 @@ export class ExecutionStateRepository {
         if (control.cancelled || (execution.status as string) === "cancelled") return execution;
         if (!result.success) return this.fail(execution, result.message);
         this.addEvent(execution, "completed", result.message, step.id, result);
+        operationBus.step(execution.id, stepReport(step, action));
 
         const verification = step.adaptive?.verification;
         if (verification) {
@@ -273,6 +292,7 @@ export class ExecutionStateRepository {
     execution.completedAt = now();
     this.addEvent(execution, "completed", "Execution completed");
     this.persist();
+    operationBus.finished(execution.id, "completed");
     
     // Learn from this execution if context is provided
     if (this.learningContext) {
@@ -449,7 +469,21 @@ export class ExecutionStateRepository {
     execution.completedAt = now();
     this.addEvent(execution, "failed", error);
     this.persist();
+    operationBus.finished(execution.id, "failed", error);
     return execution;
+  }
+
+  /** Registers the execution with the overseer, which can pause or cancel it. */
+  private announce(execution: AssistantExecution, plan: AssistantPlan) {
+    operationBus.started(
+      {
+        id: execution.id,
+        kind: "assistant_execution",
+        source: `assistant-execution / ${execution.sessionId}`,
+        goal: plan.instruction?.text || `Plan ${plan.id}`,
+      },
+      { pause: () => void this.pause(execution.id), cancel: () => void this.cancel(execution.id) },
+    );
   }
 
   private addEvent(
