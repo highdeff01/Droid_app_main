@@ -888,11 +888,21 @@ function recordFrameSnapshot(data: {
 // ROUTES: FRAMES & SCREENSHOT HISTORY (LAST 10-20)
 // ----------------------------------------------------
 
+/** Stream types MobileRemote uses for its drawn phone template; such frames are preview-only, never a live screen. */
+const TEMPLATE_STREAM_TYPES = new Set(["interactive_phone", "live_view"]);
+
+export function isTemplateStreamType(streamType: unknown): boolean {
+  return typeof streamType === "string" && TEMPLATE_STREAM_TYPES.has(streamType);
+}
+
 // POST frame from mobile device
 mobileStreamRouter.post("/api/mobile-stream/frame", (req, res) => {
   const { imageData, deviceName, streamType, fps, touchX, touchY, note } = req.body || {};
   if (!imageData) {
     return res.status(400).json({ success: false, error: "No imageData provided" });
+  }
+  if (isTemplateStreamType(streamType)) {
+    return res.json({ success: true, stored: false, reason: "Preview-only template frame; not a live screen" });
   }
   latestMobileFrame = {
     imageData,
@@ -929,19 +939,13 @@ mobileStreamRouter.get("/api/mobile-stream/frame", (_req, res) => {
     });
   }
 
-  // Autonomous fallback phone mirror frame
-  const simFrame = generateServerPhoneFrame(serverPhoneState);
+  // No real phone frame: report it honestly so the HUD shows its empty state instead of a drawn phone.
   res.json({
     success: true,
-    connected: true,
+    connected: false,
     queueLength: mobileActionQueue.length,
-    imageData: simFrame,
-    timestamp: Date.now(),
-    deviceName: "Mobile Phone (Sightline Mirror)",
-    streamType: "mirror",
-    fps: 30,
-    touchX: serverPhoneState.lastTouchX,
-    touchY: serverPhoneState.lastTouchY,
+    imageData: null,
+    error: "No real phone frame received in the last 25s",
   });
 });
 
