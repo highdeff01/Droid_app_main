@@ -31,6 +31,8 @@ interface GoalWorkflowPanelProps {
   device: GoalDevice;
   /** Loop phases, forwarded to the HUD's AI thinking indicator and verification badge. */
   onLoopEvent: (event: GoalLoopEvent) => void;
+  /** The live operation chain text, surfaced in the HUD intentions panel. */
+  onChain?: (text: string) => void;
   /** The existing gated replay path (desktop or paired phone). */
   onReplay: (steps: SequenceStep[]) => void;
 }
@@ -114,7 +116,7 @@ const FlowRow: React.FC<{
   );
 };
 
-export const GoalWorkflowPanel: React.FC<GoalWorkflowPanelProps> = ({ device, onLoopEvent, onReplay }) => {
+export const GoalWorkflowPanel: React.FC<GoalWorkflowPanelProps> = ({ device, onLoopEvent, onChain, onReplay }) => {
   const [goal, setGoal] = useState("");
   const [running, setRunning] = useState(false);
   const [lastEvent, setLastEvent] = useState<GoalLoopEvent | null>(null);
@@ -176,6 +178,7 @@ export const GoalWorkflowPanel: React.FC<GoalWorkflowPanelProps> = ({ device, on
       device,
       signal: controller.signal,
       onEvent: handleEvent,
+      onChain: (_links, text) => onChain?.(text),
       onPlan: (state) => setPlan(state.plan),
       onStep: (step) => {
         setExecuted((prev) => [...prev, step]);

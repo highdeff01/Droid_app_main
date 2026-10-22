@@ -137,22 +137,21 @@ import { useBufferedFrame } from "@/hooks/use-buffered-frame";
 import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
 import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
-import { useOverseerSnapshot } from "@/hooks/use-overseer";
-import { latestCheckups } from "@/lib/overseer-client";
-import type { HudSuggestedAction } from "@shared/api";
 import {
   askQwen,
   completionStep,
   dispatchInteractiveAction,
   fetchQwenGuide,
   inspectOcrAtPoint,
-  postHudJson,
   stopBridge,
+  postHudJson,
   tagEntityAtPoint,
   verifyIntegrityAtPoint,
   type HudStepLike,
 } from "@/lib/hud-actions";
 import { HudAgentPanel } from "./hud-agent-panel";
+import type { GoalDevice, GoalLoopEvent } from "@/lib/qwen-turn-loop";
+import type { HudSuggestedAction } from "@shared/api";
 
 /** How often the Qwen guide re-reads the live frame while enabled. */
 const QWEN_GUIDE_POLL_MS = 8000;
@@ -304,8 +303,12 @@ interface LiveScreenHUDProps {
   onToggleCapture?: () => void;
   /** Live AI intention, goals and learning data; the collapsible panel renders only when provided. */
   intentionsPanel?: AiIntentionsPanelProps;
-  /** Master AI orchestrator; the control section renders only when provided. */
-  masterPanel?: MasterAiPanelProps;
+  /** Device the Qwen turn loop (Ask Qwen, Auto Actions, Create Plan, Test/Simulate) captures from and dispatches to. */
+  turnDevice?: GoalDevice;
+  /** Qwen turn phases (thinking indicator / verification badge). */
+  onTurnEvent?: (event: GoalLoopEvent) => void;
+  /** Qwen turn operation chain text for the intentions panel. */
+  onTurnChain?: (text: string) => void;
 }
 
 export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
@@ -349,7 +352,9 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   onRetryStep,
   onToggleCapture,
   intentionsPanel,
-  masterPanel,
+  turnDevice = { targetDevice: "desktop" },
+  onTurnEvent,
+  onTurnChain,
 }) => {
   const overseer = useOverseerSnapshot(!!intentionsPanel);
   const executeVerifiedTask = (url: string, options: RequestInit) => {
@@ -361,6 +366,24 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   const frameLayerRef = useRef<HTMLDivElement>(null);
   const stepListRef = useRef<HTMLDivElement>(null);
   const streamSyncIntervalRef = useRef<number | null>(null);
+  // Frame sync failures are reported once per failure streak (AI capture would otherwise read a stale frame).
+  const frameSyncFailedRef = useRef(false);
+  const syncFrameToServer = (body: Record<string, unknown>) =>
+    fetch("/api/sync-real-frame", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        frameSyncFailedRef.current = false;
+      })
+      .catch((error) => {
+        if (!frameSyncFailedRef.current) {
+          toast.error(`Frame sync to the server failed (${error instanceof Error ? error.message : error}); AI capture may read an older frame`);
+        }
+        frameSyncFailedRef.current = true;
+      });
   const [selectedStepIds, setSelectedStepIds] = useState<Set<string>>(new Set());
 
   // Step Selection & Order Management Handlers
@@ -1371,11 +1394,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
         if (base64) {
-          fetch("/api/sync-real-frame", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ imageData: base64 }),
-          }).catch(() => {});
+          syncFrameToServer({ imageData: base64 });
         }
       };
       reader.readAsDataURL(file);
@@ -1392,11 +1411,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           reader.onload = (event) => {
             const base64 = event.target?.result as string;
             if (base64) {
-              fetch("/api/sync-real-frame", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ imageData: base64 }),
-              }).catch(() => {});
+              syncFrameToServer({ imageData: base64 });
             }
           };
           reader.readAsDataURL(file);
@@ -1651,11 +1666,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     streamSyncIntervalRef.current = window.setInterval(() => {
       if (canvas) {
         const currentSnap = canvas.toDataURL("image/jpeg", 0.85);
-        fetch("/api/sync-real-frame", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageData: currentSnap, timestamp: Date.now() }),
-        }).catch(() => {});
+        syncFrameToServer({ imageData: currentSnap, timestamp: Date.now() });
       }
     }, 300);
 
@@ -1741,15 +1752,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             const ctx = canvas.getContext("2d");
             ctx?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
             const dataUrl = canvas.toDataURL("image/jpeg", syncVisionMode ? 0.90 : 0.80);
-            fetch("/api/sync-real-frame", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ 
+            syncFrameToServer({ 
                 imageData: dataUrl,
                 syncVision: syncVisionMode,
                 timestamp: Date.now(),
-              }),
-            }).catch(() => {});
+              });
           } else {
             if (streamSyncIntervalRef.current !== null) {
               window.clearInterval(streamSyncIntervalRef.current);
@@ -1899,17 +1906,6 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     "route" | "click" | "task" | "goal" | "avoidance"
   >("route");
   const [isFreehandDrawing, setIsFreehandDrawing] = useState<boolean>(false);
-  const [draftedOverlayPoints, setDraftedOverlayPoints] = useState<
-    Array<{
-      id: string;
-      stepNumber: number;
-      name: string;
-      action: any;
-      x: number;
-      y: number;
-      delayMs: number;
-    }>
-  >([]);
   const [freehandRoutePoints, setFreehandRoutePoints] = useState<
     Array<{ x: number; y: number }>
   >([]);
@@ -2263,24 +2259,6 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   const handleMouseUp = () => {
     setDraggingStepId(null);
-  };
-
-  // Integrate drafted overlay points into the main workflow sequence
-  const handleIntegrateOverlayToSequence = () => {
-    if (draftedOverlayPoints.length === 0) return;
-    draftedOverlayPoints.forEach((pt) => {
-      onAddStep({
-        stepNumber: sequence.length + 1,
-        name: pt.name,
-        action: pt.action,
-        x: pt.x,
-        y: pt.y,
-        delayMs: pt.delayMs || 400,
-        status: "pending",
-      });
-    });
-    setDraftedOverlayPoints([]);
-    setIsDrawingOverlayOpen(false);
   };
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -4053,10 +4031,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       {/* Qwen / agent fast-path: Ask, Auto Actions, Test/Simulate, Plan, Pack, Presentation */}
       <div className="relative z-30 px-3 py-1.5 border-b border-slate-800 bg-slate-950/90">
         <HudAgentPanel
-          frame={frozenSnapshotUrl || screenshotUrl || null}
           steps={sequence}
           replayRun={replayRun}
-          runGated={runGatedSteps}
+          device={turnDevice}
+          onEvent={onTurnEvent}
+          onChain={onTurnChain}
           onLoadSteps={(steps) =>
             steps.forEach((step, idx) =>
               onAddStep({ ...step, stepNumber: sequence.length + idx + 1, status: "pending" } as any),

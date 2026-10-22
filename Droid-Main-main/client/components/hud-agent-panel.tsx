@@ -1,63 +1,135 @@
-import React, { useState } from "react";
-import { Bot, FlaskConical, FolderOpen, MessageSquare, Package, Presentation as PresentationIcon, Route } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Bot, FlaskConical, FolderOpen, MessageSquare, Package, Presentation as PresentationIcon, Route, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  askQwen,
   buildPresentation,
   createPack,
-  createPlan,
   loadPack,
-  planNextStep,
-  simulateSequence,
-  type CreatedPlan,
   type HudStepLike,
   type Presentation,
-  type SimulatedStep,
 } from "@/lib/hud-actions";
+import {
+  runTurnLoop,
+  toSequenceSteps,
+  type GoalDevice,
+  type GoalLoopEvent,
+  type SimulatedGoalStep,
+  type TurnLoopOptions,
+  type TurnLoopResult,
+} from "@/lib/qwen-turn-loop";
+import { parseProposedSteps, type GoalStep, type PlanProposal, type RunEvidence } from "@shared/goal-loop";
 import type { HudPack } from "@shared/api";
 import type { ReplayRun } from "@shared/replay";
 
 /** What the result dialog currently shows; each kind is rendered by one function below. */
 type PanelResult =
   | { kind: "answer"; question: string; answer: string }
-  | { kind: "proposal"; plan: CreatedPlan; step: HudStepLike | null }
-  | { kind: "simulation"; results: SimulatedStep[] }
-  | { kind: "plan"; plan: CreatedPlan }
+  | { kind: "plan"; steps: GoalStep[]; simulation: SimulatedGoalStep[] }
+  | { kind: "simulation"; results: SimulatedGoalStep[] }
+  | { kind: "run"; steps: GoalStep[]; evidence: RunEvidence; saved: boolean; saveError?: string }
   | { kind: "pack"; pack: HudPack }
   | { kind: "presentation"; presentation: Presentation };
 
+interface PendingApproval {
+  proposal: PlanProposal;
+  resolve: (approved: boolean) => void;
+}
+
 export interface HudAgentPanelProps {
-  /** Current HUD frame (data URL) or null when nothing is captured. */
-  frame: string | null;
   steps: HudStepLike[];
   replayRun: ReplayRun | null;
-  /** AI-initiated execution: every step goes through the action gate; resolves when done, rejects on failure. */
-  runGated: (steps: HudStepLike[]) => Promise<void>;
-  /** Load a pack's steps into the HUD sequence. */
+  /** Device every AI turn captures from and dispatches to (through the action gate). */
+  device: GoalDevice;
+  /** Turn phases, forwarded to the HUD's thinking indicator and verification badge. */
+  onEvent?: (event: GoalLoopEvent) => void;
+  /** The live operation chain text, surfaced in the intentions panel. */
+  onChain?: (text: string) => void;
+  /** Load steps into the HUD sequence. */
   onLoadSteps: (steps: HudStepLike[]) => void;
 }
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ frame, steps, replayRun, runGated, onLoadSteps }) => {
+/** The HUD sequence as goal steps; a step the turn loop cannot verify is reported, never dropped silently. */
+function toGoalSteps(steps: HudStepLike[]): GoalStep[] {
+  const goalSteps = parseProposedSteps(
+    steps.map((step) => ({
+      id: step.id,
+      name: step.name,
+      action: step.action,
+      x: Math.max(0, Math.round(step.x)),
+      y: Math.max(0, Math.round(step.y)),
+      targetLabel: step.targetOcrLabel,
+      text: step.text,
+      delayMs: step.delayMs === undefined ? undefined : Math.min(5000, Math.max(0, Math.round(step.delayMs))),
+    })),
+    "hud_step",
+  );
+  if (goalSteps.length !== steps.length) {
+    throw new Error(`${steps.length - goalSteps.length} step(s) have an action or value the turn loop cannot verify`);
+  }
+  return goalSteps;
+}
+
+async function saveVerifiedRun(device: GoalDevice, goal: string, run: { steps: GoalStep[]; evidence: RunEvidence }) {
+  const response = await fetch("/api/goal-workflows/flows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(device.apiKey ? { "x-api-key": device.apiKey } : {}) },
+    body: JSON.stringify({ name: goal.slice(0, 120), goal, steps: run.steps, evidence: run.evidence }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data?.success !== true) throw new Error(data?.error || "Saving the verified run failed");
+}
+
+/** A finished turn as the dialog content; a failed turn throws its reason. */
+function turnResult(result: TurnLoopResult, question: string): PanelResult {
+  switch (result.status) {
+    case "answered":
+      return { kind: "answer", question, answer: result.answer };
+    case "planned":
+      return { kind: "plan", steps: result.state.plan, simulation: result.simulation };
+    case "completed":
+      return { kind: "run", steps: result.steps, evidence: result.evidence, saved: result.saved, saveError: result.saveError };
+    case "failed":
+      throw new Error(result.reason);
+  }
+}
+
+const SUCCESS_TOAST: Record<PanelResult["kind"], (r: any) => string> = {
+  answer: () => "Qwen answered from a fresh screenshot",
+  plan: (r: Extract<PanelResult, { kind: "plan" }>) => `Plan of ${r.steps.length} step(s) verified by dry run`,
+  simulation: (r: Extract<PanelResult, { kind: "simulation" }>) =>
+    `${r.results.filter((s) => s.verdict === "pass" || s.verdict === "moved").length}/${r.results.length} steps passed the dry run`,
+  run: (r: Extract<PanelResult, { kind: "run" }>) => `Goal reached: ${r.steps.length} step(s) verified`,
+  pack: (r: Extract<PanelResult, { kind: "pack" }>) => `Pack "${r.pack.name}" (id ${r.pack.id})`,
+  presentation: () => "Presentation ready",
+};
+
+export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ steps, replayRun, device, onEvent, onChain, onLoadSteps }) => {
   const [question, setQuestion] = useState("What is on screen and what should I do next?");
   const [objective, setObjective] = useState("Complete the recorded task");
   const [name, setName] = useState("hud_plan");
   const [packId, setPackId] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<PanelResult | null>(null);
-  const [lastPlan, setLastPlan] = useState<CreatedPlan | null>(null);
+  const [lastPlan, setLastPlan] = useState<GoalStep[] | null>(null);
+  const [chain, setChain] = useState("");
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [pending, setPending] = useState<PendingApproval | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   /** Run one awaited operation: show its result and a success toast, or the real error. */
-  const perform = async (label: string, op: () => Promise<PanelResult>, success: (r: PanelResult) => string) => {
+  const perform = async (label: string, op: () => Promise<PanelResult>) => {
     setBusy(label);
     try {
       const outcome = await op();
       setResult(outcome);
-      toast.success(success(outcome));
+      toast.success(SUCCESS_TOAST[outcome.kind](outcome));
     } catch (error) {
       toast.error(`${label} failed: ${errorMessage(error)}`);
     } finally {
@@ -65,81 +137,87 @@ export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ frame, steps, repl
     }
   };
 
-  const handleAsk = () =>
-    perform("Ask Qwen", async () => ({ kind: "answer", question, answer: await askQwen(frame ?? "", question) }), () => "Qwen answered");
+  const askApproval = (proposal: PlanProposal) => new Promise<boolean>((resolve) => setPending({ proposal, resolve }));
 
-  const handleAutoActions = () =>
-    perform(
-      "Auto Actions",
-      async () => {
-        const plan = await createPlan(`${name}_auto`, frame ?? "", steps, objective);
-        return { kind: "proposal", plan, step: planNextStep(plan.decision) };
-      },
-      (r) => (r.kind === "proposal" && r.step ? `Agent proposed: ${r.step.name}` : "Agent proposed no executable action"),
-    );
-
-  const handleApprove = async (step: HudStepLike) => {
-    setBusy("Execute");
-    try {
-      await runGated([step]);
-      toast.success(`Executed "${step.name}" through the action gate`);
-      setResult(null);
-    } catch (error) {
-      toast.error(`Execution failed: ${errorMessage(error)}`);
-    } finally {
-      setBusy(null);
-    }
+  const answerApproval = (approved: boolean) => {
+    pending?.resolve(approved);
+    setPending(null);
   };
 
-  const handleSimulate = () =>
-    perform(
-      "Test/Simulate",
-      async () => ({ kind: "simulation", results: await simulateSequence(frame ?? "", steps) }),
-      (r) => (r.kind === "simulation" ? `${r.results.filter((s) => s.wouldPass).length}/${r.results.length} steps would pass the gate` : ""),
+  /** One Qwen turn through the shared operation graph; cancellable with Stop. */
+  const runTurn = async (goal: string, turn: Partial<TurnLoopOptions>) => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setChain("");
+    const result = await runTurnLoop(goal, {
+      device,
+      signal: controller.signal,
+      onEvent: (event) => onEvent?.(event),
+      onChain: (_links, text) => {
+        setChain(text);
+        onChain?.(text);
+      },
+      approve: askApproval,
+      autoApprove,
+      ...turn,
+    });
+    abortRef.current = null;
+    return turnResult(result, turn.question ?? "");
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
+    answerApproval(false);
+  };
+
+  const handleAsk = () => perform("Ask Qwen", () => runTurn(question, { entry: "answer", question }));
+
+  const handleAutoActions = () =>
+    perform("Auto Actions", () =>
+      runTurn(objective, { entry: "think", saveBest: (run) => saveVerifiedRun(device, objective.trim(), run) }),
     );
+
+  const handleSimulate = () =>
+    perform("Test/Simulate", async () => {
+      const outcome = await runTurn(objective, { entry: "apply_plan", initialSteps: toGoalSteps(steps), stopBefore: "start" });
+      return outcome.kind === "plan" ? { kind: "simulation", results: outcome.simulation } : outcome;
+    });
 
   const handleCreatePlan = () =>
-    perform(
-      "Create Plan",
-      async () => {
-        const plan = await createPlan(name, frame ?? "", steps, objective);
-        setLastPlan(plan);
-        return { kind: "plan", plan };
-      },
-      () => `Plan "${name}" saved to workflows`,
-    );
+    perform("Create Plan", async () => {
+      const outcome = await runTurn(objective, { entry: "think", stopBefore: "start" });
+      if (outcome.kind === "plan") setLastPlan(outcome.steps);
+      return outcome;
+    });
 
   const handleCreatePack = () =>
-    perform("Create Pack", async () => ({ kind: "pack", pack: await createPack(name, steps, lastPlan) }), (r) =>
-      r.kind === "pack" ? `Pack saved (id ${r.pack.id})` : "",
-    );
+    perform("Create Pack", async () => ({ kind: "pack", pack: await createPack(name, steps, lastPlan) }));
 
   const handleLoadPack = () =>
-    perform(
-      "Load Pack",
-      async () => {
-        const pack = await loadPack(packId.trim());
-        onLoadSteps(pack.sequence as HudStepLike[]);
-        return { kind: "pack", pack };
-      },
-      (r) => (r.kind === "pack" ? `Loaded ${r.pack.sequence.length} steps from pack "${r.pack.name}"` : ""),
-    );
+    perform("Load Pack", async () => {
+      const pack = await loadPack(packId.trim());
+      onLoadSteps(pack.sequence as HudStepLike[]);
+      return { kind: "pack", pack };
+    });
 
   const handlePresentation = () =>
-    perform(
-      "Presentation",
-      async () => {
-        if (!replayRun) throw new Error("No completed run yet. Run the sequence first.");
-        return { kind: "presentation", presentation: buildPresentation(replayRun, steps) };
-      },
-      () => "Presentation ready",
-    );
+    perform("Presentation", async () => {
+      if (!replayRun) throw new Error("No completed run yet. Run the sequence first.");
+      return { kind: "presentation", presentation: buildPresentation(replayRun, steps) };
+    });
+
+  /** A verified plan forwards to the HUD sequence, where Test/Simulate and Run pick it up. */
+  const handleLoadPlan = (planned: GoalStep[]) => {
+    onLoadSteps(toSequenceSteps(planned));
+    setResult(null);
+    toast.success(`Loaded ${planned.length} planned step(s) into the HUD sequence`);
+  };
 
   const controls: Array<{ label: string; icon: React.ElementType; onClick: () => void; disabled?: boolean }> = [
-    { label: "Ask Qwen", icon: MessageSquare, onClick: handleAsk },
-    { label: "Auto Actions", icon: Bot, onClick: handleAutoActions },
+    { label: "Ask Qwen", icon: MessageSquare, onClick: handleAsk, disabled: !question.trim() },
+    { label: "Auto Actions", icon: Bot, onClick: handleAutoActions, disabled: !objective.trim() },
     { label: "Test/Simulate", icon: FlaskConical, onClick: handleSimulate, disabled: steps.length === 0 },
-    { label: "Create Plan", icon: Route, onClick: handleCreatePlan },
+    { label: "Create Plan", icon: Route, onClick: handleCreatePlan, disabled: !objective.trim() },
     { label: "Create Pack", icon: Package, onClick: handleCreatePack, disabled: steps.length === 0 },
     { label: "Load Pack", icon: FolderOpen, onClick: handleLoadPack, disabled: !packId.trim() },
     { label: "Presentation", icon: PresentationIcon, onClick: handlePresentation },
@@ -147,11 +225,17 @@ export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ frame, steps, repl
 
   return (
     <div className="rounded-lg border border-cyan-500/30 bg-slate-950/80 p-2 space-y-2" data-testid="hud-agent-panel">
-      <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">Qwen / Agent fast-path</div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">Qwen / Agent fast-path</span>
+        <label className="flex items-center gap-1 text-[10px] text-slate-400">
+          <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} disabled={!!busy} />
+          Auto-approve fixes
+        </label>
+      </div>
       <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
         <Input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Question for Qwen" className="h-7 text-xs" />
-        <Input value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="Objective" className="h-7 text-xs" />
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Plan / pack name" className="h-7 text-xs" />
+        <Input value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="Objective (goal)" className="h-7 text-xs" />
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Pack name" className="h-7 text-xs" />
         <Input value={packId} onChange={(e) => setPackId(e.target.value)} placeholder="Pack id to load" className="h-7 text-xs" />
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -161,26 +245,59 @@ export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ frame, steps, repl
             {busy === label ? `${label}…` : label}
           </Button>
         ))}
+        {busy && (
+          <Button size="sm" variant="destructive" className="h-7 text-[11px]" onClick={handleStop}>
+            <Square className="mr-1 h-3.5 w-3.5" /> Stop
+          </Button>
+        )}
       </div>
+      {chain && (
+        <p className="text-[10px] text-amber-300" data-turn-chain>
+          {chain}
+        </p>
+      )}
+      {pending && <ApprovalView pending={pending.proposal} onAnswer={answerApproval} />}
       <Dialog open={!!result} onOpenChange={(open) => !open && setResult(null)}>
         <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
-          {result && <ResultView result={result} busy={!!busy} onApprove={handleApprove} />}
+          {result && <ResultView result={result} onLoadPlan={handleLoadPlan} />}
         </DialogContent>
       </Dialog>
     </div>
   );
 };
 
-const ResultView: React.FC<{ result: PanelResult; busy: boolean; onApprove: (step: HudStepLike) => void }> = ({ result, busy, onApprove }) => {
+const ApprovalView: React.FC<{ pending: PlanProposal; onAnswer: (approved: boolean) => void }> = ({ pending, onAnswer }) => (
+  <div className="rounded border border-amber-600 bg-amber-950/40 p-2 space-y-1 text-xs">
+    <div className="font-semibold text-amber-200">Qwen proposes a fix — {pending.reason}</div>
+    <div className="text-slate-400">Goal (unchanged): {pending.goal}</div>
+    <StepList steps={pending.steps} />
+    <div className="flex gap-2">
+      <Button size="sm" className="h-6 text-[11px]" onClick={() => onAnswer(true)}>Approve fix</Button>
+      <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={() => onAnswer(false)}>Reject</Button>
+    </div>
+  </div>
+);
+
+const StepList: React.FC<{ steps: GoalStep[] }> = ({ steps }) => (
+  <ol className="list-decimal pl-5 text-xs">
+    {steps.map((step) => (
+      <li key={step.id}>
+        {step.name} <span className="text-muted-foreground">({step.action} @ {Math.round(step.x)},{Math.round(step.y)})</span>
+      </li>
+    ))}
+  </ol>
+);
+
+const ResultView: React.FC<{ result: PanelResult; onLoadPlan: (steps: GoalStep[]) => void }> = ({ result, onLoadPlan }) => {
   switch (result.kind) {
     case "answer":
       return <AnswerView question={result.question} answer={result.answer} />;
-    case "proposal":
-      return <ProposalView plan={result.plan} step={result.step} busy={busy} onApprove={onApprove} />;
+    case "plan":
+      return <PlanView steps={result.steps} simulation={result.simulation} onLoadPlan={onLoadPlan} />;
     case "simulation":
       return <SimulationView results={result.results} />;
-    case "plan":
-      return <PlanView plan={result.plan} />;
+    case "run":
+      return <RunView run={result} />;
     case "pack":
       return <PackView pack={result.pack} />;
     case "presentation":
@@ -196,58 +313,53 @@ const AnswerView: React.FC<{ question: string; answer: string }> = ({ question, 
   </>
 );
 
-const ProposalView: React.FC<{ plan: CreatedPlan; step: HudStepLike | null; busy: boolean; onApprove: (step: HudStepLike) => void }> = ({
-  plan,
-  step,
-  busy,
-  onApprove,
+const VERDICT_CLASS: Record<SimulatedGoalStep["verdict"], string> = {
+  pass: "text-emerald-500",
+  moved: "text-emerald-400",
+  block: "text-red-500",
+  unchecked: "text-slate-400",
+};
+
+const SimulationList: React.FC<{ results: SimulatedGoalStep[] }> = ({ results }) => (
+  <ul className="space-y-1 text-sm">
+    {results.map((r) => (
+      <li key={r.stepId} className={VERDICT_CLASS[r.verdict]}>
+        {r.verdict.toUpperCase()} {r.name}: {r.reason}
+      </li>
+    ))}
+  </ul>
+);
+
+const SimulationView: React.FC<{ results: SimulatedGoalStep[] }> = ({ results }) => (
+  <>
+    <DialogHeader><DialogTitle>Dry run on a fresh screenshot (no device dispatch)</DialogTitle></DialogHeader>
+    <SimulationList results={results} />
+  </>
+);
+
+const PlanView: React.FC<{ steps: GoalStep[]; simulation: SimulatedGoalStep[]; onLoadPlan: (steps: GoalStep[]) => void }> = ({
+  steps,
+  simulation,
+  onLoadPlan,
 }) => (
   <>
-    <DialogHeader><DialogTitle>Agent proposal</DialogTitle></DialogHeader>
-    <p className="text-sm">{plan.decision.thinking?.reasoning || plan.decision.statusSummary}</p>
-    {step ? (
-      <div className="space-y-2">
-        <p className="text-sm font-semibold">
-          {step.action} "{step.name}" at ({step.x}, {step.y}){step.text ? ` text "${step.text}"` : ""}
-        </p>
-        <Button size="sm" disabled={busy} onClick={() => onApprove(step)}>Approve and execute (gated)</Button>
-      </div>
+    <DialogHeader><DialogTitle>Qwen plan ({steps.length} steps), verified by dry run</DialogTitle></DialogHeader>
+    <StepList steps={steps} />
+    <SimulationList results={simulation} />
+    <Button size="sm" onClick={() => onLoadPlan(steps)}>Load plan into HUD sequence</Button>
+  </>
+);
+
+const RunView: React.FC<{ run: Extract<PanelResult, { kind: "run" }> }> = ({ run }) => (
+  <>
+    <DialogHeader><DialogTitle>Goal reached: {run.steps.length} step(s) verified</DialogTitle></DialogHeader>
+    <p className="text-sm">{run.evidence.goalAssessment.reason}</p>
+    <StepList steps={run.steps} />
+    {run.saved ? (
+      <p className="text-sm text-emerald-500">Saved as a new flow version; confirm it in the goal workflow panel to make it the best flow.</p>
     ) : (
-      <p className="text-sm text-amber-500">The planner proposed no action with screen coordinates; nothing to execute.</p>
+      <p className="text-sm text-amber-500">Not saved{run.saveError ? `: ${run.saveError}` : ""}</p>
     )}
-  </>
-);
-
-const SimulationView: React.FC<{ results: SimulatedStep[] }> = ({ results }) => (
-  <>
-    <DialogHeader><DialogTitle>Dry run (no device dispatch)</DialogTitle></DialogHeader>
-    <ul className="space-y-1 text-sm">
-      {results.map((r) => (
-        <li key={r.stepId} className={r.wouldPass ? "text-emerald-500" : "text-red-500"}>
-          {r.wouldPass ? "PASS" : "BLOCK"} {r.name}: {r.reason}
-          {r.confidence !== undefined ? ` (confidence ${Math.round(r.confidence * 100)}%)` : ""}
-        </li>
-      ))}
-    </ul>
-  </>
-);
-
-const PlanView: React.FC<{ plan: CreatedPlan }> = ({ plan }) => (
-  <>
-    <DialogHeader><DialogTitle>Plan "{plan.name}" saved</DialogTitle></DialogHeader>
-    <p className="text-sm">{plan.decision.thinking?.reasoning || plan.decision.statusSummary}</p>
-    <ol className="list-decimal pl-5 text-sm">
-      {(plan.decision.goals ?? []).map((goal) => (
-        <li key={goal.id}>
-          {goal.title}
-          <ul className="list-disc pl-5 text-xs text-muted-foreground">
-            {goal.subtasks.map((task) => (
-              <li key={task.id}>{task.title}</li>
-            ))}
-          </ul>
-        </li>
-      ))}
-    </ol>
   </>
 );
 

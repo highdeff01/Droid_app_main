@@ -1,83 +1,28 @@
 /**
- * Drives a goal end-to-end on the real device: observe the screen (capture →
- * describe-screen → OCR), ask the planner for steps, then run each step through
- * the action gate and the replay engine, re-observing before and after every
- * step. Moved targets are re-grounded on the fresh screen; a missing target,
- * repeated failures, a stall, a dead route or an unreached goal produce a
- * re-plan that runs only when the user approves it. Every failure stops the
- * loop with its reason; nothing is simulated.
+ * Goal runs (the "goal-agent" tab) on the shared Qwen turn pipeline: one goal,
+ * planned from a fresh screenshot, verified by a dry run, executed step by
+ * step through the action gate and the replay engine, retried within bounds,
+ * fixed or re-planned only with the user's approval, and checked for
+ * completion on a fresh screenshot. Nothing is simulated.
  */
-import type { SequenceStep, VerificationBadgeState } from "@/components/live-screen-hud";
-import {
-  gateTargetForAction,
-  postGateJson,
-  runActionGate,
-  type GatePost,
-} from "@/lib/action-gate";
-import { startReplay, type ReplayRunSnapshot } from "@/lib/automation-runner";
-import { waitForReplayRun } from "@/lib/verified-replay";
-import {
-  MAX_REVISIONS,
-  applyApprovedPlan,
-  applyRelocation,
-  assessProgress,
-  createGoalState,
-  nextStep,
-  observeScreen,
-  recordStepResult,
-  relocateTarget,
-  verifiedSteps,
-  verifyStep,
-  type ExecutedStep,
-  type GoalAssessment,
-  type GoalState,
-  type GoalStep,
-  type PlanProposal,
-  type RunEvidence,
-  type ScreenObservation,
-} from "@shared/goal-loop";
+import { defaultTurnDeps, runTurnLoop, type GoalLoopDeps, type TurnLoopOptions } from "@/lib/qwen-turn-loop";
+import type { GoalState, GoalStep, PlanProposal, RunEvidence, ExecutedStep } from "@shared/goal-loop";
 
-const GATE_TIMEOUT_MS = 45000;
-
-export type GoalLoopPhase =
-  | "thinking"
-  | "analyzing"
-  | "verifying"
-  | "acting"
-  | "awaiting_approval"
-  | "completed"
-  | "failed";
-
-/** The HUD verification badge status that truthfully reflects each loop phase. */
-export const GOAL_PHASE_BADGE: Record<GoalLoopPhase, VerificationBadgeState["status"]> = {
-  thinking: "verifying",
-  analyzing: "verifying",
-  verifying: "verifying",
-  acting: "verified",
-  awaiting_approval: "retrying",
-  completed: "verified",
-  failed: "failed",
-};
-
-export interface GoalLoopEvent {
-  phase: GoalLoopPhase;
-  message: string;
-  x?: number;
-  y?: number;
-  label?: string;
-  confidence?: number;
-}
-
-export interface GoalDevice {
-  targetDevice: "desktop" | "android";
-  deviceId?: string;
-  apiKey?: string;
-}
+export {
+  GOAL_PHASE_BADGE,
+  toReplayStep,
+  toSequenceSteps,
+  type GoalDevice,
+  type GoalLoopDeps,
+  type GoalLoopEvent,
+  type GoalLoopPhase,
+} from "@/lib/qwen-turn-loop";
 
 export interface GoalLoopOptions {
-  device: GoalDevice;
+  device: TurnLoopOptions["device"];
   signal: AbortSignal;
-  onEvent: (event: GoalLoopEvent) => void;
+  onEvent: TurnLoopOptions["onEvent"];
+  onChain?: TurnLoopOptions["onChain"];
   /** Called with the plan whenever it is adopted (initial or approved re-plan). */
   onPlan?: (state: GoalState) => void;
   onStep?: (executed: ExecutedStep, state: GoalState) => void;
@@ -91,295 +36,20 @@ export interface GoalLoopOptions {
   onReplayStarted?: (runId: string) => void;
 }
 
-export interface GoalLoopDeps {
-  post: GatePost;
-  get: (url: string, options: { apiKey?: string; signal: AbortSignal }) => Promise<any>;
-  gate: typeof runActionGate;
-  sleep: (ms: number) => Promise<void>;
-}
-
 export type GoalLoopResult =
   | { status: "completed"; state: GoalState; steps: GoalStep[]; evidence: RunEvidence }
   | { status: "failed"; reason: string; state?: GoalState };
-
-interface Observed {
-  observation: ScreenObservation;
-  frame: string;
-}
-
-interface LoopContext {
-  goal: string;
-  options: GoalLoopOptions;
-  deps: GoalLoopDeps;
-}
-
-const getJson: GoalLoopDeps["get"] = async (url, { apiKey, signal }) => {
-  const response = await fetch(url, {
-    headers: apiKey ? { "x-api-key": apiKey } : {},
-    cache: "no-store",
-    signal,
-  });
-  const data = await response.json();
-  if (!response.ok || data.success !== true) throw new Error(data.error || `${url} failed`);
-  return data;
-};
-
-const defaultDeps: GoalLoopDeps = {
-  post: postGateJson,
-  get: getJson,
-  gate: runActionGate,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-};
-
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-function post(ctx: LoopContext, url: string, body: unknown) {
-  const { apiKey } = ctx.options.device;
-  return ctx.deps.post(url, body, { apiKey, signal: ctx.options.signal });
-}
-
-function ensureActive(ctx: LoopContext) {
-  if (ctx.options.signal.aborted) throw new Error("Goal run stopped");
-}
-
-/** OCR lines for the frame; an OCR outage is reported and leaves the lines empty. */
-async function readText(ctx: LoopContext, frame: string): Promise<string[]> {
-  try {
-    const data = await post(ctx, "/api/goal-workflows/ocr", { imageData: frame });
-    return Array.isArray(data.lines) ? data.lines : [];
-  } catch (error) {
-    ctx.options.onEvent({ phase: "analyzing", message: `OCR unavailable: ${errorMessage(error)}` });
-    return [];
-  }
-}
-
-/** A fresh capture analyzed by perception (never a stale report) plus its OCR text. */
-async function observe(ctx: LoopContext, purpose: string): Promise<Observed> {
-  ensureActive(ctx);
-  const { targetDevice, deviceId } = ctx.options.device;
-  ctx.options.onEvent({ phase: "analyzing", message: `Analyzing screenshot ${purpose}` });
-  const capture = await post(ctx, "/api/replay/capture", { targetDevice, deviceId });
-  const frame: string | undefined = capture.frame?.image;
-  if (!frame) throw new Error("Screen capture returned no frame");
-  const analysis = await post(ctx, "/api/ai/describe-screen", { imageData: frame });
-  if (!analysis.report) throw new Error("Screen analysis returned no report");
-  const ocrText = await readText(ctx, frame);
-  return { observation: observeScreen(analysis.report, ocrText, capture.frame?.hash), frame };
-}
-
-/** The guidance entries for this turn, omitted from the request when there are none. */
-function guidanceOf(ctx: LoopContext): { guidance?: string[] } {
-  const guidance = ctx.options.guidance?.() ?? [];
-  return guidance.length > 0 ? { guidance } : {};
-}
-
-function historyOf(state: GoalState | undefined) {
-  return (state?.executed ?? []).map((e) => ({
-    name: e.step.name,
-    action: e.step.action,
-    passed: e.verification.passed,
-    detail: e.verification.checks.find((c) => !c.passed)?.detail,
-  }));
-}
-
-async function propose(
-  ctx: LoopContext,
-  seen: Observed,
-  state?: GoalState,
-  reason?: string,
-): Promise<PlanProposal> {
-  ctx.options.onEvent({ phase: "thinking", message: reason ? `Re-planning: ${reason}` : `Planning steps for: ${ctx.goal}` });
-  const data = await post(ctx, "/api/goal-workflows/propose", {
-    goal: ctx.goal,
-    observation: seen.observation,
-    screenshot: seen.frame,
-    history: historyOf(state),
-    reason,
-    ...guidanceOf(ctx),
-  });
-  return data.proposal as PlanProposal;
-}
-
-/** Presents a corrected proposal; the plan changes only if the user approves it. */
-async function replan(ctx: LoopContext, state: GoalState, seen: Observed, reason: string): Promise<GoalState> {
-  if (state.revisions >= MAX_REVISIONS) {
-    throw new Error(`Still off-track after ${MAX_REVISIONS} re-plans: ${reason}`);
-  }
-  const proposal = await propose(ctx, seen, state, reason);
-  ctx.options.onEvent({ phase: "awaiting_approval", message: `Waiting for approval: ${reason}` });
-  if (!(await ctx.options.approve(proposal))) throw new Error(`Re-plan declined (${reason})`);
-  const next = applyApprovedPlan(state, proposal);
-  ctx.options.onPlan?.(next);
-  return next;
-}
-
-/** One goal step as a replay-engine step. */
-export function toReplayStep(step: GoalStep) {
-  return {
-    id: step.id,
-    name: step.name,
-    action: step.action,
-    x: Math.round(step.x),
-    y: Math.round(step.y),
-    delayMs: step.delayMs,
-    text: step.text,
-    keyPayload: step.keyPayload,
-    targetOcrLabel: step.targetLabel,
-  };
-}
-
-/** Saved goal steps as a HUD sequence for the existing replay path (desktop or paired phone). */
-export function toSequenceSteps(steps: GoalStep[]): SequenceStep[] {
-  return steps.map((step, index) => ({
-    ...toReplayStep(step),
-    stepNumber: index + 1,
-    status: "pending",
-  }));
-}
-
-async function dispatchStep(ctx: LoopContext, step: GoalStep): Promise<void> {
-  const { device, signal, onEvent } = ctx.options;
-  const label = step.targetLabel ?? step.name;
-  onEvent({ phase: "verifying", message: `Verifying target for "${step.name}"`, x: step.x, y: step.y, label });
-  const gate = await ctx.deps.gate({
-    targetDevice: device.targetDevice,
-    deviceId: device.deviceId,
-    apiKey: device.apiKey,
-    target: gateTargetForAction(step.action, step.x, step.y, label),
-    signal: AbortSignal.any([signal, AbortSignal.timeout(GATE_TIMEOUT_MS)]),
-  });
-  if (gate.status !== "verified") throw new Error(`Action blocked: ${gate.reason}`);
-  ensureActive(ctx);
-  onEvent({ phase: "acting", message: `Acting: ${step.name}`, x: step.x, y: step.y, label: gate.element?.name ?? label, confidence: gate.confidence });
-  const started = await post(ctx, "/api/replay", {
-    targetDevice: device.targetDevice,
-    deviceId: device.deviceId,
-    steps: [toReplayStep(step)],
-    iterations: 1,
-    confirmation: true,
-  });
-  if (started.run?.id) ctx.options.onReplayStarted?.(started.run.id);
-  const fetchRun = async (id: string) =>
-    (await ctx.deps.get(`/api/replay/${encodeURIComponent(id)}`, { apiKey: device.apiKey, signal })).run as ReplayRunSnapshot;
-  await waitForReplayRun(started.run, { signal }, { gate: ctx.deps.gate, start: startReplay, fetch: fetchRun, sleep: ctx.deps.sleep });
-}
-
-interface StepOutcome {
-  state: GoalState;
-  seen: Observed;
-  /** Why the run is off course after this step; absent when it is on track. */
-  problem?: string;
-}
-
-/** Re-checks, gates, executes and verifies the next step. */
-async function runNextStep(ctx: LoopContext, state: GoalState): Promise<StepOutcome> {
-  const planned = nextStep(state)!;
-  const before = await observe(ctx, `before "${planned.name}"`);
-  const relocation = relocateTarget(planned, before.observation);
-  if (relocation.status === "missing") return { state, seen: before, problem: relocation.reason };
-  const step = applyRelocation(planned, relocation);
-  if (relocation.status === "moved") {
-    ctx.options.onEvent({ phase: "thinking", message: `"${planned.name}" target moved ${relocation.distancePx}px; re-grounded on the fresh screen`, x: step.x, y: step.y });
-  }
-  const refused = ctx.options.beforeStep?.(step);
-  if (refused) return { state, seen: before, problem: refused };
-  await dispatchStep(ctx, step);
-  const after = await observe(ctx, `after "${step.name}"`);
-  const executed: ExecutedStep = {
-    step,
-    verification: verifyStep(step, before.observation, after.observation),
-    relocation: relocation.status,
-    signatureAfter: after.observation.signature,
-    screenshot: after.frame,
-    confidence: after.observation.confidence,
-    at: Date.now(),
-  };
-  const recorded = recordStepResult(state, executed);
-  ctx.options.onStep?.(executed, recorded);
-  const progress = assessProgress(recorded);
-  return { state: recorded, seen: after, problem: progress.kind === "on_track" ? undefined : progress.reason };
-}
-
-async function assessGoal(ctx: LoopContext, state: GoalState, seen: Observed): Promise<GoalAssessment> {
-  ctx.options.onEvent({ phase: "thinking", message: "Checking whether the goal is reached" });
-  const data = await post(ctx, "/api/goal-workflows/assess", {
-    goal: ctx.goal,
-    observation: seen.observation,
-    screenshot: seen.frame,
-    history: historyOf(state),
-    ...guidanceOf(ctx),
-  });
-  return data.assessment as GoalAssessment;
-}
-
-function buildEvidence(state: GoalState, assessment: GoalAssessment, finalFrame: string): RunEvidence {
-  const kept = new Set(verifiedSteps(state));
-  return {
-    steps: state.executed
-      .filter((e) => e.verification.passed && kept.has(e.step))
-      .map((e) => ({
-        stepId: e.step.id,
-        passed: true,
-        checks: e.verification.checks,
-        screenshot: e.screenshot,
-        confidence: e.confidence,
-      })),
-    goalAssessment: assessment,
-    finalScreenshot: finalFrame,
-  };
-}
-
-/**
- * After every step the goal is cross-checked: the local progress tracker
- * (failures, stalls, dead routes) first, then the AI's verdict on the fresh
- * screen. A goal reached mid-plan ends the run; off-track asks for a re-plan.
- */
-async function driveGoal(ctx: LoopContext, onState: (state: GoalState) => void): Promise<GoalLoopResult> {
-  let seen = await observe(ctx, "for planning");
-  const initial = await propose(ctx, seen);
-  let state = createGoalState(ctx.goal, initial.steps, seen.observation.signature);
-  ctx.options.onPlan?.(state);
-  onState(state);
-  for (;;) {
-    let problem: string | undefined;
-    let verified = true;
-    if (nextStep(state)) {
-      const before = state.cursor;
-      ({ state, seen, problem } = await runNextStep(ctx, state));
-      verified = state.cursor > before;
-      onState(state);
-    }
-    if (!problem && !verified) continue; // retry the failed step until the tracker flags it
-    if (!problem) {
-      const assessment = await assessGoal(ctx, state, seen);
-      if (assessment.complete) {
-        return { status: "completed", state, steps: verifiedSteps(state), evidence: buildEvidence(state, assessment, seen.frame) };
-      }
-      if (!nextStep(state)) problem = `Goal not reached: ${assessment.reason}`;
-      else if (!assessment.onTrack) problem = `Off-track: ${assessment.reason}`;
-    }
-    if (problem) {
-      state = await replan(ctx, state, seen, problem);
-      onState(state);
-    }
-  }
-}
 
 /** Plans, tests and self-corrects a goal; resolves with the verified flow or the failure reason. */
 export async function runGoalLoop(
   goal: string,
   options: GoalLoopOptions,
-  deps: GoalLoopDeps = defaultDeps,
+  deps: GoalLoopDeps = defaultTurnDeps,
 ): Promise<GoalLoopResult> {
-  const ctx: LoopContext = { goal: goal.trim(), options, deps };
-  let latest: GoalState | undefined;
-  try {
-    const result = await driveGoal(ctx, (state) => (latest = state));
-    options.onEvent({ phase: "completed", message: "Goal reached; every step verified" });
-    return result;
-  } catch (error) {
-    const reason = errorMessage(error);
-    options.onEvent({ phase: "failed", message: reason });
-    return { status: "failed", reason, state: latest };
+  const result = await runTurnLoop(goal, { ...options, entry: "think" }, deps);
+  if (result.status === "completed") {
+    return { status: "completed", state: result.state, steps: result.steps, evidence: result.evidence };
   }
+  if (result.status === "failed") return result;
+  return { status: "failed", reason: `Unexpected turn result: ${result.status}` };
 }

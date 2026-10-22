@@ -1,11 +1,9 @@
 import {
   findTargetElement,
-  gateTargetForAction,
   analysisConfidence,
 } from "@/lib/action-gate";
 import type {
   DetectedUIElement,
-  PlannerActDecision,
   ScreenPerceptionReport,
 } from "@/components/dual-ai-copilot-panel";
 import type { HudEntity, HudGuideResult, HudPack } from "@shared/api";
@@ -210,75 +208,7 @@ export function completionStep<T extends HudStepLike>(guide: HudGuideResult, ste
   return { ...step, id: `${step.id}_completion`, name: `Complete typing: ${step.name}`, action: "type_text", text: typing.remainingText };
 }
 
-// ---------- Test / Simulate ----------
-
-export interface SimulatedStep {
-  stepId: string;
-  name: string;
-  wouldPass: boolean;
-  reason: string;
-  confidence?: number;
-}
-
-/** Dry run: check every step against one analysis of the current frame. Dispatches nothing. */
-export async function simulateSequence(
-  frame: string,
-  steps: HudStepLike[],
-  post: HudPost = postHudJson,
-): Promise<SimulatedStep[]> {
-  const report = await analyzeFrame(frame, post);
-  return steps.map((step) => {
-    const target = gateTargetForAction(step.action, step.x, step.y, step.targetOcrLabel || step.name);
-    if (!target.needsTarget) {
-      return { stepId: step.id, name: step.name, wouldPass: true, reason: "No screen target needed", confidence: analysisConfidence(report) };
-    }
-    const element = findTargetElement(report, step.x, step.y);
-    return element
-      ? { stepId: step.id, name: step.name, wouldPass: true, reason: `Target "${element.name || element.type}" found`, confidence: analysisConfidence(report, element) }
-      : { stepId: step.id, name: step.name, wouldPass: false, reason: `No analyzed element at (${step.x}, ${step.y})` };
-  });
-}
-
-// ---------- Plan / Pack ----------
-
-export interface CreatedPlan {
-  name: string;
-  decision: PlannerActDecision;
-}
-
-/** Analyze the frame, ask the planner for the next actions, and save the plan with the sequence as a workflow. */
-export async function createPlan(
-  name: string,
-  frame: string,
-  steps: HudStepLike[],
-  objective: string,
-  post: HudPost = postHudJson,
-): Promise<CreatedPlan> {
-  const report = await analyzeFrame(frame, post);
-  const planned = await post("/api/ai/plan-and-act", { perceptionReport: report, userObjective: objective });
-  const saved = await post("/api/workflows/save", {
-    name,
-    sequence: steps,
-    metadata: { kind: "plan", objective, decision: planned.decision, createdFrom: "screen-hud" },
-  });
-  return { name: saved.name, decision: planned.decision };
-}
-
-/** The planner's proposed next action as a HUD step; null when it proposed none with coordinates. */
-export function planNextStep(decision: PlannerActDecision): HudStepLike | null {
-  const next = decision.nextAction;
-  if (!next || !Number.isFinite(next.x) || !Number.isFinite(next.y)) return null;
-  return {
-    id: next.id,
-    name: next.title,
-    action: next.actionType,
-    x: next.x as number,
-    y: next.y as number,
-    text: next.textPayload,
-    delayMs: next.delayMs,
-    targetOcrLabel: next.targetName,
-  };
-}
+// ---------- Pack ----------
 
 /** Persist a pack server-side and list it in the workflows store so the workflows tab can load it. */
 export async function createPack(
