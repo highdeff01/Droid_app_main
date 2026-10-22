@@ -289,11 +289,11 @@ export const VirtualDesktopMirrorStudio: React.FC = () => {
       const isRestricted = isInIframe || err?.name === "SecurityError" || err?.message?.toLowerCase().includes("denied") || err?.message?.toLowerCase().includes("policy");
       setStreamError(
         isRestricted
-          ? "Browsers restrict direct display capture inside embedded preview iframes. Use the Live Interactive Desktop Mirror below or open this window in a new tab for native 60FPS OS capture."
+          ? "Browsers restrict direct display capture inside embedded preview iframes. Open this window in a new tab to capture the real screen; the drawn desktop below is a preview-only template."
           : err?.message || "Screen capture was cancelled."
       );
       setMirrorMode("virtual_os");
-      toast.error(isRestricted ? "Iframe capture restricted: Switched to Live Interactive OS" : "Screen capture cancelled");
+      toast.error(isRestricted ? "Iframe capture restricted: showing preview-only template (not the live screen)" : "Screen capture cancelled");
     }
   };
 
@@ -479,9 +479,9 @@ export const VirtualDesktopMirrorStudio: React.FC = () => {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold font-mono text-slate-100">Live Device & Desktop Mirror Studio</h3>
+              <h3 className="text-sm font-bold font-mono text-slate-100">Device & Desktop Mirror Studio</h3>
               <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-[10px] font-mono">
-                {mirrorMode === "real_screen" ? "60 FPS PC Screen" : mirrorMode === "camera" ? "Camera Feed" : "Interactive 60FPS OS"}
+                {mirrorMode === "real_screen" ? "Real PC Screen" : mirrorMode === "camera" ? "Camera Feed" : "PREVIEW ONLY · drawn template"}
               </Badge>
             </div>
             <p className="text-[11px] font-mono text-slate-400">
@@ -496,7 +496,7 @@ export const VirtualDesktopMirrorStudio: React.FC = () => {
             onClick={() => {
               stopLiveStream();
               setMirrorMode("virtual_os");
-              toast.info("Switched to Live Interactive Desktop OS");
+              toast.info("Switched to preview-only desktop template (not the live screen)");
             }}
             className={`px-2.5 py-1 rounded-md font-bold flex items-center gap-1.5 transition-all ${
               mirrorMode === "virtual_os"
@@ -504,7 +504,7 @@ export const VirtualDesktopMirrorStudio: React.FC = () => {
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
-            <Sparkles className="w-3.5 h-3.5 text-cyan-200" /> Interactive OS
+            <Sparkles className="w-3.5 h-3.5 text-cyan-200" /> Template (preview)
           </button>
 
           <button

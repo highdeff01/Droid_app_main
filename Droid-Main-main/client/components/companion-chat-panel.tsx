@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ensureAssistantSession } from "@/lib/assistant-session";
 import { companionApi, type CompanionWorkflow } from "@/lib/companion-api";
+import { connectCompanion, retryDelayMs, type CompanionConnection } from "@/lib/companion-connection";
+import { cn } from "@/lib/utils";
 import { ProposalCard, type RunCompanionSteps } from "@/components/companion-tasks-panel";
 
 interface ChatEntry {
@@ -36,27 +38,56 @@ const REAL_FRAME = /^data:image\/(png|jpeg);base64,/;
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** Friend-like companion chat backed by the server's memory (notes, event screenshots, history). */
+const connectDeps = {
+  ensureSession: () => ensureAssistantSession({ project: { name: "Sightline Companion" } }),
+  loadHistory: (id: string) => companionApi.chatHistory(id),
+};
+
+/** Connection state with automatic backoff retries and a manual reconnect. */
+function useCompanionConnection(onHistory: (entries: ChatEntry[]) => void) {
+  const [connection, setConnection] = useState<CompanionConnection>({ status: "connecting", attempt: 0 });
+  const disposedRef = useRef(false);
+  const retryTimerRef = useRef<number | null>(null);
+
+  const clearRetry = () => {
+    if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+  };
+
+  const connect = async (attempt: number): Promise<string | null> => {
+    clearRetry();
+    setConnection({ status: "connecting", attempt });
+    const { connection: next, history } = await connectCompanion(connectDeps, attempt);
+    if (disposedRef.current) return null;
+    setConnection(next);
+    if (next.status === "connected") {
+      onHistory(history.map((t) => ({ id: t.id, role: t.role, content: t.content })));
+      return next.sessionId;
+    }
+    const delay = retryDelayMs(attempt + 1);
+    if (delay !== null) retryTimerRef.current = window.setTimeout(() => void connect(attempt + 1), delay);
+    return null;
+  };
+
+  useEffect(() => {
+    disposedRef.current = false;
+    void connect(0);
+    return () => {
+      disposedRef.current = true;
+      clearRetry();
+    };
+  }, []);
+
+  return { connection, reconnect: () => connect(0) };
+}
+
 export function CompanionChatPanel(props: CompanionChatPanelProps) {
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let disposed = false;
-    ensureAssistantSession({ project: { name: "Sightline Companion" } })
-      .then(async (id) => {
-        const turns = await companionApi.chatHistory(id);
-        if (disposed) return;
-        setSessionId(id);
-        setEntries(turns.map((t) => ({ id: t.id, role: t.role, content: t.content })));
-      })
-      .catch((error) => toast.error(`Companion chat unavailable: ${errorText(error)}`));
-    return () => {
-      disposed = true;
-    };
-  }, []);
+  const { connection, reconnect } = useCompanionConnection(setEntries);
+  const sessionId = connection.status === "connected" ? connection.sessionId : null;
 
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [entries]);
 
@@ -81,13 +112,19 @@ export function CompanionChatPanel(props: CompanionChatPanelProps) {
 
   const send = async () => {
     const message = input.trim();
-    if (!message || !sessionId || sending) return;
-    setInput("");
+    if (!message || sending) return;
     setSending(true);
+    // Disconnected: reconnect first; on failure the message stays in the input and the banner shows why.
+    const activeSession = sessionId ?? (await reconnect());
+    if (!activeSession) {
+      setSending(false);
+      return;
+    }
+    setInput("");
     setEntries((prev) => [...prev, { id: `local_${Date.now()}`, role: "user", content: message }]);
     try {
       const response = await companionApi.sendChat({
-        sessionId,
+        sessionId: activeSession,
         message,
         currentTab: props.currentTab,
         screenSummary: props.screenSummary || undefined,
@@ -95,9 +132,11 @@ export function CompanionChatPanel(props: CompanionChatPanelProps) {
         workflowHistory: props.workflowHistory?.slice(0, 20),
       });
       const screenshots = response.screenshots ?? [];
+      if (!response.reply) throw new Error(response.error || "Companion returned no reply");
+      const reply = response.reply;
       setEntries((prev) => [
         ...prev,
-        { id: response.reply.id, role: "assistant", content: response.reply.content, screenshots },
+        { id: reply.id, role: "assistant", content: reply.content, screenshots },
       ]);
       for (const action of response.actions ?? []) {
         await applyAction(action, screenshots).catch((error) =>
@@ -116,10 +155,26 @@ export function CompanionChatPanel(props: CompanionChatPanelProps) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {connection.status === "error" && (
+        <div
+          role="alert"
+          className="mb-2 flex items-start gap-2 rounded border border-red-700/70 bg-red-950/60 p-2 text-[11px] text-red-200"
+        >
+          <span className="flex-1 break-words">
+            {connection.reason}
+            {retryDelayMs(connection.attempt + 1) !== null ? " Retrying automatically…" : ""}
+          </span>
+          <Button size="sm" onClick={() => void reconnect()} className="h-6 px-2 text-[11px] bg-red-800 hover:bg-red-700">
+            Reconnect
+          </Button>
+        </div>
+      )}
       <div className="flex-1 rounded border border-slate-800 bg-slate-950 p-2 overflow-y-auto space-y-1 mb-2">
         {entries.length === 0 && (
           <div className="text-xs text-slate-500">
-            {sessionId ? "Ask about past runs, errors, notes or what is on screen." : "Connecting to companion…"}
+            {connection.status === "connecting"
+              ? "Connecting to companion…"
+              : "Ask about past runs, errors, notes or what is on screen."}
           </div>
         )}
         {entries.map((entry) => (
@@ -151,14 +206,16 @@ export function CompanionChatPanel(props: CompanionChatPanelProps) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Talk to your AI companion..."
-          className="h-9 text-sm bg-slate-900 border-slate-700 flex-1"
-          disabled={!sessionId}
+          className={cn(
+            "h-9 text-sm bg-slate-900 border-slate-700 flex-1",
+            connection.status === "error" && "border-red-700",
+          )}
           onKeyDown={(e) => {
             if (e.key === "Enter") void send();
           }}
         />
-        <Button size="sm" onClick={() => void send()} disabled={!sessionId || sending} className="h-9 text-sm bg-slate-800">
-          {sending ? "…" : "Send"}
+        <Button size="sm" onClick={() => void send()} disabled={sending || !input.trim()} className="h-9 text-sm bg-slate-800">
+          {sending ? "…" : sessionId ? "Send" : "Reconnect & Send"}
         </Button>
       </div>
     </div>

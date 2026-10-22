@@ -114,6 +114,8 @@ import {
 } from "@/lib/frame-viewport";
 import {
   HUD_CONTROL_STRIP_PX,
+  HUD_NODE_MARGIN_PCT,
+  selectFrameSource,
   HUD_LAYERS,
   HUD_SIZE_MAX_VIEWPORT,
   SECOND_HUD_SPACE,
@@ -134,6 +136,7 @@ import {
 } from "@/lib/step-replay";
 import { useElementSize } from "@/hooks/use-element-size";
 import { useBufferedFrame } from "@/hooks/use-buffered-frame";
+import { HudEmptyState } from "@/components/hud-empty-state";
 import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
 import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
@@ -1307,14 +1310,14 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         action: targetStep.action,
         precondition: nextIdx === 0 ? "Initial clean baseline" : `Step #${nextIdx} completed`,
         thought: `Advancing to Step #${nextIdx + 1} (${replayScope === "pack" ? "Pack Step" : "Flow Step"}): Target (${targetStep.x}, ${targetStep.y}) -> Execute ${targetStep.action.toUpperCase()}`,
-        expectedState: `Mutate virtual template state for ${targetStep.name || targetStep.action}`,
+        expectedState: `Real device reaches the state after ${targetStep.name || targetStep.action}`,
         verification: "PENDING",
         timestamp: now,
       }
     ]);
 
     toast.success(`⏩ Step #${nextIdx + 1}: ${targetStep.name || targetStep.action.toUpperCase()} Forwarded!`, {
-      description: `Target (${targetStep.x}, ${targetStep.y}) applied to active template [${replayScope.toUpperCase()}]`,
+      description: `Target (${targetStep.x}, ${targetStep.y}) dispatched to the real device [${replayScope.toUpperCase()}]`,
       duration: 1800,
     });
   };
@@ -1371,6 +1374,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   };
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [hasLiveVideo, setHasLiveVideo] = useState(false);
   const canvasCaptureRef = useRef<HTMLCanvasElement | null>(null);
 
   // Allow parent (Dashboard header Share) to trigger HUD share via custom event
@@ -1441,244 +1445,6 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     }
   };
 
-  // Launch high-speed virtual desktop canvas stream as instant unblocked mirror
-  const handleStartSimulatedScreenStream = () => {
-    setScreenShareError(null);
-    setIsLiveStreamActive(true);
-    setAntiTunnelMode("live_stream");
-
-    // Clean up any existing interval
-    if (streamSyncIntervalRef.current !== null) {
-      window.clearInterval(streamSyncIntervalRef.current);
-      streamSyncIntervalRef.current = null;
-    }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = 1920;
-    canvas.height = 1080;
-    const ctx = canvas.getContext("2d");
-
-    let animFrameId: number;
-    let frameCount = 0;
-
-    const renderDynamicFrame = () => {
-      frameCount++;
-      if (!ctx) return;
-
-      const now = new Date();
-      const timeString = now.toLocaleTimeString();
-
-      // Deep dark futuristic canvas background
-      ctx.fillStyle = "#070b14";
-      ctx.fillRect(0, 0, 1920, 1080);
-
-      // Subtle background grid
-      ctx.strokeStyle = "rgba(56, 189, 248, 0.06)";
-      ctx.lineWidth = 1;
-      for (let x = 0; x < 1920; x += 60) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, 1080);
-        ctx.stroke();
-      }
-      for (let y = 0; y < 1080; y += 60) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(1920, y);
-        ctx.stroke();
-      }
-
-      // Top OS Header Bar
-      ctx.fillStyle = "#0f172a";
-      ctx.fillRect(0, 0, 1920, 72);
-      ctx.strokeStyle = "#1e293b";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(0, 0, 1920, 72);
-
-      // Title & Live Badge
-      ctx.fillStyle = "#38bdf8";
-      ctx.font = "bold 24px monospace";
-      ctx.fillText("⚡ SIGHTLINE AUTONOMOUS WORKSPACE • LIVE DESKTOP MIRROR [60FPS]", 40, 46);
-
-      // Live Time & Status
-      ctx.fillStyle = "#10b981";
-      ctx.beginPath();
-      ctx.arc(1620, 36, 7, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = "#f8fafc";
-      ctx.font = "bold 20px monospace";
-      ctx.fillText(`● LIVE • ${timeString}`, 1640, 44);
-
-      // Interactive Window 1: Chrome / Google Search
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(140, 130, 820, 480, 18) : ctx.rect(140, 130, 820, 480);
-      ctx.fill();
-      ctx.strokeStyle = "#0284c7";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Window Titlebar
-      ctx.fillStyle = "#1e293b";
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(140, 130, 820, 48, [18, 18, 0, 0]) : ctx.rect(140, 130, 820, 48);
-      ctx.fill();
-      ctx.fillStyle = "#38bdf8";
-      ctx.font = "bold 16px monospace";
-      ctx.fillText("🌐 Google Chrome - Autonomous Navigation", 160, 160);
-
-      // Window Search Bar
-      ctx.fillStyle = "#090d16";
-      ctx.fillRect(170, 200, 760, 48);
-      ctx.strokeStyle = "#38bdf8";
-      ctx.strokeRect(170, 200, 760, 48);
-      ctx.fillStyle = "#f8fafc";
-      ctx.font = "16px monospace";
-      ctx.fillText("https://google.com/search?q=Sightline+Autonomous+AI+Hardware", 190, 230);
-
-      // Search results list
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(170, 270, 760, 120);
-      ctx.fillStyle = "#38bdf8";
-      ctx.font = "bold 18px sans-serif";
-      ctx.fillText("Sightline AI • 60 FPS Zero-Drift Mouse & OCR Stream", 190, 310);
-      ctx.fillStyle = "#34d399";
-      ctx.font = "14px monospace";
-      ctx.fillText("https://sightline.local/mirror • Verified Hardware Bridge", 190, 340);
-      ctx.fillStyle = "#94a3b8";
-      ctx.font = "14px sans-serif";
-      ctx.fillText("Real-time bi-directional click dispatch, vision verification, and ADB multi-device control.", 190, 370);
-
-      // Action Button in Window 1
-      ctx.fillStyle = "#0284c7";
-      ctx.fillRect(170, 420, 240, 48);
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 16px monospace";
-      ctx.fillText("▶ Execute Action (PyAutoGUI)", 190, 450);
-
-      // Interactive Window 2: Terminal / PyAutoGUI CLI
-      ctx.fillStyle = "#020617";
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(1010, 130, 770, 480, 18) : ctx.rect(1010, 130, 770, 480);
-      ctx.fill();
-      ctx.strokeStyle = "#10b981";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Titlebar Terminal
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(1010, 130, 770, 48, [18, 18, 0, 0]) : ctx.rect(1010, 130, 770, 48);
-      ctx.fill();
-      ctx.fillStyle = "#10b981";
-      ctx.font = "bold 16px monospace";
-      ctx.fillText("⬛ Terminal - Python PyAutoGUI Daemon (port 3000)", 1030, 160);
-
-      // Terminal text lines
-      ctx.fillStyle = "#34d399";
-      ctx.font = "15px monospace";
-      ctx.fillText("PS C:\\Users\\Sightline> python -m sightline.daemon --fps 60", 1040, 220);
-      ctx.fillText("[Hardware Bridge] Zero-drift mouse listener connected.", 1040, 255);
-      ctx.fillText("[Display Stream] 1920x1080 @ 60 FPS live frame generation active.", 1040, 290);
-      ctx.fillText(`[Frame Sync] Sequence Tick #${frameCount} | Latency: 4ms`, 1040, 325);
-      ctx.fillText("[Bi-Directional] Click, double-click, and hotkey forwarding ready.", 1040, 360);
-
-      // Interactive Window 3: System Telemetry & Task Monitor
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(140, 640, 1640, 320, 18) : ctx.rect(140, 640, 1640, 320);
-      ctx.fill();
-      ctx.strokeStyle = "#6366f1";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Telemetry Title
-      ctx.fillStyle = "#1e1b4b";
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(140, 640, 1640, 48, [18, 18, 0, 0]) : ctx.rect(140, 640, 1640, 48);
-      ctx.fill();
-      ctx.fillStyle = "#a5b4fc";
-      ctx.font = "bold 16px monospace";
-      ctx.fillText("📊 Real-Time Telemetry & Hardware Multi-Device Ledger", 160, 670);
-
-      // Telemetry Cards
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(170, 715, 360, 100);
-      ctx.fillStyle = "#38bdf8";
-      ctx.font = "bold 14px monospace";
-      ctx.fillText("CPU Load (8 Cores)", 190, 745);
-      ctx.fillStyle = "#34d399";
-      ctx.font = "bold 26px monospace";
-      ctx.fillText("18.4% [Optimal]", 190, 785);
-
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(560, 715, 360, 100);
-      ctx.fillStyle = "#38bdf8";
-      ctx.font = "bold 14px monospace";
-      ctx.fillText("PyAutoGUI Dispatch Rate", 580, 745);
-      ctx.fillStyle = "#38bdf8";
-      ctx.font = "bold 26px monospace";
-      ctx.fillText("60.0 FPS", 580, 785);
-
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(950, 715, 360, 100);
-      ctx.fillStyle = "#38bdf8";
-      ctx.font = "bold 14px monospace";
-      ctx.fillText("OCR Bounding Boxes", 970, 745);
-      ctx.fillStyle = "#f59e0b";
-      ctx.font = "bold 26px monospace";
-      ctx.fillText("14 Elements Active", 970, 785);
-
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(1340, 715, 410, 100);
-      ctx.fillStyle = "#38bdf8";
-      ctx.font = "bold 14px monospace";
-      ctx.fillText("Device Mirror Status", 1360, 745);
-      ctx.fillStyle = "#10b981";
-      ctx.font = "bold 26px monospace";
-      ctx.fillText("UNBLOCKED ● READY", 1360, 785);
-
-      // Bottom Taskbar
-      ctx.fillStyle = "#020617";
-      ctx.fillRect(0, 1010, 1920, 70);
-      ctx.strokeStyle = "#1e293b";
-      ctx.strokeRect(0, 1010, 1920, 70);
-
-      ctx.fillStyle = "#0284c7";
-      ctx.fillRect(40, 1022, 140, 46);
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 16px monospace";
-      ctx.fillText("⚡ START", 70, 1052);
-
-      animFrameId = requestAnimationFrame(renderDynamicFrame);
-    };
-
-    renderDynamicFrame();
-
-    try {
-      const stream = (canvas as any).captureStream ? (canvas as any).captureStream(60) : null;
-      if (stream && videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {});
-      }
-    } catch {}
-
-    const snap = canvas.toDataURL("image/jpeg", 0.9);
-    setFrozenSnapshotUrl(snap);
-    notifyLiveChange(true, snap, "monitor");
-
-    // Continuous frame sync to backend every 300ms
-    streamSyncIntervalRef.current = window.setInterval(() => {
-      if (canvas) {
-        const currentSnap = canvas.toDataURL("image/jpeg", 0.85);
-        syncFrameToServer({ imageData: currentSnap, timestamp: Date.now() });
-      }
-    }, 300);
-
-    toast.success("🖥️ Interactive Desktop Mirror Stream Active (60 FPS)");
-  };
-
   // Start / Stop Browser-Native Real Screen Sharing (getDisplayMedia)
   const handleToggleRealScreenStream = async () => {
     if (isLiveStreamActive) {
@@ -1691,6 +1457,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         stream.getTracks().forEach((t) => t.stop());
         videoRef.current.srcObject = null;
       }
+      setHasLiveVideo(false);
       setIsLiveStreamActive(false);
       setFrozenSnapshotUrl(null);
       setScreenShareError(null);
@@ -1729,6 +1496,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play().catch(() => {});
+        setHasLiveVideo(true);
         setIsLiveStreamActive(true);
         const track = stream.getVideoTracks()[0];
         const settings = (track?.getSettings() as any) || {};
@@ -1779,6 +1547,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             window.clearInterval(streamSyncIntervalRef.current);
             streamSyncIntervalRef.current = null;
           }
+          setHasLiveVideo(false);
           setIsLiveStreamActive(false);
           setFrozenSnapshotUrl(null);
           notifyLiveChange(false, null, null);
@@ -1789,10 +1558,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       const isPolicyOrIframe = isInIframe || err?.name === "SecurityError" || err?.message?.toLowerCase().includes("permission") || err?.message?.toLowerCase().includes("policy") || err?.message?.toLowerCase().includes("denied");
 
       setScreenShareError({
-        title: isPolicyOrIframe ? "Screen Share Restricted in Iframe Preview" : "Screen Share Not Started",
+        title: isPolicyOrIframe ? "Screen Share Blocked" : "Screen Share Not Started",
         message: isPolicyOrIframe
-          ? "Browsers block direct display-capture inside embedded iframes. Open the app in a standalone new tab for native 60FPS hardware capture, or activate the virtual desktop mirror fallback right now!"
-          : err?.message || "Screen capture was cancelled or dismissed. Click below to retry or launch desktop mirror.",
+          ? `Display capture was blocked (${err?.message || err?.name || "permission denied"}). Open the app in its own tab and allow screen sharing.`
+          : err?.message || "Screen capture was cancelled or dismissed.",
         isIframe: isInIframe,
       });
     } finally {
@@ -1957,6 +1726,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     hudFitMode === "fill" ? "cover" : "contain",
   );
   const frameLayerSize = { width: frameLayerRect.width, height: frameLayerRect.height };
+  const frameSource = selectFrameSource(isLiveStreamActive && hasLiveVideo, bufferedFrame.url);
   const viewportHeight =
     hudSizeMode === "fullscreen"
       ? undefined
@@ -2049,21 +1819,6 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       snap = frozenSnapshotUrl || screenshotUrl || null;
     }
 
-    if (!snap) {
-      const c = document.createElement("canvas");
-      c.width = 1920;
-      c.height = 1080;
-      const ctx = c.getContext("2d");
-      if (ctx) {
-        ctx.fillStyle = "#070b14";
-        ctx.fillRect(0, 0, 1920, 1080);
-        ctx.fillStyle = "#38bdf8";
-        ctx.font = "bold 24px monospace";
-        ctx.fillText(`⚡ SIGHTLINE AUTONOMOUS SCREEN SNAPSHOT • ${new Date().toLocaleTimeString()}`, 40, 50);
-        snap = c.toDataURL("image/jpeg", 0.88);
-      }
-    }
-
     if (snap) {
       setFrozenSnapshotUrl(snap);
       notifyLiveChange(true, snap, "snapshot");
@@ -2074,6 +1829,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       return snap;
     }
 
+    toast.error("No real frame to capture: start a screen share, the desktop bridge or a phone mirror first.");
     return null;
   };
 
@@ -2454,7 +2210,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       tabIndex={0}
       className={cn(
         "relative w-full bg-slate-950 rounded-xl overflow-hidden select-none border-2 transition-all duration-300 outline-none flex flex-col",
-        hudSizeMode === "fullscreen" && "fixed inset-0 z-50 w-screen h-screen bg-black rounded-none border-0",
+        hudSizeMode === "fullscreen" && cn("fixed inset-0 w-screen h-screen bg-black rounded-none border-0", HUD_LAYERS.fullscreen),
         deviceBridgeMode
           ? "border-cyan-400 shadow-[0_0_25px_rgba(6,182,212,0.4)]"
           : isRecordMode
@@ -2621,7 +2377,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             {showSyncDiagnosticsModal && (
               <div
                 onClick={(e) => e.stopPropagation()}
-                className="absolute top-full left-0 mt-1.5 w-80 p-3 bg-slate-950/95 border border-cyan-500/50 rounded-xl shadow-2xl z-50 text-xs font-mono space-y-2.5 backdrop-blur-md"
+                className={cn("absolute top-full left-0 mt-1.5 w-80 p-3 bg-slate-950/95 border border-cyan-500/50 rounded-xl shadow-2xl text-xs font-mono space-y-2.5 backdrop-blur-md", HUD_LAYERS.popover)}
               >
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                   <span className="font-bold text-slate-100 flex items-center gap-1.5">
@@ -3759,43 +3515,21 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         style={frameLayerRect}
         className={cn("absolute", HUD_LAYERS.frame)}
       >
-        {/* Native WebRTC Live Real Screen Video Stream (only when active srcObject exists) */}
-        {isLiveStreamActive && antiTunnelMode === "live_stream" && (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className={`w-full h-full pointer-events-none absolute inset-0 z-0 ${
-              hudFitMode === "fill" ? "object-cover" : "object-contain"
-            }`}
-          />
-        )}
+        {/* Screen-share video stays mounted so getDisplayMedia can attach its stream before the HUD re-renders */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={cn(
+            "w-full h-full pointer-events-none absolute inset-0 bg-black",
+            hudFitMode === "fill" ? "object-cover" : "object-contain",
+            frameSource !== "video" && "hidden",
+          )}
+        />
 
-        {/* Anti-Tunnel Freeze Frame Snapshot (Prevents Infinite Visual Loop) */}
-        {isLiveStreamActive && antiTunnelMode === "anti_tunnel_snapshot" && (
-          <div className="absolute inset-0 z-0 flex flex-col items-center justify-center bg-black">
-            {frozenSnapshotUrl ? (
-              <img
-                src={frozenSnapshotUrl}
-                alt="Anti-Tunnel Snapshot"
-                className={`w-full h-full pointer-events-none ${
-                  hudFitMode === "fill" ? "object-cover" : "object-contain"
-                }`}
-              />
-            ) : (
-              <div className="text-center p-4">
-                <span className="text-xs font-mono text-cyan-300 animate-pulse">
-                  🛡️ Anti-Tunnel Snapshot Active (Zero Visual Feedback Loop)
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Primary Screen Frame: last decoded frame, so polls never flash blank and a stalled stream keeps its last image */}
-        {bufferedFrame.url &&
-        (!isLiveStreamActive || (isLiveStreamActive && !videoRef.current?.srcObject)) ? (
+        {/* Last decoded real frame (desktop capture / phone mirror): polls never flash blank, a stall keeps the last image */}
+        {frameSource === "image" && bufferedFrame.url && (
           <div className="absolute inset-0 bg-black">
             <img
               src={bufferedFrame.url}
@@ -3806,124 +3540,35 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 hudFitMode === "fill" ? "object-cover" : "object-contain",
               )}
             />
-            {bufferedFrame.stalled && (
-              <div className={cn("absolute top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-md bg-amber-950/90 border border-amber-500/60 text-amber-300 text-[10px] font-mono font-bold pointer-events-none", HUD_LAYERS.decoration)}>
-                Stream stalled: showing last frame
-              </div>
-            )}
-            {isMobileMode && (
-              <div className={cn("absolute top-2 left-2 px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 text-[9px] font-mono font-bold flex items-center gap-1 shadow-lg pointer-events-none backdrop-blur-sm", HUD_LAYERS.decoration)}>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                <span>LIVE PHONE STREAM • {NATIVE_WIDTH}x{NATIVE_HEIGHT}</span>
-              </div>
-            )}
           </div>
-        ) : (
-          !isLiveStreamActive && (
-            <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6 text-center group z-10 select-none">
-              {screenShareError ? (
-                <div className="max-w-md w-full bg-slate-950/95 border-2 border-amber-500/80 rounded-xl p-5 shadow-2xl space-y-3">
-                  <div className="flex items-center justify-center gap-2 text-amber-400 font-mono font-bold text-sm">
-                    <Sparkles className="w-5 h-5 text-amber-400 animate-spin" />
-                    <span>{screenShareError.title}</span>
-                  </div>
-                  <p className="text-xs font-mono text-slate-300 leading-relaxed">
-                    {screenShareError.message}
-                  </p>
-                  <div className="flex flex-col gap-2 pt-2">
-                    <Button
-                      onClick={handleStartSimulatedScreenStream}
-                      className="w-full h-9 text-xs font-mono font-bold bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white shadow-lg shadow-emerald-950 border border-emerald-400/40 gap-2"
-                    >
-                      <Play className="w-4 h-4 text-emerald-300 fill-emerald-300" />
-                      ACTIVATE DESKTOP MIRROR (Instant 60FPS Fallback)
-                    </Button>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => window.open(window.location.href, "_blank")}
-                        className="flex-1 h-8 text-[11px] font-mono bg-slate-900 border-slate-700 hover:bg-slate-800 text-cyan-300 gap-1.5"
-                      >
-                        <Monitor className="w-3.5 h-3.5 text-cyan-400" />
-                        Open in New Tab (Direct OS Capture)
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={handleToggleRealScreenStream}
-                        className="flex-1 h-8 text-[11px] font-mono bg-slate-900 border-slate-700 hover:bg-slate-800 text-amber-300 gap-1.5"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
-                        Retry Share
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  onClick={handleToggleRealScreenStream}
-                  className="cursor-pointer flex flex-col items-center justify-center"
-                >
-                  <div className="w-20 h-20 rounded-full bg-cyan-950/80 border-2 border-cyan-400/80 flex items-center justify-center mb-4 group-hover:scale-110 group-hover:border-cyan-300 transition-all shadow-[0_0_30px_rgba(6,182,212,0.4)] animate-pulse">
-                    <Monitor className="w-10 h-10 text-cyan-300" />
-                  </div>
-
-                  <h3 className="text-lg font-bold font-mono text-slate-100 mb-1 group-hover:text-cyan-300 transition-colors">
-                    Start Live Screen Stream
-                  </h3>
-                  <p className="text-xs font-mono text-slate-300 max-w-md mb-4">
-                    Direct 60 FPS zero-latency hardware desktop mirror for AI mouse
-                    navigation, OCR text scanning, and physical PyAutoGUI
-                    automation.
-                  </p>
-
-                  <div className="flex items-center gap-2.5 flex-wrap justify-center">
-                    <Button
-                      size="lg"
-                      disabled={isRequestingScreenShare}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleToggleRealScreenStream();
-                      }}
-                      className="h-10 px-5 text-xs font-mono font-bold bg-gradient-to-r from-cyan-600 via-blue-600 to-cyan-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-xl shadow-cyan-950 border border-cyan-400/40 gap-2"
-                    >
-                      <Play className="w-4 h-4 text-yellow-300 fill-yellow-300" />
-                      {isRequestingScreenShare ? "CONNECTING..." : "START REAL DESKTOP STREAM (60 FPS)"}
-                    </Button>
-
-                    <Button
-                      size="lg"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleStartSimulatedScreenStream();
-                      }}
-                      className="h-10 px-4 text-xs font-mono font-bold bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-emerald-500/50 shadow-lg gap-2"
-                    >
-                      <Sparkles className="w-4 h-4 text-emerald-400" />
-                      DESKTOP MIRROR FALLBACK
-                    </Button>
-
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.open(window.location.href, "_blank");
-                      }}
-                      className="h-10 px-3 text-xs font-mono bg-slate-900/80 border-slate-700 hover:bg-slate-800 text-cyan-300 gap-1.5"
-                      title="Open in new browser tab for direct OS display capture"
-                    >
-                      <Monitor className="w-4 h-4" />
-                      NEW TAB ↗
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
         )}
 
-      {/* Cyberpunk HUD Grid Overlay */}
-      <div className="absolute inset-0 pointer-events-none">
+        {frameSource === "none" && (
+          <HudEmptyState
+            shareError={screenShareError}
+            isRequestingShare={isRequestingScreenShare}
+            onStartShare={handleToggleRealScreenStream}
+          />
+        )}
+
+        {/* Frame status chips share one top-centre strip so they never stack on corner controls */}
+        {frameSource !== "none" && (bufferedFrame.stalled || isMobileMode) && (
+          <div className={cn("absolute top-2 inset-x-0 flex justify-center gap-2 pointer-events-none", HUD_LAYERS.decoration)}>
+            {bufferedFrame.stalled && frameSource === "image" && (
+              <span className="px-2 py-0.5 rounded-md bg-amber-950/90 border border-amber-500/60 text-amber-300 text-[10px] font-mono font-bold">
+                Stream stalled: showing last frame
+              </span>
+            )}
+            {isMobileMode && (
+              <span className="px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 text-[9px] font-mono font-bold">
+                LIVE PHONE STREAM • {NATIVE_WIDTH}x{NATIVE_HEIGHT}
+              </span>
+            )}
+          </div>
+        )}
+
+      {/* Corner brackets: decoration layer, below steps and controls */}
+      <div className={cn("absolute inset-0 pointer-events-none", HUD_LAYERS.decoration, frameSource === "none" && "hidden")}>
         <div className="absolute top-2 left-2 w-6 h-6 border-t-2 border-l-2 border-cyan-400/80"></div>
         <div className="absolute top-2 right-2 w-6 h-6 border-t-2 border-r-2 border-cyan-400/80"></div>
         <div className="absolute bottom-2 left-2 w-6 h-6 border-b-2 border-l-2 border-cyan-400/80"></div>
@@ -4281,7 +3926,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
               { width: NATIVE_WIDTH, height: NATIVE_HEIGHT },
             ),
           }}
-          className="absolute -translate-x-1 -translate-y-1 pointer-events-none z-40 flex flex-col items-start transition-transform duration-75"
+          className={cn("absolute -translate-x-1 -translate-y-1 pointer-events-none flex flex-col items-start transition-transform duration-75", HUD_LAYERS.cursor)}
         >
           {cursorStyle === "hand" ? (
             <div className="relative">
@@ -4507,7 +4152,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
       {/* Click Sequence Step Nodes (Interactive & Draggable) */}
       {sequence.map((step, idx) => {
-        const pos = clampedPointStyle(step.x, step.y, NATIVE_FRAME, 1.5);
+        const pos = clampedPointStyle(step.x, step.y, NATIVE_FRAME, HUD_NODE_MARGIN_PCT);
         const { pctX, pctY } = toPercentPair(step.x, step.y);
         const isActive = activeStepId === step.id;
         const repeats = clampRepeatCount(step.repeatCount);
@@ -4648,7 +4293,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       {replayingCursorPos && (
         <div
           style={toPercent(replayingCursorPos.x, replayingCursorPos.y)}
-          className="absolute -translate-x-1 -translate-y-1 pointer-events-none z-50 flex flex-col items-start transition-transform duration-75"
+          className={cn("absolute -translate-x-1 -translate-y-1 pointer-events-none flex flex-col items-start transition-transform duration-75", HUD_LAYERS.cursor)}
         >
           {/* Radial Aura */}
           <div className="absolute -inset-4 bg-cyan-500/30 rounded-full animate-ping" />
@@ -4673,7 +4318,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       {hudActiveClickPoint && (
         <div
           style={toPercent(hudActiveClickPoint.x, hudActiveClickPoint.y)}
-          className="absolute transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-50 flex flex-col items-center animate-in zoom-in-50 duration-150"
+          className={cn("absolute transform -translate-x-1/2 -translate-y-1/2 pointer-events-none flex flex-col items-center animate-in zoom-in-50 duration-150", HUD_LAYERS.cursor)}
         >
           {/* Dual concentric expanding shockwave rings ("..") with visual blink effect */}
           <div className="absolute -inset-6 border-2 border-amber-400 rounded-full animate-ping opacity-80" />
@@ -4768,12 +4413,12 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
               });
             }
           }}
-          className="absolute inset-0 z-40 bg-black/20 backdrop-blur-[0.5px] pointer-events-auto cursor-crosshair select-none"
+          className={cn("absolute inset-0 bg-black/20 backdrop-blur-[0.5px] pointer-events-auto cursor-crosshair select-none", HUD_LAYERS.drawing)}
         >
           {/* Overlay Top Controls */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className="absolute top-2 left-1/2 transform -translate-x-1/2 p-1.5 rounded-xl bg-slate-950/95 border border-cyan-500/80 shadow-2xl flex items-center gap-2 text-xs font-mono z-50 pointer-events-auto"
+            className={cn("absolute top-2 left-1/2 transform -translate-x-1/2 p-1.5 rounded-xl bg-slate-950/95 border border-cyan-500/80 shadow-2xl flex items-center gap-2 text-xs font-mono pointer-events-auto", HUD_LAYERS.popover)}
           >
             <span className="text-cyan-300 font-bold px-2 flex items-center gap-1">
               <Brush className="w-3.5 h-3.5 text-cyan-400" />
@@ -5126,7 +4771,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       />
 
         {/* Floating Live Step Forwarding, Progression & Template Mutation HUD Bar */}
-        <div onClick={(e) => e.stopPropagation()} className={cn("absolute bottom-2 inset-x-4 mx-auto max-w-3xl bg-slate-950/90 backdrop-blur-md border border-cyan-500/60 rounded-xl p-2 shadow-2xl flex items-center justify-between gap-2 text-xs font-mono", HUD_LAYERS.controls)}>
+        <div onClick={(e) => e.stopPropagation()} className={cn("absolute bottom-1 inset-x-2 mx-auto max-w-4xl h-14 bg-slate-950/95 backdrop-blur-md border border-cyan-500/60 rounded-xl px-2 shadow-2xl flex items-center justify-between gap-2 text-xs font-mono", HUD_LAYERS.controls)}>
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-6 h-6 rounded-lg bg-cyan-600/30 border border-cyan-400/50 flex items-center justify-center text-cyan-300 shrink-0 font-bold text-[11px]">
               {sequence.length === 0 ? "0" : (sequence.findIndex((s) => s.id === activeStepId) >= 0 ? sequence.findIndex((s) => s.id === activeStepId) + 1 : 1)}
@@ -5144,7 +4789,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                 <span>{activeStep ? `Target: (${activeStep.x}, ${activeStep.y})` : "Standby • Ready"}</span>
                 <span>•</span>
                 <span className={sequence.length > 0 ? "text-emerald-400 font-bold" : "text-slate-500"}>
-                  {sequence.length > 0 ? "Template Linked" : "Awaiting Actions"}
+                  {sequence.length > 0 ? `${sequence.length} steps on real frame` : "Awaiting Actions"}
                 </span>
                 {replayRun && (
                   <>
@@ -5158,7 +4803,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-1 shrink-0 flex-wrap">
+          <div className="flex items-center gap-1 min-w-0 flex-nowrap overflow-x-auto">
             {onToggleCapture && (
               <Button
                 size="sm"
