@@ -1,7 +1,7 @@
 import { RequestHandler } from "express";
-import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+import { describePythonResolution, resolvePython, spawnPython } from "../python-resolver";
 import { gameStateManager } from "../state-manager";
 import { autoTaskGenerator } from "../auto-task-generator";
 import { multiAgentExecutor } from "../multi-agent-executor";
@@ -169,11 +169,9 @@ async function detectEntities(imageData: string): Promise<any> {
         __dirname,
         "../../python-service/entity-detection.py",
       );
-      const pythonCmd =
-        process.env.PYTHON_CMD ||
-        (process.platform === "win32" ? "python" : "python3");
+      const pythonCmd = describePythonResolution(resolvePython());
 
-      const python = spawn(pythonCmd, [pythonScript], {
+      const python = spawnPython([pythonScript], {
         stdio: ["pipe", "pipe", "pipe"],
       });
 

@@ -1,77 +1,57 @@
 #!/usr/bin/env python
 """
-Screen capture service using multiple backup methods
+Screen capture service: real frames from mss or PIL ImageGrab, or an honest failure.
+Prints {"success": true, "imageData", "method", "metadata"} to stdout on success;
+on failure prints {"success": false, "error"} to stderr and exits 1.
 """
 import json
 import base64
+import struct
 import sys
-from io import BytesIO
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from automation import capture_screen_primary, capture_screen_backup1, capture_screen_backup2
+from automation import capture_real_screen
+
+
+def png_size(png: bytes) -> tuple:
+    """Width and height from a PNG's IHDR chunk (no Pillow needed)."""
+    if png[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("Captured frame is not a PNG")
+    return struct.unpack(">II", png[16:24])
+
+
+def frame_metadata(width: int, height: int) -> dict:
+    return {
+        "pixels": {"width": width, "height": height},
+        "viewport": {
+            "pixels": {"width": width, "height": height},
+            "css": {"width": width, "height": height},
+            "devicePixelRatio": 1,
+            "offset": {"x": 0, "y": 0},
+        },
+        "scale": {"x": 1, "y": 1},
+        "offset": {"x": 0, "y": 0},
+    }
+
 
 def main():
-    """Capture screen and return as base64-encoded image"""
+    """Capture the real screen and return it as a base64 data URL."""
     try:
-        # Try primary method (pyautogui)
-        image_data = None
-        
-        try:
-            image_data = capture_screen_primary()
-            method = "pyautogui"
-        except Exception as e:
-            print(f"Primary capture failed: {e}", file=sys.stderr)
-            
-            # Try backup method 1 (PIL/Pillow screenshot)
-            try:
-                image_data = capture_screen_backup1()
-                method = "PIL"
-            except Exception as e:
-                print(f"Backup 1 capture failed: {e}", file=sys.stderr)
-                
-                # Try backup method 2 (xdotool on Linux, scrot, etc.)
-                try:
-                    image_data = capture_screen_backup2()
-                    method = "subprocess"
-                except Exception as e:
-                    print(f"Backup 2 capture failed: {e}", file=sys.stderr)
-                    raise Exception("All capture methods failed")
-        
-        if image_data:
-            raw = image_data.split(",", 1)[-1]
-            from PIL import Image
-            with Image.open(BytesIO(base64.b64decode(raw))) as image:
-                width, height = image.size
-            result = {
-                "success": True,
-                "imageData": image_data,
-                "method": method,
-                "metadata": {
-                    "pixels": {"width": width, "height": height},
-                    "viewport": {
-                        "pixels": {"width": width, "height": height},
-                        "css": {"width": width, "height": height},
-                        "devicePixelRatio": 1,
-                        "offset": {"x": 0, "y": 0},
-                    },
-                    "scale": {"x": 1, "y": 1},
-                    "offset": {"x": 0, "y": 0},
-                },
-            }
-            print(json.dumps(result))
-        else:
-            raise Exception("No image data captured")
-            
+        image_data, method = capture_real_screen()
+        width, height = png_size(base64.b64decode(image_data.split(",", 1)[-1]))
+        print(json.dumps({
+            "success": True,
+            "imageData": image_data,
+            "method": method,
+            "metadata": frame_metadata(width, height),
+        }))
     except Exception as e:
-        error_result = {
-            "success": False,
-            "error": str(e),
-        }
-        print(json.dumps(error_result), file=sys.stderr)
+        print(json.dumps({"success": False, "error": str(e)}), file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

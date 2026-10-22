@@ -39,7 +39,6 @@ from automation import (
     scroll,
     get_screen_size,
     locate_image,
-    generate_synthetic_desktop_frame,
     capture_screen_primary,
     human_mouse_move_and_click,
     type_character_by_character_verify,

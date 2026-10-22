@@ -8,14 +8,27 @@ Get GameAI Automation running in 5 minutes.
 # Install Node packages (npm only; package-lock.json is committed)
 npm install
 
-# Install Python packages
-cd python-service
-pip install -r requirements.txt
-cd ..
+# Install Python packages for desktop capture/control (pyautogui, mss, Pillow)
+./setup-python.sh        # macOS / Linux
+setup-python.bat         # Windows
 ```
 
 The committed `.npmrc` sets `legacy-peer-deps=true`, so a plain `npm install` works.
 If you override `.npmrc`, run `npm install --legacy-peer-deps` instead.
+
+### Desktop control requires Python
+
+Screen capture and desktop actions (click, type, drag) run through Python 3 with
+`pyautogui`, `mss` and `Pillow` (`python-service/requirements.txt`). At startup the
+server looks for an interpreter in this order: `PYTHON_CMD`, then `python3`, `python`,
+and the Windows launcher `py -3`. The first one that runs is used for every capture and action.
+
+Without Python or these packages the app still runs, but device actions report
+**unavailable** (they did not execute), and desktop capture returns an honest failure.
+It never shows a placeholder screen. The HUD and Dashboard show a status chip
+(`Python: OK/missing · pyautogui: OK/missing`) with the fix:
+run `setup-python.bat` (Windows), `./setup-python.sh` (macOS/Linux), or
+`pip install pyautogui mss pillow`.
 
 ## 2. Start Development Server (1 min)
 
@@ -132,11 +145,13 @@ same-origin, so the client needs no API URL variable.
 ### "Python service not found"
 
 - Ensure Python 3.8+ is installed
-- Run: `python3 --version`
-- Reinstall packages: `pip install -r python-service/requirements.txt`
-- Without python3/pyautogui, device actions reply with
-  `{ success: false, status: "unavailable", simulated: true, executed: false }`.
-  The UI shows that the action did **not** execute.
+- Run: `python3 --version` (Windows: `python --version` or `py -3 --version`)
+- Set `PYTHON_CMD` to an interpreter's full path if none of those are on PATH
+- Reinstall packages: `setup-python.bat` / `./setup-python.sh`, or `pip install -r python-service/requirements.txt`
+- `GET /api/pyautogui/health` reports `pythonInterpreter` (or `"not found"`) and `pyautoguiAvailable`
+- Without Python/pyautogui, device actions reply with
+  `{ success: false, status: "unavailable", simulated: true, executed: false, fix }`.
+  The UI shows that the action did **not** execute, along with the fix.
 
 ## Next Steps
 

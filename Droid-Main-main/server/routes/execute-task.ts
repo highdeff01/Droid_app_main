@@ -1,5 +1,5 @@
 import { RequestHandler } from "express";
-import { spawn } from "child_process";
+import { spawnPython } from "../python-resolver";
 import path from "path";
 import { fileURLToPath } from "url";
 import { centralLogHub } from "../log-hub";
@@ -105,8 +105,7 @@ export async function executeDeviceTask(body: any): Promise<{
   // 3. Dispatch to python service
   return new Promise((resolve) => {
     const pythonScript = path.join(__dirname, "../../python-service/execute-task.py");
-    const pythonCmd = process.env.PYTHON_CMD || (process.platform === "win32" ? "python" : "python3");
-    const python = spawn(pythonCmd, [pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
+    const python = spawnPython([pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
     python.stdin.on("error", () => {});
 
     let stdoutData = "";

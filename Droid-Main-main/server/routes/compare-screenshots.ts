@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { spawn } from "child_process";
+import { spawnPython } from "../python-resolver";
 import { failedOutcome, unavailableOutcome } from "../../shared/device-execution";
 
 export const COMPARE_TIMEOUT_MS = 4000;
@@ -70,8 +70,7 @@ export const handleCompareScreenshots: RequestHandler = (req, res) => {
       res.status(400).json({ success: false, similarity: null, error: "Missing referenceImage or liveImage" });
       return;
     }
-    const pythonCmd = process.env.PYTHON_CMD || (process.platform === "win32" ? "python" : "python3");
-    const py = spawn(pythonCmd, ["-c", PIL_COMPARE_SCRIPT], { stdio: ["pipe", "pipe", "pipe"] });
+    const py = spawnPython(["-c", PIL_COMPARE_SCRIPT], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
     py.stdin.on("error", () => {});

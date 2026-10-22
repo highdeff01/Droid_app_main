@@ -153,6 +153,7 @@ import {
   type HudStepLike,
 } from "@/lib/hud-actions";
 import { HudAgentPanel } from "./hud-agent-panel";
+import { PythonBridgeStatusChip } from "./python-bridge-status-chip";
 import type { GoalDevice, GoalLoopEvent } from "@/lib/qwen-turn-loop";
 import type { HudSuggestedAction } from "@shared/api";
 
@@ -2468,6 +2469,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         handleContainerKeyDown(e);
       }}
     >
+      <PythonBridgeStatusChip className={cn("absolute top-2 left-1/2 -translate-x-1/2", HUD_LAYERS.floating)} />
       {/* Fullscreen Floating Controls */}
       {hudSizeMode === "fullscreen" && (
         <div onClick={(e) => e.stopPropagation()} className={cn("absolute top-14 right-4 flex items-center gap-2 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded-xl shadow-2xl backdrop-blur-md", HUD_LAYERS.floating)}>

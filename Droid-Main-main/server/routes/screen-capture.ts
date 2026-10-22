@@ -1,8 +1,8 @@
-import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import type { Request, Response } from "express";
 import { isFrameStale } from "../capture-frame";
+import { PYTHON_SETUP_FIX, resolvePython, spawnPython } from "../python-resolver";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +54,16 @@ export const setLatestSyncedRealFrame = (
 export const getLatestSyncedRealFrame = () => latestSyncedRealFrame;
 export const getRecentDesktopFrames = () => recentDesktopFrames;
 
+/** capture.py writes `{success:false,error}` to stderr on failure; extract its reason. */
+function captureFailureReason(stderr: string): string {
+  const lastLine = stderr.trim().split("\n").pop() ?? "";
+  try {
+    const parsed = JSON.parse(lastLine);
+    if (typeof parsed?.error === "string") return `Desktop capture failed: ${parsed.error}.`;
+  } catch {}
+  return `Desktop capture failed: ${stderr.trim() || "Python screen capture service exited with error"}.`;
+}
+
 export const captureDesktopFrame = async (): Promise<{
   success: boolean;
   imageData?: string;
@@ -76,12 +86,17 @@ export const captureDesktopFrame = async (): Promise<{
   }
 
   const pythonScript = path.join(__dirname, "../../python-service/capture.py");
-  const pythonCmd =
-    process.env.PYTHON_CMD ||
-    (process.platform === "win32" ? "python" : "python3");
+  const resolution = resolvePython();
+  if (!resolution.found) {
+    return {
+      success: false,
+      error: `Desktop capture unavailable: no Python interpreter found (tried ${resolution.tried.join(", ")}). ${PYTHON_SETUP_FIX}`,
+    };
+  }
+  const pythonCmd = resolution.command;
 
   return new Promise((resolve) => {
-    const python = spawn(pythonCmd, [pythonScript], {
+    const python = spawnPython([pythonScript], {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -131,7 +146,7 @@ export const captureDesktopFrame = async (): Promise<{
       }
       finish({
         success: false,
-        error: stderrData || "Python screen capture service exited with error",
+        error: `${captureFailureReason(stderrData)} ${PYTHON_SETUP_FIX}`,
       });
     });
 

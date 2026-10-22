@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { spawnPython } from "./python-resolver";
 import type { ReplayRequest, ReplayStep } from "../shared/replay";
 import type { PhoneFrame, PhoneAction } from "../shared/phone";
 import { PhoneBridge } from "./phone-bridge";
@@ -11,9 +11,7 @@ export interface ReplayAdapter {
 }
 export function desktopOperation(payload: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.env.PYTHON_CMD ||
-        (process.platform === "win32" ? "python" : "python3"),
+    const child = spawnPython(
       [path.resolve("python-service/replay.py")],
       { stdio: ["pipe", "pipe", "pipe"] },
     );
