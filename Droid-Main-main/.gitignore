@@ -32,3 +32,11 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Runtime state written by the app (DurableStore, quarantined corrupt files); never commit
+.data/
+*.corrupt.*
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]

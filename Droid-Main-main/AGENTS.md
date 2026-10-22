@@ -15,7 +15,7 @@ true for this project.
 ## Setup quirks
 - **Use npm, with `--legacy-peer-deps`.** `@vitejs/plugin-react@6` declares `peer vite@^8`, but the project pins `vite@^7`. The project actually uses `@vitejs/plugin-react-swc`, so the conflict is harmless, but npm refuses to install without `--legacy-peer-deps`. The committed `.npmrc` sets `legacy-peer-deps=true`, so a plain `npm install` / `npm ci` also works. `package-lock.json` is the lockfile. Do not use pnpm or yarn.
 - `node_modules` is a named Docker volume (not bind-mounted), which keeps host and container platform binaries separate.
-- The `node:22-slim` image has no `python3`/X11, so the pyautogui bridge returns its designed simulated fallbacks (`{ success: true, simulated: true }`).
+- The `node:22-slim` image has no `python3`/X11, so the pyautogui bridge replies that the action did not run (`{ success: false, status: "unavailable", simulated: true, executed: false }`), and the UI surfaces that as not executed.
 - Handlers that `spawn` a child process must guard their response, so that the `error` (ENOENT) and `close` events can't both call `res.json`. A double response raises `ERR_HTTP_HEADERS_SENT`, and the startup script's `uncaughtException` handler turns that into a full process exit. See `handleInteractiveDeviceAction` in `server/routes/pyautogui-bridge.ts` for the `sendOnce` guard pattern.
 
 ## Commands

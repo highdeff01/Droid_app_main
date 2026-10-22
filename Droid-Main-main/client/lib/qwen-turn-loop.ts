@@ -129,6 +129,12 @@ export interface TurnLoopOptions {
   stopBefore?: Operation;
   /** Persists a verified run as a new best-flow version; without it save_best only reports the run is ready. */
   saveBest?: (run: { steps: GoalStep[]; evidence: RunEvidence }) => Promise<void>;
+  /** User guidance read fresh for every planning/assessment turn (never interrupts a step). */
+  guidance?: () => string[];
+  /** Called before a step is gated; a returned reason refuses the step and forces a re-plan. Throwing ends the run. */
+  beforeStep?: (step: GoalStep) => string | null;
+  /** Called with the replay run id each time a gated step starts on the device. */
+  onReplayStarted?: (runId: string) => void;
 }
 
 export type TurnLoopResult =
@@ -265,6 +271,12 @@ function historyOf(state: GoalState | undefined) {
   }));
 }
 
+/** The guidance entries for this turn, omitted from the request when there are none. */
+function guidanceOf(ctx: TurnContext): { guidance?: string[] } {
+  const guidance = ctx.options.guidance?.() ?? [];
+  return guidance.length > 0 ? { guidance } : {};
+}
+
 async function propose(ctx: TurnContext, reason?: string): Promise<PlanProposal> {
   const { observation, frame } = seen(ctx);
   emit(ctx, { phase: "thinking", message: reason ? `Re-planning: ${reason}` : `Planning steps for: ${ctx.goal}` });
@@ -274,6 +286,7 @@ async function propose(ctx: TurnContext, reason?: string): Promise<PlanProposal>
     screenshot: frame,
     history: historyOf(ctx.state),
     reason,
+    ...guidanceOf(ctx),
   });
   if (!data.proposal) throw new Error("The planner returned no proposal");
   return data.proposal as PlanProposal;
@@ -431,6 +444,7 @@ async function dispatchStep(ctx: TurnContext, step: GoalStep): Promise<string | 
     iterations: 1,
     confirmation: true,
   });
+  if (started.run?.id) ctx.options.onReplayStarted?.(started.run.id);
   const fetchRun = async (id: string) =>
     (await ctx.deps.get(`/api/replay/${encodeURIComponent(id)}`, { apiKey: device.apiKey, signal })).run as ReplayRunSnapshot;
   await waitForReplayRun(started.run, { signal }, { gate: ctx.deps.gate, start: startReplay, fetch: fetchRun, sleep: ctx.deps.sleep });
@@ -473,6 +487,12 @@ async function executeNext(ctx: TurnContext): Promise<OperationOutcome> {
   if (!nextStep(state)) return "plan_done";
   const before = seen(ctx);
   const { step, relocation } = groundNext(ctx);
+  const refused = ctx.options.beforeStep?.(step);
+  if (refused) {
+    // Refused before the gate: nothing was dispatched; forward to the fix path with the refusal as the reason.
+    ctx.problem = refused;
+    return "off_track";
+  }
   try {
     const blocked = await dispatchStep(ctx, step);
     if (blocked) {
@@ -510,7 +530,7 @@ async function checkCompletion(ctx: TurnContext): Promise<OperationOutcome> {
   const state = requireState(ctx);
   const { observation, frame } = seen(ctx);
   emit(ctx, { phase: "thinking", message: "Checking whether the goal is reached on the fresh screenshot" });
-  const data = await post(ctx, "/api/goal-workflows/assess", { goal: ctx.goal, observation, screenshot: frame, history: historyOf(state) });
+  const data = await post(ctx, "/api/goal-workflows/assess", { goal: ctx.goal, observation, screenshot: frame, history: historyOf(state), ...guidanceOf(ctx) });
   const assessment = data.assessment as GoalAssessment;
   if (!assessment) throw new Error("Goal assessment returned no verdict");
   ctx.assessment = assessment;

@@ -68,6 +68,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { reportDeviceAction } from "@/lib/device-action-report";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
 import { companionApi } from "@/lib/companion-api";
 import type { WorkflowStepDraft } from "@shared/companion";
@@ -82,16 +83,8 @@ import {
 import { applyDelayMultiplier, type LearningOutcome, type UserHabitProfile } from "@shared/learning";
 import { buildRetryStep, toReplayStepPayload } from "@/lib/step-replay";
 import { GoalWorkflowPanel } from "@/components/goal-workflow-panel";
-import { companionApi } from "@/lib/companion-api";
-import type { WorkflowStepDraft } from "@shared/companion";
-import { CompanionChatPanel } from "@/components/companion-chat-panel";
-import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import { GOAL_PHASE_BADGE, type GoalLoopEvent } from "@/lib/goal-loop-runner";
 import type { MasterSnapshot } from "@/lib/master-ai";
-import { companionApi } from "@/lib/companion-api";
-import type { WorkflowStepDraft } from "@shared/companion";
-import { CompanionChatPanel } from "@/components/companion-chat-panel";
-import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import {
   LiveScreenHUD,
   SequenceStep,
@@ -1972,17 +1965,7 @@ export default function Dashboard({
             <LiveExecutionConsole
               height="600px"
               onExecuteTestCommand={(cmd) => {
-                fetch("/api/pyautogui/execute", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(cmd),
-                })
-                  .then((r) => r.json())
-                  .then((d) => {
-                    if (d.success) toast.success(`Executed ${cmd.action} command`);
-                    else toast.error(d.error || "Execution failed");
-                  })
-                  .catch((e) => toast.error(e.message));
+                void reportDeviceAction("/api/pyautogui/execute", cmd, `${cmd.action} command`);
               }}
             />
           </TabsContent>

@@ -24,6 +24,8 @@ interface LearnedWorkflow {
   steps: WorkflowAction[];
   createdAt: number;
   executionCount: number;
+  /** True when assembled by heuristic clustering rather than an AI model. */
+  simulated?: boolean;
 }
 
 // In-memory learned workflows store
@@ -168,8 +170,9 @@ export const handleLearnWorkflows: RequestHandler = async (req, res) => {
       synthesizedWorkflow = {
         id: `lw_heur_${Date.now()}`,
         name: `Auto-Learned Action Sequence (${historySteps.length} steps)`,
-        description: `Pattern assembled by observing ${historySteps.length} sequential user actions across screen coordinates`,
-        confidenceScore: 0.88,
+        description: `Heuristic sequence (no AI model available) built from ${historySteps.length} recorded user actions`,
+        confidenceScore: 0,
+        simulated: true,
         triggerCondition: "Recorded UI interaction sequence replay",
         patternType: "custom",
         steps: historySteps.map((s: any, idx: number) => ({

@@ -3,6 +3,10 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// SECURITY.md: the API is a privileged control plane, so dev and preview bind to
+// loopback by default; DEV_HOST/HOST opt in to another interface explicitly.
+const bindHost = process.env.DEV_HOST || process.env.HOST || '127.0.0.1';
+
 export default defineConfig(() => {
   return {
     plugins: [
@@ -60,9 +64,11 @@ export default defineConfig(() => {
             if (req.url?.startsWith('/api')) {
               apiApp(req as any, res as any, (err: any) => {
                 if (err) {
+                  // Keep internals server-side; the client only gets a generic message.
+                  console.error(`[api] Unhandled error on ${req.method} ${req.url}:`, err);
                   res.statusCode = 500;
                   res.setHeader('Content-Type', 'application/json');
-                  res.end(JSON.stringify({ error: String(err) }));
+                  res.end(JSON.stringify({ error: 'Internal server error' }));
                 } else if (!res.writableEnded) {
                   res.statusCode = 404;
                   res.setHeader('Content-Type', 'application/json');
@@ -86,12 +92,14 @@ export default defineConfig(() => {
     server: {
       port: 3000,
       strictPort: true, // Prevents Vite from silently shifting to port 3001/3002 on collision
-      // SECURITY.md: bind to loopback by default; DEV_HOST/HOST opt in to another interface.
-      host: process.env.DEV_HOST || process.env.HOST || '127.0.0.1',
+      host: bindHost,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // File watching is deactivated when DISABLE_HMR is true to save CPU and avoid intermediate rebuilds.
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+    },
+    preview: {
+      host: bindHost,
     },
   };
 });

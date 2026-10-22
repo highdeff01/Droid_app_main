@@ -18,14 +18,13 @@
     "start": "node dist/server/node-build.mjs",
     "lint": "tsc --noEmit",
     "typecheck": "tsc",
-    "preview": "vite preview --port=3000 --host=0.0.0.0",
+    "preview": "vite preview --port=3000",
     "test": "vitest --run",
     "format.fix": "prettier --write .",
     "bridge": "npx tsx scripts/bridge-diagnostic-hub.ts"
   },
   "dependencies": {
     "@google/genai": "^2.22.0",
-    "@types/qrcode.react": "^3.0.0",
     "@zxing/library": "^0.21.3",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
@@ -74,6 +73,7 @@
     "@types/express": "^5.0.3",
     "@types/jszip": "^3.4.1",
     "@types/node": "^24.2.1",
+    "@types/qrcode.react": "^3.0.0",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
     "@types/three": "^0.176.0",

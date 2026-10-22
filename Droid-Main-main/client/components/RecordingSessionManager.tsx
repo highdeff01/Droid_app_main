@@ -57,7 +57,7 @@ import {
   MouseTrajectoryStore,
   MouseRecordingSession,
   RecordedMousePoint,
-} from "../../src/services/mouseTrajectoryStore";
+} from "@/services/mouseTrajectoryStore";
 import { FocusAttentionConfig } from "./focus-attention-overlay";
 
 export interface RecordingSessionManagerProps {

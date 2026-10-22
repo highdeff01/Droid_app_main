@@ -15,6 +15,7 @@ import {
   type RunnableGoal,
 } from "@/lib/ai-intentions";
 import type { SequenceStep } from "@/components/live-screen-hud";
+import type { ChainEntry, GuidanceEntry } from "@/lib/master-ai";
 import type { CheckupReport } from "@shared/overseer";
 import { CHECKUP_TEXT } from "@/lib/overseer-client";
 
@@ -42,6 +43,10 @@ export interface AiIntentionsPanelProps {
   overseerCheckups?: OverseerCheckupItem[] | null;
   /** Why the overseer could not be reached. */
   overseerError?: string | null;
+  /** Master AI operation chain (newest last); the section is hidden when absent. */
+  masterChain?: ChainEntry[];
+  /** User guidance given to the Master AI, with when a turn first carried it. */
+  masterGuidance?: GuidanceEntry[];
 }
 
 export type OverseerCheckupItem = CheckupReport & { goal: string };
@@ -61,6 +66,37 @@ function OverseerCheckupSection({ overseerCheckups, overseerError }: Pick<AiInte
           </p>
         </div>
       ))}
+    </section>
+  );
+}
+
+const CHAIN_SHOWN = 12;
+
+function OrchestrationSection({ masterChain = [], masterGuidance = [] }: Pick<AiIntentionsPanelProps, "masterChain" | "masterGuidance">) {
+  return (
+    <section className="space-y-1" data-orchestration>
+      <h5 className="text-[9px] uppercase text-fuchsia-400 font-bold">Orchestration chain</h5>
+      {masterGuidance.length > 0 && (
+        <ul className="space-y-0.5">
+          {masterGuidance.map((g) => (
+            <li key={g.id} data-guidance-id={g.id} data-guidance-applied={g.appliedAt !== null} className="text-amber-200">
+              Guidance acknowledged: “{g.text}” — {g.appliedAt === null ? "queued for the next turn" : "applied to the next turn"}
+            </li>
+          ))}
+        </ul>
+      )}
+      {masterChain.length ? (
+        <ol className="space-y-0.5">
+          {masterChain.slice(-CHAIN_SHOWN).map((entry, index) => (
+            <li key={`${entry.at}-${index}`} className="text-slate-300" data-chain-kind={entry.kind ?? "session"}>
+              {entry.kind ? <span className="text-fuchsia-300">[{entry.kind}] </span> : null}
+              {entry.message}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="text-slate-500">No orchestrated operations yet.</p>
+      )}
     </section>
   );
 }

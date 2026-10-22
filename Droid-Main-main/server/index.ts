@@ -223,6 +223,10 @@ export function createServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
+  // Every /api route below is rate limited and behind the API authentication boundary;
+  // requireApiAccess itself lets the public health/demo routes through.
+  app.use("/api", createApiRateLimiter(), requireApiAccess);
+
   // === Master assistant routes (protected) ===
   app.use("/api/assistant", requireApiAccess, assistantRouter);
   app.use("/api/assistant/sources", requireApiAccess, assistantSourcesRouter);
@@ -350,16 +354,18 @@ export function createServer() {
       // Try master analyze first
       try {
         return await handleMasterAnalyzeScreenshot(req as any, res as any, () => {});
-      } catch {}
+      } catch (err) {
+        console.error("[analyze-screenshot] analysis failed:", err);
+      }
+      if (res.headersSent) return;
       res.json({
-        success: true,
-        detectedElements: [
-          { name: "Primary Action Button", x: 960, y: 540, confidence: 0.98 },
-          { name: "Navigation Tab", x: 420, y: 120, confidence: 0.94 },
-          { name: "Search Input", x: 740, y: 120, confidence: 0.91 },
-        ],
-        interactiveCount: 3,
-        confidence: 0.95,
+        success: false,
+        status: "unavailable",
+        simulated: true,
+        detectedElements: [],
+        interactiveCount: 0,
+        confidence: null,
+        error: "Screenshot analysis is unavailable; no elements were detected.",
       });
     } catch (e) {
       res.status(500).json({ success: false, error: String(e) });

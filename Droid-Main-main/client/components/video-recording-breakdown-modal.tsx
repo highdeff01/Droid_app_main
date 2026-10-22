@@ -20,7 +20,7 @@ import {
   Activity,
 } from "lucide-react";
 import { toast } from "sonner";
-import { MouseTrajectoryStore } from "../../src/services/mouseTrajectoryStore";
+import { MouseTrajectoryStore } from "@/services/mouseTrajectoryStore";
 import { detectStepsFromFrames, sampleTimesFor } from "@/lib/frame-step-detection";
 
 export interface RecordedMouseEvent {

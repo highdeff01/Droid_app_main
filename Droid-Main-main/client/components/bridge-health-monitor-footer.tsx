@@ -43,17 +43,14 @@ export interface BridgeHealthState {
 
 export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ className = "" }) => {
   const [health, setHealth] = useState<BridgeHealthState>({
-    online: true,
+    online: false,
     paused: false,
-    latencyMs: 14,
+    latencyMs: 0,
     lastHeartbeat: Date.now(),
-    pythonVersion: "3.11",
-    pyautoguiAvailable: true,
-    screenResolution: { width: 1920, height: 1080 },
-    activeProcesses: [
-      { name: "pyautogui_bridge", pid: 14201, status: "ONLINE", latencyMs: 6 },
-      { name: "screen_watcher", pid: 14210, status: "ONLINE", latencyMs: 12 },
-    ],
+    pythonVersion: undefined,
+    pyautoguiAvailable: false,
+    screenResolution: undefined,
+    activeProcesses: [],
     coordSync: {
       latencyMs: 9,
       driftPx: 1.2,
@@ -106,22 +103,20 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
       if (res.ok) {
         const data = await res.json();
         setHealth((prev) => ({
-          online: data.online ?? true,
+          online: data.online === true,
           paused: data.paused ?? false,
           latencyMs: data.latencyMs ?? latency,
           lastHeartbeat: Date.now(),
-          pythonVersion: data.pythonVersion || "3.11",
-          pyautoguiAvailable: data.pyautoguiAvailable ?? true,
-          screenResolution: data.screenResolution || { width: 1920, height: 1080 },
-          activeProcesses: data.activeProcesses || [
-            { name: "pyautogui_bridge", pid: 14201, status: data.paused ? "PAUSED" : "ONLINE" },
-          ],
+          pythonVersion: data.pythonVersion ?? undefined,
+          pyautoguiAvailable: data.pyautoguiAvailable === true,
+          screenResolution: data.screenResolution ?? undefined,
+          activeProcesses: data.activeProcesses ?? [],
           coordSync: coordData || prev.coordSync,
         }));
         setConsecutiveFailures(0);
         window.dispatchEvent(
           new CustomEvent("pyautogui-bridge-health-update", {
-            detail: { online: true, paused: data.paused, latencyMs: latency, coordSync: coordData },
+            detail: { online: data.online === true, paused: data.paused, latencyMs: latency, coordSync: coordData, error: data.error },
           })
         );
       } else {
@@ -213,12 +208,12 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
             </div>
             <div className="text-slate-200 font-semibold flex items-center justify-between">
               <span>Python Engine:</span>
-              <span className="text-cyan-300 font-bold">Python {health.pythonVersion}</span>
+              <span className="text-cyan-300 font-bold">{health.pythonVersion ? `Python ${health.pythonVersion}` : "Unavailable"}</span>
             </div>
             <div className="text-slate-400 flex items-center justify-between text-[11px]">
               <span>PyAutoGUI Module:</span>
               <span className={health.pyautoguiAvailable ? "text-emerald-400" : "text-amber-400"}>
-                {health.pyautoguiAvailable ? "Loaded & Ready" : "Fallback Emulation"}
+                {health.pyautoguiAvailable ? "Loaded & Ready" : "Unavailable – actions will not execute"}
               </span>
             </div>
           </div>
@@ -231,7 +226,7 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
             <div className="text-slate-200 font-semibold flex items-center justify-between">
               <span>Native Resolution:</span>
               <span className="text-amber-300 font-bold">
-                {health.screenResolution?.width}x{health.screenResolution?.height}
+                {health.screenResolution ? `${health.screenResolution.width}x${health.screenResolution.height}` : "Unknown"}
               </span>
             </div>
             <div className="text-slate-400 flex items-center justify-between text-[11px]">

@@ -239,6 +239,8 @@ Analyze the live screen and propose an optimal healed step sequence. Return conc
 
     res.json({
       success: true,
+      simulated: !verified,
+      source: replanResult.source,
       replan: replanResult,
       aiInsights: geminiAnalysis,
     });

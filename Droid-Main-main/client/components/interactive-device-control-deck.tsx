@@ -46,6 +46,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { reportDeviceAction } from "@/lib/device-action-report";
 import { useActionGate } from "@/hooks/use-action-gate";
 import { callbackPlan } from "@/lib/gated-plans";
 import { gateFailure } from "@/lib/gated-dispatch";
@@ -352,16 +353,12 @@ export const InteractiveDeviceControlDeck: React.FC<InteractiveDeviceControlDeck
     try {
       const startTime = Date.now();
 
-      // Forward to PyAutoGUI bridge
-      await fetch("/api/pyautogui/interactive-action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "type",
-          text: textToSend,
-          deviceMode: activeDevice === "android" ? "android_adb" : "desktop_mirror",
-        }),
-      });
+      // Forward to PyAutoGUI bridge; the toast reports whether the PC really executed it
+      await reportDeviceAction("/api/pyautogui/interactive-action", {
+        action: "type",
+        text: textToSend,
+        deviceMode: activeDevice === "android" ? "android_adb" : "desktop_mirror",
+      }, "PC text input");
 
       // Forward to Mobile Stream Queue for connected phone
       fetch("/api/mobile-stream/action", {
@@ -387,7 +384,7 @@ export const InteractiveDeviceControlDeck: React.FC<InteractiveDeviceControlDeck
       const latency = Date.now() - startTime;
       addLog("TYPING", "success", `Injected Text: "${textToSend}"`, `Dispatched ${textToSend.length} keystrokes to connected device & phone stream.`, { latencyMs: latency });
       onDispatchAction?.("type", undefined, undefined, { text: textToSend });
-      toast.success(`⌨️ Sent text to device & phone: "${textToSend}"`);
+      toast.info(`⌨️ Queued text for phone stream: "${textToSend}"`);
       setTextInput("");
     } catch (e: any) {
       addLog("ERROR", "error", "Text Injection Failed", String(e.message || e));
@@ -415,16 +412,12 @@ export const InteractiveDeviceControlDeck: React.FC<InteractiveDeviceControlDeck
         }
       }
 
-      // Forward to PyAutoGUI bridge
-      await fetch("/api/pyautogui/interactive-action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "press_key",
-          key,
-          deviceMode: activeDevice === "android" ? "android_adb" : "desktop_mirror",
-        }),
-      });
+      // Forward to PyAutoGUI bridge; the toast reports whether the PC really executed it
+      await reportDeviceAction("/api/pyautogui/interactive-action", {
+        action: "press_key",
+        key,
+        deviceMode: activeDevice === "android" ? "android_adb" : "desktop_mirror",
+      }, `PC key [${label}]`);
 
       // Forward to Mobile Stream Queue for connected phone
       fetch("/api/mobile-stream/action", {

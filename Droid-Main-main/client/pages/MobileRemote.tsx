@@ -82,6 +82,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import { reportDeviceAction } from "@/lib/device-action-report";
 import { useActionGate } from "@/hooks/use-action-gate";
 import { mobileActionPlan } from "@/lib/gated-plans";
 import { gateFailure } from "@/lib/gated-dispatch";
@@ -1544,30 +1545,20 @@ export default function MobileRemote() {
   // PC Mirror Interactive Typing & Hotkeys Dispatchers
   const handleSendPcText = () => {
     if (!pcTextInput.trim()) return;
-    fetch("/api/pyautogui/interactive-action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    void reportDeviceAction("/api/pyautogui/interactive-action", {
         action: "type",
         text: pcTextInput,
         deviceMode: "desktop_mirror",
-      }),
-    }).catch(() => {});
-    toast.success(`âŒ¨ï¸ Typed to PC: "${pcTextInput}"`);
+      }, `Type "${pcTextInput}" on PC`);
     setPcTextInput("");
   };
 
   const handleSendPcKey = (key: string, label: string) => {
-    fetch("/api/pyautogui/interactive-action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    void reportDeviceAction("/api/pyautogui/interactive-action", {
         action: "press_key",
         key,
         deviceMode: "desktop_mirror",
-      }),
-    }).catch(() => {});
-    toast.success(`âŒ¨ï¸ Sent [${label}] to PC`);
+      }, `Key [${label}] on PC`);
   };
 
   // Windows Key Toggle (Opens/Closes Windows Start Menu & dispatches Win Key)
@@ -1589,17 +1580,11 @@ export default function MobileRemote() {
       setIsPcStartMenuOpen(false);
     }
 
-    fetch("/api/pyautogui/interactive-action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    void reportDeviceAction("/api/pyautogui/interactive-action", {
         action: "hotkey",
         hotkey: combo,
         deviceMode: "desktop_mirror",
-      }),
-    }).catch(() => {});
-
-    toast.success(`âŒ¨ï¸ Triggered Shortcut: [${label}]`);
+      }, `Shortcut [${label}] on PC`);
   };
 
   // Real Screen Sharing (WebRTC / getDisplayMedia) for Phone and PC Desktop
@@ -1714,15 +1699,10 @@ export default function MobileRemote() {
   };
 
   const handleSendPcSwipe = (direction: "up" | "down" | "left" | "right") => {
-    fetch("/api/pyautogui/interactive-action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    void reportDeviceAction("/api/pyautogui/interactive-action", {
         action: `swipe_${direction}`,
         deviceMode: "desktop_mirror",
-      }),
-    }).catch(() => {});
-    toast.success(`â†”ï¸ Dispatched Swipe ${direction.toUpperCase()} to PC`);
+      }, `Swipe ${direction.toUpperCase()} on PC`);
   };
 
   // Single Snapshot Capture and addition into 10-Screenshots Pack
