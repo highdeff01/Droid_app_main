@@ -33,7 +33,11 @@ from automation import (
     stream_mouse_route,
     activate_and_focus_window,
     execute_relative_action,
+    PYAUTOGUI_AVAILABLE,
 )
+
+# Mirrors PYTHON_SETUP_FIX in shared/device-execution.ts.
+PYTHON_SETUP_FIX = "Run setup-python.bat (Windows) or ./setup-python.sh (macOS/Linux), or: pip install pyautogui mss pillow"
 
 def main():
     try:
@@ -236,6 +240,18 @@ def main():
         # the generic chain below. Without this, handled actions would fall
         # through to the final else and fire a phantom extra click.
         handled = False
+        if not PYAUTOGUI_AVAILABLE and action not in ["screenshot", "wait"]:
+            print(json.dumps({
+                "success": False,
+                "status": "unavailable",
+                "executed": False,
+                "simulated": True,
+                "targetDevice": "desktop",
+                "action": action,
+                "error": f"pyautogui is not installed; the {action} action did not execute.",
+                "fix": PYTHON_SETUP_FIX,
+            }))
+            return
         if action in ["stream_mouse_route", "play_route", "replay_route"]:
             route_points = task.get("routePoints", task.get("points", []))
             if isinstance(frame_size, dict) and frame_size.get("width"):

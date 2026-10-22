@@ -24,6 +24,19 @@ function fakeChild() {
 
 vi.mock("child_process", () => ({ spawn: vi.fn(() => fakeChild()) }));
 vi.mock("./mobile-stream", () => ({ queueMobileAction: vi.fn() }));
+const resolution = vi.hoisted(() => ({
+  current: { found: true, command: "python", prefixArgs: [] as string[], version: "3.12.1", tried: ["python3", "python"] },
+}));
+vi.mock("../python-resolver", async (importOriginal) => {
+  const actual: any = await importOriginal();
+  const cp: any = await import("child_process");
+  return {
+    ...actual,
+    resolvePython: () => resolution.current,
+    spawnPython: (args: string[], options: unknown) =>
+      cp.spawn(resolution.current.command ?? "python3", [...resolution.current.prefixArgs, ...args], options),
+  };
+});
 
 import {
   executePythonPyAutoGUI,
@@ -156,6 +169,54 @@ describe("pyautogui bridge honest fallbacks", () => {
     behaviour = { kind: "exit", code: 3 };
     const res = await run(handleBridgeHealth, {});
     expect(res.body).toMatchObject({ success: false, online: false, pyautoguiAvailable: false, pythonVersion: null, screenResolution: null, activeProcesses: [] });
+  });
+
+  it("health reports the real resolved interpreter and the setup fix when pyautogui is missing", async () => {
+    behaviour = { kind: "exit", code: 3 };
+    const res = await run(handleBridgeHealth, {});
+    expect(res.body).toMatchObject({
+      pythonAvailable: true,
+      pythonInterpreter: "python (3.12.1)",
+      pythonCommand: "python",
+      pyautoguiAvailable: false,
+    });
+    expect(res.body.fix).toContain("setup-python.bat");
+    expect(res.body.fix).toContain("pip install pyautogui mss pillow");
+  });
+
+  it("health reports 'not found' with every tried candidate when no interpreter resolves", async () => {
+    const previous = resolution.current;
+    resolution.current = { found: false, command: null as any, prefixArgs: [], version: null as any, tried: ["python3", "python", "py -3"] };
+    behaviour = { kind: "error", error: ENOENT };
+    try {
+      const res = await run(handleBridgeHealth, {});
+      expect(res.body).toMatchObject({
+        success: false,
+        online: false,
+        pythonAvailable: false,
+        pythonInterpreter: "not found",
+        pythonCommand: null,
+        pythonCandidatesTried: ["python3", "python", "py -3"],
+        pyautoguiAvailable: false,
+      });
+      expect(res.body.fix).toContain("pip install pyautogui mss pillow");
+    } finally {
+      resolution.current = previous;
+    }
+  });
+
+  it("spawns the resolved interpreter (with launcher args) instead of a hardcoded python3", async () => {
+    const { spawn } = await import("child_process");
+    const previous = resolution.current;
+    resolution.current = { found: true, command: "py", prefixArgs: ["-3"], version: "3.12.1", tried: ["python3", "python", "py -3"] };
+    try {
+      await run(handleInteractiveDeviceAction, { action: "click", x: 1, y: 1 });
+      const call = (spawn as any).mock.calls.at(-1);
+      expect(call[0]).toBe("py");
+      expect(call[1].slice(0, 2)).toEqual(["-3", "-c"]);
+    } finally {
+      resolution.current = previous;
+    }
   });
 
   it("pre-replay snapshot check claims no match or similarity", async () => {

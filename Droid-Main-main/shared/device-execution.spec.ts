@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   PYAUTOGUI_MISSING_EXIT_CODE,
+  PYTHON_SETUP_FIX,
   describeDeviceOutcome,
   outcomeFromExit,
   outcomeFromSpawnError,
+  unavailableOutcome,
 } from "./device-execution";
 
 describe("device execution outcomes", () => {
@@ -44,5 +46,21 @@ describe("device execution outcomes", () => {
   it("describes executed and failed replies", () => {
     expect(describeDeviceOutcome(outcomeFromExit(0, ""), "Drag").level).toBe("success");
     expect(describeDeviceOutcome(outcomeFromExit(2, "boom"), "Drag")).toEqual({ level: "error", text: "Drag failed: boom" });
+  });
+
+  it("carries the setup fix when python or pyautogui is missing, and shows it in the toast text", () => {
+    const noPython = outcomeFromSpawnError(new Error("spawn py ENOENT"));
+    const noModule = outcomeFromExit(PYAUTOGUI_MISSING_EXIT_CODE, "");
+    expect(noPython.fix).toBe(PYTHON_SETUP_FIX);
+    expect(noModule.fix).toBe(PYTHON_SETUP_FIX);
+    const text = describeDeviceOutcome(noPython, "Click").text;
+    expect(text).toContain("setup-python.bat");
+    expect(text).toContain("pip install pyautogui mss pillow");
+  });
+
+  it("does not attach the python fix to failures unrelated to python", () => {
+    expect(outcomeFromExit(1, "no display").fix).toBeUndefined();
+    expect(unavailableOutcome("adb not found").fix).toBeUndefined();
+    expect(describeDeviceOutcome(unavailableOutcome("adb not found"), "Tap").text).not.toContain("pip install");
   });
 });

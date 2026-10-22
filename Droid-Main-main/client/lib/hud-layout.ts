@@ -28,9 +28,23 @@ export const HUD_LAYERS = {
   steps: "z-30",
   cursor: "z-40",
   controls: "z-50",
+  drawing: "z-[55]",
   popover: "z-[60]",
   floating: "z-[70]",
+  fullscreen: "z-[80]",
 } as const;
+
+/** Percentage margin for step nodes: clears the corner brackets and keeps badges fully on the frame. */
+export const HUD_NODE_MARGIN_PCT = 4;
+
+/** Which real surface the frame layer shows: the live screen-share video, the last decoded frame, or nothing. */
+export type FrameSource = "video" | "image" | "none";
+
+/** Real frames only: a playing screen share wins, then the last decoded captured frame; never a drawn placeholder. */
+export function selectFrameSource(hasLiveVideo: boolean, bufferedUrl: string | null): FrameSource {
+  if (hasLiveVideo) return "video";
+  return bufferedUrl ? "image" : "none";
+}
 
 /** Size of the loaded image, or the default frame when it has not reported one. */
 export function resolveFrameSize(natural?: Partial<FrameSize> | null): FrameSize {

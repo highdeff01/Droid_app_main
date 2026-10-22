@@ -212,7 +212,7 @@ export default function MobileRemote() {
   const [fps, setFps] = useState(15);
   const [targetFps, setTargetFps] = useState<number>(15);
   const [framesSent, setFramesSent] = useState(0);
-  const [status, setStatus] = useState<string>("â— LIVE: 📱 Interactive Phone OS Active");
+  const [status, setStatus] = useState<string>("â— PREVIEW ONLY: 📱 drawn phone template (not the live device)");
   const [lastTouch, setLastTouch] = useState<{ x: number; y: number } | null>(null);
   const [connected, setConnected] = useState(true);
   const [activeActionIndicator, setActiveActionIndicator] = useState<ExecutedActionIndicator | null>(null);
@@ -1389,7 +1389,7 @@ export default function MobileRemote() {
       setConnected(true);
 
       if (mode === "interactive_phone") {
-        setStatus("â— LIVE: 📱 Interactive Phone OS Active");
+        setStatus("â— PREVIEW ONLY: 📱 drawn phone template (not the live device)");
         requestWakeLock();
         startBackgroundAudioKeepalive();
         toast.success("📱 Interactive Phone OS: Tap, type & automate");
@@ -1635,11 +1635,11 @@ export default function MobileRemote() {
         };
       } else {
         setStreamMode("interactive_phone");
-        toast.info("Interactive Virtual Phone OS Active");
+        toast.info("No live device stream: showing preview-only phone template");
       }
     } catch {
       setStreamMode("interactive_phone");
-      toast.info("Switched to Interactive Virtual Phone OS");
+      toast.info("No live device stream: switched to preview-only phone template");
     }
   };
 

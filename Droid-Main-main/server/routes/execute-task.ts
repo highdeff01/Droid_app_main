@@ -1,5 +1,11 @@
 import { RequestHandler } from "express";
-import { spawn } from "child_process";
+import { spawnPython } from "../python-resolver";
+import {
+  describeDeviceOutcome,
+  failedOutcome,
+  outcomeFromSpawnError,
+  pythonMissingOutcome,
+} from "../../shared/device-execution";
 import path from "path";
 import { fileURLToPath } from "url";
 import { centralLogHub } from "../log-hub";
@@ -105,8 +111,7 @@ export async function executeDeviceTask(body: any): Promise<{
   // 3. Dispatch to python service
   return new Promise((resolve) => {
     const pythonScript = path.join(__dirname, "../../python-service/execute-task.py");
-    const pythonCmd = process.env.PYTHON_CMD || (process.platform === "win32" ? "python" : "python3");
-    const python = spawn(pythonCmd, [pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
+    const python = spawnPython([pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
     python.stdin.on("error", () => {});
 
     let stdoutData = "";
@@ -124,9 +129,8 @@ export async function executeDeviceTask(body: any): Promise<{
 
     python.on("error", (err) => {
       finish({
-        success: true,
-        simulated: true,
-        explanation: ("Execution result for " + action),
+        ...outcomeFromSpawnError(err),
+        explanation: describeDeviceOutcome(outcomeFromSpawnError(err), action).text,
         durationMs: Date.now() - startTime,
       });
     });
@@ -139,9 +143,16 @@ export async function executeDeviceTask(body: any): Promise<{
           return finish({ ...parsed, durationMs });
         } catch {}
       }
+      const missingPackage = /No module named '(pyautogui|mss|PIL)'/.test(stdoutData + stderrData);
+      const outcome = missingPackage
+        ? pythonMissingOutcome(`Python packages are missing (${(stdoutData.trim() || stderrData).trim().slice(0, 300)}); the action did not execute.`)
+        : null;
       finish({
         success: code === 0,
-        explanation: stdoutData.trim() || stderrData || ("Executed with code " + code),
+        ...outcome,
+        explanation: outcome
+          ? describeDeviceOutcome(outcome, action).text
+          : stdoutData.trim() || stderrData || ("Executed with code " + code),
         durationMs,
       });
     });
@@ -162,9 +173,8 @@ export async function executeDeviceTask(body: any): Promise<{
     setTimeout(() => {
       try { python.kill(); } catch {}
       finish({
-        success: true,
-        simulated: true,
-        explanation: ("Execution result for " + action),
+        ...failedOutcome("Desktop action timed out after 15s; its effect is uncertain."),
+        explanation: ("Execution of " + action + " timed out"),
         durationMs: Date.now() - startTime,
       });
     }, 15000);

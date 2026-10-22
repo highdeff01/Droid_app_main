@@ -8,11 +8,12 @@ import { RequestHandler } from "express";
 import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
-import os from "os";
 import { queueMobileAction } from "./mobile-stream";
+import { describePythonResolution, resolvePython, spawnPython } from "../python-resolver";
 import {
   type DeviceExecutionOutcome,
   PYAUTOGUI_MISSING_EXIT_CODE,
+  PYTHON_SETUP_FIX,
   failedOutcome,
   outcomeFromExit,
   outcomeFromSpawnError,
@@ -150,8 +151,7 @@ export function executePythonPyAutoGUI(scriptCode: string): Promise<PythonRunRes
     };
 
     try {
-      const pythonCmd = os.platform() === "win32" ? "python" : "python3";
-      const python = spawn(pythonCmd, ["-c", scriptCode], {
+      const python = spawnPython(["-c", scriptCode], {
         stdio: ["pipe", "pipe", "pipe"],
       });
 
@@ -490,6 +490,7 @@ export const handleGetBridgeLogs: RequestHandler = (_req, res) => {
 export const handleBridgeHealth: RequestHandler = async (_req, res) => {
   const startTime = Date.now();
   lastHeartbeatTimestamp = Date.now();
+  const python = pythonStatusFields();
 
   try {
     // Check python + pyautogui responsiveness; report only what was measured.
@@ -507,10 +508,12 @@ export const handleBridgeHealth: RequestHandler = async (_req, res) => {
         paused: isExecutionBridgePaused,
         latencyMs,
         lastHeartbeat: lastHeartbeatTimestamp,
+        ...python,
         pyautoguiAvailable: false,
         pythonVersion: null,
         screenResolution: null,
         activeProcesses: [],
+        fix: PYTHON_SETUP_FIX,
       }));
       return;
     }
@@ -521,6 +524,7 @@ export const handleBridgeHealth: RequestHandler = async (_req, res) => {
       paused: isExecutionBridgePaused,
       latencyMs,
       lastHeartbeat: lastHeartbeatTimestamp,
+      ...python,
       pyautoguiAvailable: true,
       failsafe: false,
       pythonVersion: match[1],
@@ -534,9 +538,23 @@ export const handleBridgeHealth: RequestHandler = async (_req, res) => {
       paused: isExecutionBridgePaused,
       error: err.message,
       lastHeartbeat: lastHeartbeatTimestamp,
+      ...python,
+      pyautoguiAvailable: false,
+      fix: PYTHON_SETUP_FIX,
     });
   }
 };
+
+/** Resolved interpreter as reported by the health endpoint (cached startup probe). */
+function pythonStatusFields() {
+  const resolution = resolvePython();
+  return {
+    pythonAvailable: resolution.found,
+    pythonInterpreter: describePythonResolution(resolution),
+    pythonCommand: resolution.found ? [resolution.command, ...resolution.prefixArgs].join(" ") : null,
+    pythonCandidatesTried: resolution.tried,
+  };
+}
 
 /**
  * POST /api/pyautogui/reconnect
@@ -1255,7 +1273,7 @@ export const handleInteractiveDeviceAction: RequestHandler = async (req, res) =>
   pythonScript = `${PYAUTOGUI_IMPORT_GUARD}\npyautogui.FAILSAFE = False\n${pythonScript}`;
 
   try {
-    const py = spawn("python3", ["-c", pythonScript], {
+    const py = spawnPython(["-c", pythonScript], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, DISPLAY: process.env.DISPLAY || ":0" },
     });

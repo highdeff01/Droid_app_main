@@ -33,80 +33,44 @@ except ImportError:
 # Screen Capture Methods
 # ============================================================================
 
-def generate_synthetic_desktop_frame() -> str:
-    """Generate high-definition desktop frame fallback with live timestamp and UI elements"""
-    from PIL import Image, ImageDraw
-    import datetime
-    import io
-    import base64
+def capture_screen_primary() -> str:
+    """Real screen capture (mss, then PIL ImageGrab). Raises when neither can capture."""
+    return capture_real_screen()[0]
 
-    width, height = 1920, 1080
-    img = Image.new("RGB", (width, height), color=(15, 23, 42))
-    d = ImageDraw.Draw(img)
 
-    # Top Status Bar
-    d.rectangle([0, 0, width, 40], fill=(30, 41, 59))
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Desktop Application Window
-    d.rectangle([120, 100, 1800, 960], fill=(15, 23, 42), outline=(56, 189, 248), width=2)
-    d.rectangle([120, 100, 1800, 150], fill=(30, 41, 59))
+def capture_screen_mss() -> str:
+    """MSS high speed screen capture. Raises when mss cannot capture."""
+    import mss
+    import mss.tools
+    with mss.mss() as sct:
+        mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+        img = sct.grab(mon)
+        png = mss.tools.to_png(img.rgb, img.size)
+        return f"data:image/png;base64,{base64.b64encode(png).decode()}"
 
-    # Form & Interactive Controls Mock
-    d.rectangle([300, 240, 1620, 360], fill=(30, 41, 59), outline=(100, 116, 139), width=1)
-    d.rectangle([300, 420, 900, 480], fill=(15, 23, 42), outline=(56, 189, 248), width=2) # Text Box
-    d.rectangle([940, 420, 1200, 480], fill=(14, 165, 233)) # Submit Button
-    d.rectangle([1240, 420, 1500, 480], fill=(168, 85, 247)) # Action Button
 
-    # Target Focus Center
-    d.ellipse([930, 510, 990, 570], outline=(245, 158, 11), width=2)
-
-    # HUD Grid Marks
-    for x in range(200, 1800, 200):
-        d.line([(x, 150), (x, 170)], fill=(71, 85, 105), width=1)
-    for y in range(200, 900, 150):
-        d.line([(120, y), (140, y)], fill=(71, 85, 105), width=1)
-
-    buf = io.BytesIO()
+def capture_screen_backup1() -> str:
+    """Backup: Pillow ImageGrab. Raises when PIL cannot capture."""
+    from PIL import ImageGrab as _ImageGrab
+    img = _ImageGrab.grab(all_screens=True)
+    buf = BytesIO()
     img.save(buf, format="PNG")
     return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
 
 
-def capture_screen_primary() -> str:
-    """Primary: MSS high speed screen capture"""
-    try:
-        import mss
-        import mss.tools
-        import base64
-        with mss.mss() as sct:
-            mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-            img = sct.grab(mon)
-            png = mss.tools.to_png(img.rgb, img.size)
-            return f"data:image/png;base64,{base64.b64encode(png).decode()}"
-    except Exception:
-        return capture_screen_backup1()
-
-
-def capture_screen_backup1() -> str:
-    """Backup 1: Pillow ImageGrab"""
-    try:
-        from PIL import ImageGrab
-        import io
-        import base64
-        img = ImageGrab.grab(all_screens=True)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
-    except Exception:
-        return capture_screen_backup2()
-
-
-def capture_screen_backup2() -> str:
-    """Backup 2: Resilient synthetic desktop frame generator"""
-    try:
-        return generate_synthetic_desktop_frame()
-    except Exception as e:
-        raise Exception(f"Capture failed: {e}")
+def capture_real_screen() -> tuple:
+    """
+    Capture the real screen: mss first, then PIL ImageGrab.
+    Returns (image_data_url, method). Raises RuntimeError with every backend's
+    reason when no real capture is possible; never returns a drawn frame.
+    """
+    reasons = []
+    for method, capture in (("mss", capture_screen_mss), ("PIL", capture_screen_backup1)):
+        try:
+            return capture(), method
+        except Exception as e:
+            reasons.append(f"{method}: {e}")
+    raise RuntimeError("No screen capture backend available (" + "; ".join(reasons) + ")")
 
 
 # ============================================================================

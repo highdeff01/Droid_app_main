@@ -26,9 +26,7 @@ async function companionRequest<T>(path: string, method = "GET", body?: unknown)
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await response.json().catch(() => null);
-  if (!response.ok || !data?.success) {
-    throw new Error(data?.error || `Companion request failed (${response.status})`);
-  }
+  if (!response.ok || !data?.success) throw httpFailure(response, data, "Companion request failed");
   return data as T;
 }
 

@@ -589,6 +589,9 @@ export const InteractivePhoneVirtualOS: React.FC<InteractivePhoneVirtualOSProps>
       onContextMenu={onContextMenu}
       className={`w-full h-full bg-slate-950 text-slate-100 flex flex-col justify-between select-none relative overflow-hidden font-sans border-0 ${className}`}
     >
+      <div className="absolute top-1 left-1/2 -translate-x-1/2 z-50 pointer-events-none rounded bg-amber-500/90 px-1.5 py-0.5 text-[9px] font-mono font-bold text-black">
+        PREVIEW ONLY · drawn template, not the live device
+      </div>
       {/* Dynamic Animated Touch Ripples */}
       {touchRipples.map((r) => (
         <span
@@ -679,7 +682,7 @@ export const InteractivePhoneVirtualOS: React.FC<InteractivePhoneVirtualOSProps>
                   <span className="text-[9px] text-slate-500">Just now</span>
                 </div>
                 <p className="text-[10px] text-slate-300 leading-tight mt-0.5">
-                  Live phone state linked. Tap any app or type to execute automation workflow.
+                  Preview-only phone template. Connect a real device to mirror and automate its live screen.
                 </p>
               </div>
             </div>
@@ -1253,7 +1256,7 @@ export const InteractivePhoneVirtualOS: React.FC<InteractivePhoneVirtualOSProps>
             <div className="relative aspect-video bg-black rounded-xl border border-slate-800 overflow-hidden flex flex-col justify-between p-2 shadow-2xl group">
               <div className="flex items-center justify-between z-10 text-[9px] font-mono text-white bg-black/60 px-1.5 py-0.5 rounded">
                 <span>{ytSearch}</span>
-                <span className="text-red-400">● LIVE 1080p</span>
+                <span className="text-amber-400">PREVIEW</span>
               </div>
 
               {/* Video Graphic / Animation */}

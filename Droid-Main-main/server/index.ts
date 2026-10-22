@@ -1,6 +1,7 @@
 import { replayRouter } from "./routes/replay";
 import { createPhoneRouter } from "./routes/phone";
 import { handleStopBridge, handleExecutePyAutoGUI, handleReplayTrail } from "./routes/pyautogui-bridge";
+import { resolvePython } from "./python-resolver";
 import { handleAiReviewSteps, handleApplySuggestionsWithQwen } from "./routes/ai-workflow-review";
 import "dotenv/config";
 import express from "express";
@@ -34,6 +35,10 @@ import { assistantExecutionRouter } from "./routes/assistant-execution";
 import { assistantRecordingsRouter } from "./routes/assistant-recordings";
 import { assistantWorkflowsRouter } from "./routes/assistant-workflows";
 import { createHudToolsRouter } from "./routes/hud-tools";
+import { createStoryPresentationRouter } from "./routes/story-presentations";
+import { fetchPageText } from "./presentation-generator";
+import { replayEngine } from "./replay-engine";
+import { companionService } from "./routes/companion";
 import { DurableStore } from "./durable-store";
 import { recognizeWithProviders } from "./ocr-provider";
 import { sendQwenChatRequest } from "./ai-endpoint";
@@ -228,17 +233,19 @@ function getPipeline() {
 
 export function createServer() {
   const app = express();
+  // Probe for a Python interpreter once at startup; every Python spawn reuses the cached result.
+  resolvePython();
 
   // CORS is an explicit allowlist; a failure here fails server creation (closed), never permissive.
   app.use(createCorsMiddleware());
-  // Per-IP safety limit on /api (streaming/polling routes are whitelisted inside the limiter).
-  app.use("/api", createApiRateLimiter());
+  // The single /api rate limiter, registered before the body parsers so a limited request is
+  // rejected without parsing its body. Non-streaming /api routes are rate limited per IP; the
+  // high-frequency streaming/polling routes are whitelisted inside the limiter. Every /api route
+  // is behind the API authentication boundary; requireApiAccess itself lets the public
+  // ping/health/demo routes through.
+  app.use("/api", createApiRateLimiter(), requireApiAccess);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-
-  // Every /api route below is rate limited and behind the API authentication boundary;
-  // requireApiAccess itself lets the public health/demo routes through.
-  app.use("/api", createApiRateLimiter(), requireApiAccess);
 
   // === Master assistant routes (protected) ===
   app.use("/api/assistant", requireApiAccess, assistantRouter);
@@ -534,6 +541,18 @@ export function createServer() {
   app.use(
     "/api/hud",
     createHudToolsRouter({ store: new DurableStore(), recognize: recognizeWithProviders, chat: sendQwenChatRequest }),
+  );
+
+  // Story mode & versatile presentations: Qwen-generated from premises, screens, runs, web pages and struggles
+  app.use(
+    "/api/ai",
+    createStoryPresentationRouter({
+      chat: sendQwenChatRequest,
+      fetchPage: fetchPageText,
+      listRuns: () => replayEngine.list(),
+      runImages: (id) => replayEngine.evidenceImages(id),
+      ledger: () => ({ tasks: companionService.errors.listTasks(), notes: companionService.notes.list() }),
+    }),
   );
 
   // Workflow Disk Persistence Endpoints (/api/workflows)
