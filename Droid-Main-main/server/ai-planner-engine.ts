@@ -14,8 +14,12 @@ export interface AIThinkingChain {
   observation: string;
   reasoning: string;
   strategy: string;
-  confidence: number;
+  /** The model's own confidence; null when the model gave none or the plan is a fallback. */
+  confidence: number | null;
 }
+
+/** Where a decision came from: "model" output or the deterministic "heuristic" fallback. */
+export type PlannerDecisionSource = "model" | "heuristic";
 
 export interface SubTask {
   id: string;
@@ -65,6 +69,15 @@ export interface PlannerActDecision {
   nextAction: SubTask | null;
   verificationRule: VerificationRule | null;
   statusSummary: string;
+  source: PlannerDecisionSource;
+  /** True only when the decision was derived from model output. */
+  verified: boolean;
+}
+
+/** The model's numeric confidence clamped to [0, 1] (0 preserved); null when absent or non-numeric. */
+export function readPlannerConfidence(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.min(1, Math.max(0, value));
 }
 
 export class AIPlannerActorEngine {
@@ -209,7 +222,7 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
       try {
         parsed = parseModelJson(rawContent);
       } catch {
-        parsed = this.fallbackPlan(perception);
+        return this.fallbackPlan(perception);
       }
 
       if (Array.isArray(parsed.goals) && parsed.goals.length > 0) {
@@ -241,7 +254,7 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
           strategy:
             parsed.thinking?.strategy ||
             "Execute immediate target action, then verify UI response.",
-          confidence: parsed.thinking?.confidence || 0.9,
+          confidence: readPlannerConfidence(parsed.thinking?.confidence),
         },
         goals: this.activeGoals,
         nextAction,
@@ -258,6 +271,8 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
         },
         statusSummary:
           parsed.statusSummary || `Ready: ${nextAction?.title || "Monitoring"}`,
+        source: "model",
+        verified: true,
       };
 
       return decision;
@@ -294,8 +309,8 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
     }
 
     return {
-      verified: true, // Graceful pass with warning
-      feedback: `Action dispatched. Visual confirmation: ${currentPerception.visualStateChange}`,
+      verified: false,
+      feedback: `Unverified: no screen state change detected after dispatch (${currentPerception.visualStateChange}).`,
     };
   }
 
@@ -319,10 +334,10 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
       timestamp: Date.now(),
       thinking: {
         observation: perception.screenDescription,
-        reasoning: `Targeting highest confidence element "${topElem?.name || "center"}" at (${targetX}, ${targetY}).`,
+        reasoning: `Unverified fallback (planner model unavailable): targeting first detected element "${topElem?.name || "center"}" at (${targetX}, ${targetY}).`,
         strategy:
-          "Step-by-step UI interaction with automatic visual feedback validation.",
-        confidence: 0.88,
+          "Deterministic fallback plan; not derived from model reasoning.",
+        confidence: null,
       },
       goals: this.activeGoals,
       nextAction: action,
@@ -337,7 +352,9 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
         successCondition: "Confirmation of interactive response",
         retryStrategy: "Retry with +10px offset",
       },
-      statusSummary: `Targeting: ${action.title}`,
+      statusSummary: `Fallback (unverified): ${action.title}`,
+      source: "heuristic",
+      verified: false,
     };
   }
 

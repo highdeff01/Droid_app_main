@@ -870,59 +870,8 @@ export interface DriftCorrectionEvent {
 }
 
 // In-memory list of drift correction events
-const driftCorrectionEvents: DriftCorrectionEvent[] = [
-  {
-    id: "drift_evt_01",
-    timestamp: Date.now() - 1000 * 60 * 8,
-    stepId: "step_search_bar",
-    stepName: "Search Input Bar",
-    actionType: "click",
-    originalPosition: { x: 608, y: 140 },
-    correctedPosition: { x: 620, y: 140 },
-    offsetX: 12,
-    offsetY: 0,
-    euclideanDriftPx: 12.0,
-    driftThresholdPx: 14,
-    recalibrationStatus: "recalibrated",
-    triggerSource: "auto_reposition_agent",
-    confidenceScore: 0.985,
-    details: "Detected +12px horizontal layout shift in search bar container. Auto-repositioned target centroid.",
-  },
-  {
-    id: "drift_evt_02",
-    timestamp: Date.now() - 1000 * 60 * 3,
-    stepId: "step_submit_btn",
-    stepName: "Primary Submit Button",
-    actionType: "click",
-    originalPosition: { x: 952, y: 554 },
-    correctedPosition: { x: 960, y: 560 },
-    offsetX: 8,
-    offsetY: 6,
-    euclideanDriftPx: 10.0,
-    driftThresholdPx: 12,
-    recalibrationStatus: "recalibrated",
-    triggerSource: "pre_execution_scanner",
-    confidenceScore: 0.992,
-    details: "Template mismatch compensated before click dispatch. Adjusted offset (+8px X, +6px Y).",
-  },
-  {
-    id: "drift_evt_03",
-    timestamp: Date.now() - 1000 * 60 * 1,
-    stepId: "step_email_input",
-    stepName: "Email Address Input Field",
-    actionType: "type_text",
-    originalPosition: { x: 955, y: 382 },
-    correctedPosition: { x: 960, y: 380 },
-    offsetX: 5,
-    offsetY: -2,
-    euclideanDriftPx: 5.4,
-    driftThresholdPx: 8,
-    recalibrationStatus: "recalibrated",
-    triggerSource: "auto_reposition_agent",
-    confidenceScore: 0.978,
-    details: "Bounding box centroid locked with Euclidean drift within safe tolerance.",
-  },
-];
+// Only real, measured drift corrections are recorded here; the list starts empty.
+const driftCorrectionEvents: DriftCorrectionEvent[] = [];
 
 /**
  * GET / POST /api/pyautogui/ping

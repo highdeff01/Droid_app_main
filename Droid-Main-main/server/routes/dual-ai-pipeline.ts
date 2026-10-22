@@ -110,7 +110,7 @@ export const handlePlanAndAct: RequestHandler = async (req, res) => {
       title: decision.statusSummary || "Plan formulated",
       detail: decision.thinking?.reasoning || "",
       status: "completed",
-      confidence: decision.thinking?.confidence,
+      confidence: decision.thinking?.confidence ?? undefined,
       source: "AI #2 Planner",
     });
     aiMonitorStore.setStatus({
@@ -357,7 +357,7 @@ export const handleAutonomousStep: RequestHandler = async (req, res) => {
       title: decision.statusSummary || "Plan formulated",
       detail: decision.thinking?.reasoning || "",
       status: "completed",
-      confidence: decision.thinking?.confidence,
+      confidence: decision.thinking?.confidence ?? undefined,
       source: "AI #2 Planner",
     });
     aiMonitorStore.setStatus({
