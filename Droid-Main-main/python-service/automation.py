@@ -34,7 +34,12 @@ except ImportError:
 # ============================================================================
 
 def capture_screen_primary() -> str:
-    """Primary: MSS high speed screen capture. Raises when mss cannot capture."""
+    """Real screen capture (mss, then PIL ImageGrab). Raises when neither can capture."""
+    return capture_real_screen()[0]
+
+
+def capture_screen_mss() -> str:
+    """MSS high speed screen capture. Raises when mss cannot capture."""
     import mss
     import mss.tools
     with mss.mss() as sct:
@@ -60,7 +65,7 @@ def capture_real_screen() -> tuple:
     reason when no real capture is possible; never returns a drawn frame.
     """
     reasons = []
-    for method, capture in (("mss", capture_screen_primary), ("PIL", capture_screen_backup1)):
+    for method, capture in (("mss", capture_screen_mss), ("PIL", capture_screen_backup1)):
         try:
             return capture(), method
         except Exception as e:

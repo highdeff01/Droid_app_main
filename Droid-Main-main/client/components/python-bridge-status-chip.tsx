@@ -27,6 +27,15 @@ export const PythonBridgeStatusChip: React.FC<{ className?: string }> = ({ class
   }, []);
 
   if (dismissed || !status) return null;
+  return <BridgeStatusChipView status={status} onDismiss={() => setDismissed(true)} className={className} />;
+};
+
+/** Presentational chip: the bridge label, and the fix when something is missing. */
+export const BridgeStatusChipView: React.FC<{
+  status: BridgeStatusView;
+  onDismiss: () => void;
+  className?: string;
+}> = ({ status, onDismiss, className }) => {
   const ok = status.fix === null;
 
   return (
@@ -46,7 +55,7 @@ export const PythonBridgeStatusChip: React.FC<{ className?: string }> = ({ class
       <button
         type="button"
         aria-label="Dismiss Python bridge status"
-        onClick={() => setDismissed(true)}
+        onClick={onDismiss}
         className="ml-1 rounded p-0.5 hover:bg-white/10"
       >
         <X className="h-3 w-3" />

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { spawnPython } from "./python-resolver";
+import { PYTHON_SETUP_FIX } from "../shared/device-execution";
 import type { ReplayRequest, ReplayStep } from "../shared/replay";
 import type { PhoneFrame, PhoneAction } from "../shared/phone";
 import { PhoneBridge } from "./phone-bridge";
@@ -8,6 +9,15 @@ import { PhoneBridge } from "./phone-bridge";
 export interface ReplayAdapter {
   capture(): Promise<PhoneFrame>;
   execute(step: ReplayStep, frame: PhoneFrame): Promise<void>;
+}
+/** Appends the setup fix when an error says Python or its desktop packages are missing. */
+export function withPythonFix(err: Error): Error {
+  const missing =
+    (err as NodeJS.ErrnoException).code === "ENOENT" ||
+    /ENOENT|No module named '(pyautogui|mss|PIL)'/.test(err.message);
+  return missing
+    ? new Error(`${err.message} — Python or its desktop packages are missing. Fix: ${PYTHON_SETUP_FIX}`)
+    : err;
 }
 export function desktopOperation(payload: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -22,7 +32,7 @@ export function desktopOperation(payload: unknown): Promise<any> {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
-      failure ? reject(failure) : resolve(value);
+      failure ? reject(withPythonFix(failure)) : resolve(value);
     };
     const timer = setTimeout(() => {
       child.kill();
