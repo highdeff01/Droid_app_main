@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, FlaskConical, FolderOpen, MessageSquare, Package, Presentation as PresentationIcon, Route, Square } from "lucide-react";
+import { Bot, FlaskConical, FolderOpen, Package, Presentation as PresentationIcon, Route, Send, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import {
 } from "@/lib/hud-actions";
 import { fetchCurrentPresentation } from "@/lib/companion-api";
 import { resolvePresentation } from "@/lib/presentation-source";
+import { submitOnEnter } from "@/lib/chat-submit";
 import {
   runTurnLoop,
   toSequenceSteps,
@@ -216,7 +217,6 @@ export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ steps, replayRun, 
   };
 
   const controls: Array<{ label: string; icon: React.ElementType; onClick: () => void; disabled?: boolean }> = [
-    { label: "Ask Qwen", icon: MessageSquare, onClick: handleAsk, disabled: !question.trim() },
     { label: "Auto Actions", icon: Bot, onClick: handleAutoActions, disabled: !objective.trim() },
     { label: "Test/Simulate", icon: FlaskConical, onClick: handleSimulate, disabled: steps.length === 0 },
     { label: "Create Plan", icon: Route, onClick: handleCreatePlan, disabled: !objective.trim() },
@@ -235,7 +235,27 @@ export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ steps, replayRun, 
         </label>
       </div>
       <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
-        <Input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Question for Qwen" className="h-7 text-xs" />
+        <div className="flex gap-1">
+          <Input
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={submitOnEnter(() => question.trim() && void handleAsk(), !!busy)}
+            placeholder="Question for Qwen (Enter to send)"
+            aria-label="Question for Qwen"
+            className="h-7 text-xs"
+            disabled={!!busy}
+          />
+          <Button
+            size="sm"
+            className="h-7 px-2 text-[11px]"
+            aria-label="Send question to Qwen"
+            disabled={!!busy || !question.trim()}
+            onClick={handleAsk}
+          >
+            <Send className="mr-1 h-3.5 w-3.5" />
+            {busy === "Ask Qwen" ? "Sending…" : "Send"}
+          </Button>
+        </div>
         <Input value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="Objective (goal)" className="h-7 text-xs" />
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Pack name" className="h-7 text-xs" />
         <Input value={packId} onChange={(e) => setPackId(e.target.value)} placeholder="Pack id to load" className="h-7 text-xs" />

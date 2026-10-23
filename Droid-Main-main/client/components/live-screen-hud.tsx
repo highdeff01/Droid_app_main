@@ -117,6 +117,8 @@ import {
   HUD_NODE_MARGIN_PCT,
   selectFrameSource,
   HUD_LAYERS,
+  HUD_MODAL_BOX_CLASS,
+  HUD_MODAL_FRAME_CLASS,
   HUD_SIZE_MAX_VIEWPORT,
   SECOND_HUD_SPACE,
   anchoredLabelClass,
@@ -145,6 +147,8 @@ import { useOverseerSnapshot } from "@/hooks/use-overseer";
 import { latestCheckups } from "@/lib/overseer-client";
 import { useActivityNotes } from "@/hooks/use-activity-notes";
 import { ProgressFeed } from "./progress-feed";
+import { HudPanelDock } from "./hud-panel-dock";
+import { HudModal } from "./hud-modal";
 import {
   askQwen,
   completionStep,
@@ -5038,30 +5042,28 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         </div>
       </div>
 
-      {/* Master AI orchestrator */}
-      {masterPanel ? (
-        <div className="px-2 py-1 bg-slate-950 border-t border-slate-800 z-30">
-          <MasterAiPanel {...masterPanel} />
-        </div>
-      ) : null}
-
-      {/* AI Intentions, Goals and Learning */}
-      {intentionsPanel ? (
-        <div className="px-2 py-1 bg-slate-950 border-t border-slate-800 z-30">
-          <AiIntentionsPanel
-            {...intentionsPanel}
-            overseerCheckups={overseer.snapshot ? latestCheckups(overseer.snapshot.operations) : null}
-            overseerError={overseer.error}
-            activityNotes={activity.notes}
-            activityError={activity.error}
-          />
-        </div>
-      ) : null}
-
-      {/* Live app progress shared with every tab */}
-      <div className="px-2 py-1 bg-slate-950 border-t border-slate-800 z-30 max-h-48 overflow-y-auto">
-        <ProgressFeed title="Live app progress" limit={5} />
-      </div>
+      {/* Master AI, intentions and live progress: one collapsible drawer under the viewport, never over it */}
+      <HudPanelDock
+        sections={[
+          ...(masterPanel ? [{ id: "master" as const, title: "Master AI", content: <MasterAiPanel {...masterPanel} /> }] : []),
+          ...(intentionsPanel
+            ? [{
+                id: "intentions" as const,
+                title: "AI intentions & goals",
+                content: (
+                  <AiIntentionsPanel
+                    {...intentionsPanel}
+                    overseerCheckups={overseer.snapshot ? latestCheckups(overseer.snapshot.operations) : null}
+                    overseerError={overseer.error}
+                    activityNotes={activity.notes}
+                    activityError={activity.error}
+                  />
+                ),
+              }]
+            : []),
+          { id: "progress", title: "Live app progress", content: <ProgressFeed title="Live app progress" limit={5} /> },
+        ]}
+      />
 
       {/* Bottom Docked Status & Coordinate Bar */}
       <div className="h-7 px-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono z-30 select-none">
@@ -5168,8 +5170,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
       {/* AI Navigation Evidence Logs Modal */}
       {showAiNavLogsDrawer && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-indigo-500/60 rounded-xl max-w-2xl w-full p-5 shadow-2xl space-y-4 max-h-[85vh] flex flex-col font-mono text-xs">
+        <div className={HUD_MODAL_FRAME_CLASS}>
+          <div className={cn("bg-slate-900 border border-indigo-500/60 rounded-xl max-w-2xl w-full p-5 shadow-2xl space-y-4 max-h-[85vh] flex flex-col font-mono text-xs", HUD_MODAL_BOX_CLASS)}>
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <span className="text-base font-bold text-indigo-300">🔍 AI Frame & Navigation Evidence</span>
@@ -5820,39 +5822,28 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         }}
       />
 
-      {/* Real-time Latency Monitor & Overseer AI Panel Modal */}
-      {isOverseerPanelOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="relative w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl bg-slate-950 border border-cyan-500/50 shadow-2xl p-6">
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <Activity className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-base font-bold font-mono text-cyan-300">
-                  Overseer AI &amp; Real-Time Telemetry
-                </h3>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsOverseerPanelOpen(false)}
-                className="h-8 w-8 p-0 text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-            <OverseerAIPanel
-              isExecuting={isExecutingTrailOnPC || isExecutingStepByStep}
-              lastCommandTimestamp={Date.now() - 35}
-              lastReactionTimestamp={Date.now()}
-            />
-          </div>
-        </div>
-      )}
+      {/* Real-time Latency Monitor & Overseer AI Panel (non-blocking) */}
+      <HudModal
+        open={isOverseerPanelOpen}
+        onClose={() => setIsOverseerPanelOpen(false)}
+        maxWidth={1024}
+        title={
+          <span className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-cyan-400" /> Overseer AI &amp; Real-Time Telemetry
+          </span>
+        }
+      >
+        <OverseerAIPanel
+          isExecuting={isExecutingTrailOnPC || isExecutingStepByStep}
+          lastCommandTimestamp={Date.now() - 35}
+          lastReactionTimestamp={Date.now()}
+        />
+      </HudModal>
 
       {/* Test Mode, CoT Reasoning & Workflow Persistence Modal */}
       {showTestModeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="relative w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl bg-slate-950 border border-purple-500/60 shadow-2xl overflow-hidden font-mono text-xs">
+        <div className={HUD_MODAL_FRAME_CLASS}>
+          <div className={cn("relative w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl bg-slate-950 border border-purple-500/60 shadow-2xl overflow-hidden font-mono text-xs", HUD_MODAL_BOX_CLASS)}>
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 bg-slate-900/90 border-b border-slate-800 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -6107,8 +6098,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
       {/* Workflow Flowchart Visualizer Modal */}
       {isWorkflowFlowchartOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="relative w-full max-w-6xl h-[85vh] flex flex-col rounded-2xl bg-slate-950 border border-purple-500/50 shadow-2xl overflow-hidden">
+        <div className={HUD_MODAL_FRAME_CLASS}>
+          <div className={cn("relative w-full max-w-6xl h-[85vh] flex flex-col rounded-2xl bg-slate-950 border border-purple-500/50 shadow-2xl overflow-hidden", HUD_MODAL_BOX_CLASS)}>
             <div className="flex items-center justify-between p-4 bg-slate-900/80 border-b border-slate-800 shrink-0">
               <div className="flex items-center gap-2">
                 <Layers className="w-5 h-5 text-purple-400" />

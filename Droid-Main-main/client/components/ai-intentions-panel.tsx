@@ -19,6 +19,7 @@ import type { ChainEntry, GuidanceEntry } from "@/lib/master-ai";
 import type { CheckupReport } from "@shared/overseer";
 import type { CompanionNote } from "@shared/companion";
 import { CHECKUP_TEXT } from "@/lib/overseer-client";
+import { submitOnEnter } from "@/lib/chat-submit";
 
 export interface AiIntentionsPanelProps {
   gateReport: GateReport | null;
@@ -215,6 +216,7 @@ function GoalsSection(props: AiIntentionsPanelProps) {
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={submitOnEnter(create)}
           placeholder="New goal from current steps"
           className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-1 text-[10px]"
         />

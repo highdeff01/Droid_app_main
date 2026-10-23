@@ -60,6 +60,24 @@ export async function readJsonReply(response: Response): Promise<JsonReply> {
   }
 }
 
+/** Actionable message for an /api call answered by something other than the Express API. */
+export const BACKEND_NOT_RUNNING_MESSAGE = "Backend API not running — start the app locally (npm run dev, port 3000)";
+
+/** An /api reply that was not JSON (static-host warmup HTML): the backend is not running here. Never retried. */
+export class BackendNotRunningError extends Error {
+  constructor(url: string, status: number) {
+    super(`${BACKEND_NOT_RUNNING_MESSAGE}. ${url} returned a non-JSON page (HTTP ${status}).`);
+    this.name = "BackendNotRunningError";
+  }
+}
+
+/** The JSON body of an /api reply; a non-JSON body throws BackendNotRunningError (raw HTML is never surfaced). */
+export async function readApiJson(response: Response, url: string): Promise<any> {
+  const reply = await readJsonReply(response);
+  if (!reply.json) throw new BackendNotRunningError(url, reply.status);
+  return reply.body;
+}
+
 /** Probe verdict for a reply: any JSON body means the API answered. */
 export function classifyProbeReply(reply: JsonReply): BackendStatus {
   if (reply.json) return { state: "reachable", aiStudio: false };
