@@ -71,6 +71,8 @@ import { toast } from "sonner";
 import { reportDeviceAction } from "@/lib/device-action-report";
 import { PythonBridgeStatusChip } from "@/components/python-bridge-status-chip";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
+import { BACKEND_UNREACHABLE_MESSAGE, isBackendUnreachable } from "@/lib/backend-status";
+import { describeCaptureFailure } from "@/lib/hud-frame-status";
 import { companionApi } from "@/lib/companion-api";
 import type { WorkflowStepDraft } from "@shared/companion";
 import { CompanionChatPanel } from "@/components/companion-chat-panel";
@@ -170,6 +172,8 @@ import { GlobalSettingsModal, DEFAULT_MODEL_URL, QUANTUMCLAW_FALLBACK_URL } from
 import { CoordinateCalibrationModal } from "@/components/coordinate-calibration-modal";
 import { ThreeAiAgentsSquad } from "@/components/three-ai-agents-squad";
 const CAPTURE_POLL_MS = 600;
+/** Capture re-check interval while the startup probe reports no backend. */
+const CAPTURE_BACKOFF_MS = 5000;
 const CAPTURE_POLLING_KEY = "dashboard-capture-polling";
 export default function Dashboard({
   initialTab,
@@ -910,6 +914,13 @@ export default function Dashboard({
     setVerificationBadge({ status: "verifying", message: "Capturing and analyzing screen before acting" });
     setGateReport(verifyingGateReport(target, stepLabel));
     try {
+      if (isBackendUnreachable()) {
+        setAiThinking(null);
+        setGateReport(null);
+        setVerificationBadge({ status: "failed", message: BACKEND_UNREACHABLE_MESSAGE });
+        toast.error(`Action not dispatched: ${BACKEND_UNREACHABLE_MESSAGE}`);
+        return false;
+      }
       const result = await runActionGate({
         targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined, target, stepLabel,
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
@@ -1112,6 +1123,11 @@ export default function Dashboard({
     toast.error(`Live screen capture failed: ${message}`);
   };
   const captureScreen = async (signal?: AbortSignal) => {
+    if (isBackendUnreachable()) {
+      // Startup probe found no JSON API: back off instead of polling a dead endpoint.
+      setCaptureError(BACKEND_UNREACHABLE_MESSAGE);
+      return;
+    }
     const data = await safeFetchJson<{ imageData?: string | null; method?: string; status?: "live" | "standby" }>(
       "/api/capture-screen",
       { signal, cache: "no-store" },
@@ -1130,9 +1146,7 @@ export default function Dashboard({
       setCaptureStandby(data.message || "Waiting for a live frame");
       return;
     }
-    reportCaptureFailure(
-      data.error || data.message || "/api/capture-screen returned no frame",
-    );
+    reportCaptureFailure(describeCaptureFailure(data));
   };
   useEffect(() => {
     localStorage.setItem(CAPTURE_POLLING_KEY, String(isCapturing));
@@ -1141,7 +1155,7 @@ export default function Dashboard({
     const poll = async () => {
       await captureScreen(controller.signal);
       if (isCapturing && !controller.signal.aborted) {
-        timer = setTimeout(poll, CAPTURE_POLL_MS);
+        timer = setTimeout(poll, isBackendUnreachable() ? CAPTURE_BACKOFF_MS : CAPTURE_POLL_MS);
       }
     };
     void poll();

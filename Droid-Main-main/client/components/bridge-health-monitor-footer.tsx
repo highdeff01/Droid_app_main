@@ -18,7 +18,15 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { toast } from "sonner";
+import { useBackendStatus } from "@/hooks/use-backend-status";
+import { BACKEND_UNREACHABLE_MESSAGE } from "@/lib/backend-status";
+import {
+  BRIDGE_NON_JSON_MESSAGE,
+  fetchBridgeHealth,
+  runQuickReconnect,
+  runTogglePause,
+  syncBridgeCoordinates,
+} from "@/lib/bridge-control";
 
 export interface BridgeHealthState {
   online: boolean;
@@ -64,108 +72,72 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
   const [consecutiveFailures, setConsecutiveFailures] = useState<number>(0);
+  const backend = useBackendStatus();
+  const backendUnreachable = backend.state === "unreachable";
 
-  const checkHealth = useCallback(async () => {
-    try {
-      const startTime = performance.now();
-      const res = await fetch("/api/pyautogui/health", {
-        headers: { "Cache-Control": "no-cache" },
-      });
-      const latency = Math.round(performance.now() - startTime);
-
-      // Also trigger a coordinate sync pulse to measure real-time position reporting latency
-      let coordData = null;
-      try {
-        const cStart = performance.now();
-        const cRes = await fetch("/api/pyautogui/coordinate-sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            canvasX: 960,
-            canvasY: 540,
-            clientTimestamp: Date.now(),
-          }),
-        });
-        if (cRes.ok) {
-          const cJson = await cRes.json();
-          coordData = {
-            latencyMs: Math.round(performance.now() - cStart),
-            driftPx: cJson.spatialDriftPx ?? 0,
-            bridgeX: cJson.bridgeReportedX ?? 960,
-            bridgeY: cJson.bridgeReportedY ?? 540,
-            canvasX: cJson.browserCanvasX ?? 960,
-            canvasY: cJson.browserCanvasY ?? 540,
-            lastSynced: Date.now(),
-          };
-        }
-      } catch {}
-
-      if (res.ok) {
-        const data = await res.json();
-        setHealth((prev) => ({
-          online: data.online === true,
-          paused: data.paused ?? false,
-          latencyMs: data.latencyMs ?? latency,
-          lastHeartbeat: Date.now(),
-          pythonVersion: data.pythonVersion ?? undefined,
-          pyautoguiAvailable: data.pyautoguiAvailable === true,
-          screenResolution: data.screenResolution ?? undefined,
-          activeProcesses: data.activeProcesses ?? [],
-          coordSync: coordData || prev.coordSync,
-        }));
-        setConsecutiveFailures(0);
+  const markOffline = useCallback((error: string, immediate: boolean) => {
+    setConsecutiveFailures((prev) => {
+      const next = prev + 1;
+      if (immediate || next >= 2) {
+        setHealth((h) => ({ ...h, online: false, error }));
         window.dispatchEvent(
           new CustomEvent("pyautogui-bridge-health-update", {
-            detail: { online: data.online === true, paused: data.paused, latencyMs: latency, coordSync: coordData, error: data.error },
+            detail: { online: false, paused: false, error },
           })
         );
-      } else {
-        throw new Error(`HTTP ${res.status}`);
       }
-    } catch (err: any) {
-      setConsecutiveFailures((prev) => {
-        const next = prev + 1;
-        if (next >= 2) {
-          setHealth((h) => ({
-            ...h,
-            online: false,
-            error: err.message || "Connection timeout",
-          }));
-          window.dispatchEvent(
-            new CustomEvent("pyautogui-bridge-health-update", {
-              detail: { online: false, paused: false, error: err.message },
-            })
-          );
-        }
-        return next;
-      });
-    }
+      return next;
+    });
   }, []);
 
-  // Background interval: poll health every 4.5 seconds
+  const checkHealth = useCallback(async () => {
+    const startTime = performance.now();
+    const result = await fetchBridgeHealth();
+    const latency = Math.round(performance.now() - startTime);
+    if (!result.ok) {
+      // A non-JSON reply is definitive (no backend), so it is reported at once.
+      markOffline(result.error, result.error === BRIDGE_NON_JSON_MESSAGE || result.error === BACKEND_UNREACHABLE_MESSAGE);
+      return;
+    }
+    const data = result.value;
+    const coordData = await syncBridgeCoordinates();
+    setHealth((prev) => ({
+      online: data.online,
+      paused: data.paused,
+      latencyMs: data.latencyMs ?? latency,
+      lastHeartbeat: Date.now(),
+      pythonVersion: data.pythonVersion,
+      pyautoguiAvailable: data.pyautoguiAvailable,
+      screenResolution: data.screenResolution,
+      activeProcesses: data.activeProcesses,
+      coordSync: coordData || prev.coordSync,
+      error: data.error,
+    }));
+    setConsecutiveFailures(0);
+    window.dispatchEvent(
+      new CustomEvent("pyautogui-bridge-health-update", {
+        detail: { online: data.online, paused: data.paused, latencyMs: latency, coordSync: coordData, error: data.error },
+      })
+    );
+  }, [markOffline]);
+
+  // Background poll every 4.5 seconds; backs off while the startup probe finds no backend.
   useEffect(() => {
+    if (backendUnreachable) {
+      markOffline(BACKEND_UNREACHABLE_MESSAGE, true);
+      return;
+    }
     checkHealth();
     const interval = setInterval(checkHealth, 4500);
     return () => clearInterval(interval);
-  }, [checkHealth]);
+  }, [checkHealth, backendUnreachable, markOffline]);
 
-  // Quick Reconnect Trigger
+  // Quick Reconnect Trigger: success only when the bridge is verified online.
   const handleQuickReconnect = async () => {
     setIsReconnecting(true);
     try {
-      const res = await fetch("/api/pyautogui/reconnect", { method: "POST" });
-      if (res.ok) {
-        await checkHealth();
-        toast.success("Python execution bridge reconnected successfully", {
-          description: "Subprocess link is active and synchronized with browser host.",
-        });
-      } else {
-        throw new Error("Reconnect endpoint failed");
-      }
-    } catch (err: any) {
-      toast.error("Bridge Reconnect Failed", {
-        description: err.message || "Could not re-establish Python execution link.",
-      });
+      await runQuickReconnect();
+      await checkHealth();
     } finally {
       setIsReconnecting(false);
     }
@@ -173,25 +145,14 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
 
   // Toggle Pause/Resume directly from Health Monitor
   const handleTogglePause = async () => {
-    try {
-      const endpoint = health.paused ? "/api/pyautogui/resume" : "/api/pyautogui/pause";
-      const res = await fetch(endpoint, { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        setHealth((prev) => ({ ...prev, paused: data.paused }));
-        toast(data.paused ? "Execution Bridge Paused" : "Execution Bridge Resumed", {
-          description: data.message,
-          icon: data.paused ? "⏸️" : "▶️",
-        });
-        window.dispatchEvent(
-          new CustomEvent("pyautogui-bridge-pause-toggle", {
-            detail: { paused: data.paused },
-          })
-        );
-      }
-    } catch (err: any) {
-      toast.error(`Failed to toggle pause: ${err.message}`);
-    }
+    const paused = await runTogglePause(health.paused);
+    if (paused === null) return;
+    setHealth((prev) => ({ ...prev, paused }));
+    window.dispatchEvent(
+      new CustomEvent("pyautogui-bridge-pause-toggle", {
+        detail: { paused },
+      })
+    );
   };
 
   return (

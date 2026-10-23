@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fetchBridgeStatus, type BridgeStatusView } from "@/lib/bridge-status";
+import { useBackendStatus } from "@/hooks/use-backend-status";
 
 const POLL_MS = 15000;
 
@@ -13,7 +14,11 @@ export const PythonBridgeStatusChip: React.FC<{ className?: string }> = ({ class
   const [status, setStatus] = useState<BridgeStatusView | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
+  const backendUnreachable = useBackendStatus().state === "unreachable";
+
   useEffect(() => {
+    // The app-wide banner already explains an unreachable backend; no health polling until the probe succeeds.
+    if (backendUnreachable) return;
     const controller = new AbortController();
     const refresh = () => void fetchBridgeStatus(controller.signal).then((view) => {
       if (!controller.signal.aborted) setStatus(view);
@@ -24,7 +29,7 @@ export const PythonBridgeStatusChip: React.FC<{ className?: string }> = ({ class
       controller.abort();
       clearInterval(timer);
     };
-  }, []);
+  }, [backendUnreachable]);
 
   if (dismissed || !status) return null;
   return <BridgeStatusChipView status={status} onDismiss={() => setDismissed(true)} className={className} />;

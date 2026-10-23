@@ -4,6 +4,11 @@ import {
   type GatePost,
   type GateTarget,
 } from "@/lib/action-gate";
+import {
+  BACKEND_UNREACHABLE_MESSAGE,
+  assertBackendReachable,
+  isBackendUnreachable,
+} from "@/lib/backend-status";
 
 /** Same ceiling as the Dashboard gate: a check can never hang the UI. */
 export const GATE_TIMEOUT_MS = 45_000;
@@ -78,12 +83,16 @@ async function gateOne(
 
 /** POST a device action as JSON (the endpoints the components already use) and return the parsed body. */
 export async function postDeviceAction(url: string, body: unknown): Promise<any> {
+  assertBackendReachable();
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return response.json().catch(() => ({ success: response.ok }));
+  // A body that cannot be parsed is a failure, never a success.
+  return response
+    .json()
+    .catch(() => ({ success: false, executed: false, error: `Non-JSON response (HTTP ${response.status})` }));
 }
 
 /**
@@ -95,6 +104,7 @@ export async function runGatedSequence(
   options: GatedRunOptions,
 ): Promise<GatedRunResult> {
   const results: unknown[] = [];
+  if (isBackendUnreachable()) return { status: "blocked", reason: BACKEND_UNREACHABLE_MESSAGE, results };
   for (const action of actions) {
     const failed = await gateOne(action, options, results);
     if (failed) return failed;

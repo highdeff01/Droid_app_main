@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Monitor, Play, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useBackendStatus } from "@/hooks/use-backend-status";
+import { BACKEND_UNREACHABLE_MESSAGE } from "@/lib/backend-status";
 import {
   describeEmptyState,
   readCaptureStandby,
@@ -22,7 +24,15 @@ function useCaptureDiagnostics(intervalMs = 5000) {
   const [standby, setStandby] = useState<CaptureStandby | null>(null);
   const [bridge, setBridge] = useState<BridgeStatus | null>(null);
 
+  const backendUnreachable = useBackendStatus().state === "unreachable";
+
   useEffect(() => {
+    if (backendUnreachable) {
+      // Startup probe found no JSON API: back off until it succeeds.
+      setStandby({ error: BACKEND_UNREACHABLE_MESSAGE });
+      setBridge({ online: false, error: BACKEND_UNREACHABLE_MESSAGE });
+      return;
+    }
     let disposed = false;
     const probe = async () => {
       const capture = await fetch("/api/capture-screen")
@@ -44,7 +54,7 @@ function useCaptureDiagnostics(intervalMs = 5000) {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [intervalMs]);
+  }, [intervalMs, backendUnreachable]);
 
   return { standby, bridge };
 }
