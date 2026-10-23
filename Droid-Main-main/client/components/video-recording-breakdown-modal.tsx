@@ -20,6 +20,7 @@ import {
   Activity,
 } from "lucide-react";
 import { toast } from "sonner";
+import { HUD_MODAL_BOX_CLASS, HUD_MODAL_FRAME_CLASS } from "@/lib/hud-layout";
 import { MouseTrajectoryStore } from "@/services/mouseTrajectoryStore";
 import { detectStepsFromFrames, sampleTimesFor } from "@/lib/frame-step-detection";
 
@@ -437,8 +438,8 @@ export const VideoRecordingBreakdownModal: React.FC<VideoRecordingBreakdownModal
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-pink-500/70 rounded-2xl max-w-5xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden font-mono text-xs">
+    <div className={HUD_MODAL_FRAME_CLASS}>
+      <div className={`bg-slate-900 border border-pink-500/70 rounded-2xl max-w-5xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden font-mono text-xs ${HUD_MODAL_BOX_CLASS}`}>
         {/* Top Header */}
         <div className="px-5 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
