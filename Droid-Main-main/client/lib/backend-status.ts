@@ -49,11 +49,10 @@ export function summarizeNonJson(text: string, status: number): string {
   return trimmed;
 }
 
-/** Reads a response body and parses it as JSON; an empty body maps to the HTTP outcome. */
+/** Reads a response body and parses it as JSON; an empty or unparsable body is non-JSON (a failure). */
 export async function readJsonReply(response: Response): Promise<JsonReply> {
   const text = await response.text();
   const base = { status: response.status, httpOk: response.ok };
-  if (!text.trim()) return { json: true, ...base, body: { success: response.ok } };
   try {
     return { json: true, ...base, body: JSON.parse(text) };
   } catch {
