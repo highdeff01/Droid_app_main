@@ -46,15 +46,19 @@ function reserveStepIds(plan: AssistantPlan): Set<string> {
 
 export type SafeActionExecutor = (
   action: AllowlistedAction,
+  signal?: AbortSignal,
 ) => Promise<ActionExecutionResult>;
 export type ObservationProvider = (
   step: PlannedStep,
   attempt: number,
 ) => Promise<Observation>;
 
-const defaultExecutor: SafeActionExecutor = async (action) => {
+const defaultExecutor: SafeActionExecutor = async (action, signal) => {
   if (action.type === "wait") {
-    await new Promise((resolve) => setTimeout(resolve, action.durationMs));
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, action.durationMs);
+      signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
   }
   return {
     actionType: action.type,
@@ -400,16 +404,32 @@ export class ExecutionStateRepository {
     return this.start(execution, plan);
   }
 
-  private runAction(action: AllowlistedAction) {
-    return Promise.race([
-      this.executeAction(action),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Action timed out")),
-          ACTION_TIMEOUT_MS,
-        ),
-      ),
-    ]);
+  /**
+   * Runs one action under ACTION_TIMEOUT_MS. On timeout the in-flight action is
+   * cancelled through its AbortSignal (so the device stops instead of carrying
+   * on while the run reports failure) and the timer never outlives the action.
+   */
+  private async runAction(action: AllowlistedAction) {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(
+          new Error(
+            `Action timed out after ${ACTION_TIMEOUT_MS}ms and was cancelled; its effect is uncertain`,
+          ),
+        );
+      }, ACTION_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([
+        this.executeAction(action, controller.signal),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async captureAndVerify(

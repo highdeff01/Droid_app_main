@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AssistantPlan } from "@shared/assistant";
-import { ExecutionStateRepository } from "./execution-state";
+import { ACTION_TIMEOUT_MS, ExecutionStateRepository } from "./execution-state";
 import { allowlistedActionSchema } from "./routes/assistant-execution";
 
 const plan = (
@@ -320,5 +320,50 @@ describe("recovery paths", () => {
     expect(rejected?.pendingApproval).toBeUndefined();
     expect(repo.reject(execution.id)).toBeUndefined();
     expect(await repo.approvePending(execution.id, p)).toBeUndefined();
+  });
+});
+
+describe("action timeout", () => {
+  it("cancels the in-flight device action when it times out, so the run never fails while the device keeps going", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      let deviceStillRunning = false;
+      const hang = vi.fn((_action: unknown, s?: AbortSignal) => {
+        signal = s;
+        deviceStillRunning = true;
+        s?.addEventListener("abort", () => { deviceStillRunning = false; });
+        return new Promise<never>(() => {});
+      });
+      const repo = new ExecutionStateRepository(hang as any, { mode: "memory" });
+      const p = plan({ type: "click", x: 1, y: 2 });
+      const execution = repo.create(p);
+      const run = repo.start(execution, p);
+      await vi.advanceTimersByTimeAsync(ACTION_TIMEOUT_MS - 1);
+      expect(signal?.aborted).toBe(false);
+      expect(deviceStillRunning).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      await run;
+      expect(signal?.aborted).toBe(true);
+      expect(deviceStillRunning).toBe(false);
+      expect(execution.status).toBe("failed");
+      expect(execution.error).toMatch(/timed out .*cancelled/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the timeout once the action settles, leaving no pending timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const repo = new ExecutionStateRepository(okExecutor(), { mode: "memory" });
+      const p = plan({ type: "screenshot" });
+      const execution = repo.create(p);
+      await repo.start(execution, p);
+      expect(execution.status).toBe("completed");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
