@@ -517,10 +517,10 @@ export const InteractiveDeviceControlDeck: React.FC<InteractiveDeviceControlDeck
       addLog(
         "NAVIGATION",
         "warning",
-        "Watchdog Auto-Recovery",
-        "Dispatched [BACK] step and re-scanned screen features with 98.2% alignment match."
+        "[SIMULATED DEMO] Watchdog Auto-Recovery",
+        "Demo only: no [BACK] step was dispatched and no screen was re-scanned or recalibrated."
       );
-      toast.success("🛡️ Watchdog Self-Healing Complete: Screen recalibrated & workflow restored.");
+      toast.info("Simulated demo recovery: no real recalibration was performed.");
     }, 1200);
   };
 
