@@ -20,6 +20,7 @@ import {
   outcomeFromSpawnError,
   unavailableOutcome,
 } from "../../shared/device-execution";
+import { trailToBridgeActions } from "../../shared/trail-replay";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1661,7 +1662,8 @@ export const handleReplayTrail: RequestHandler = async (req, res) => {
     { pointCount, speedMultiplier, humanDriftPx, executeOnHardware: isHardware }
   );
 
-  const result = await executePyAutoGUIActions(trail.map((p: any) => ({ type: "move", x: p.x, y: p.y })));
+  // The recorded waypoints with their recorded gaps (scaled by speed) — not a re-derived path.
+  const result = await executePyAutoGUIActions(trailToBridgeActions(trail, speedMultiplier));
 
   return res.json({
     success: result.success,
