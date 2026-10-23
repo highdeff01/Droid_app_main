@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, HudDialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { playClickPip } from "@/lib/audio-synthesizer";
 
@@ -158,8 +158,8 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl bg-slate-950 border border-cyan-500/50 text-slate-100 shadow-2xl p-0 overflow-hidden font-mono">
+    <Dialog modal={false} open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <HudDialogContent className="max-w-4xl bg-slate-950 border border-cyan-500/50 text-slate-100 shadow-2xl p-0 overflow-hidden font-mono">
         <DialogHeader className="p-4 bg-gradient-to-r from-slate-950 via-cyan-950/40 to-slate-950 border-b border-slate-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -539,7 +539,7 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
             </div>
           )}
         </ScrollArea>
-      </DialogContent>
+      </HudDialogContent>
     </Dialog>
   );
 };

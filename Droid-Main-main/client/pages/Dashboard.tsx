@@ -73,6 +73,7 @@ import { PythonBridgeStatusChip } from "@/components/python-bridge-status-chip";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
 import { BACKEND_UNREACHABLE_MESSAGE, isBackendUnreachable } from "@/lib/backend-status";
 import { describeCaptureFailure } from "@/lib/hud-frame-status";
+import { submitOnEnter } from "@/lib/chat-submit";
 import { companionApi } from "@/lib/companion-api";
 import type { WorkflowStepDraft } from "@shared/companion";
 import { CompanionChatPanel } from "@/components/companion-chat-panel";
@@ -234,6 +235,7 @@ export default function Dashboard({
   const [driftRandomInterval, setDriftRandomInterval] = useState(true);
   const [saveScreenshotWithStep, setSaveScreenshotWithStep] = useState(true);
   const [collabInstruction, setCollabInstruction] = useState("");
+  const [isCollabSending, setIsCollabSending] = useState(false);
   const [collabChat, setCollabChat] = useState<
     { role: "user" | "ai"; text: string }[]
   >([
@@ -1128,6 +1130,37 @@ export default function Dashboard({
     if (!id) throw new Error("Action was not dispatched: screen verification failed, was cancelled, or another action is running.");
     await waitForReplay(id);
     return new Response(JSON.stringify({ success: true, verified: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  /** Quick Collab send: records the instruction, dispatches a "(x, y)" target through the gate, and reports the real outcome. */
+  const sendCollabInstruction = async (idPrefix: string) => {
+    const instruction = collabInstruction.trim();
+    if (!instruction || isCollabSending) return;
+    setIsCollabSending(true);
+    setCollabChat((prev) => [...prev, { role: "user", text: instruction }]);
+    try {
+      const m = instruction.match(/\(?\s*(\d{2,4})\s*,\s*(\d{2,4})\s*\)?/);
+      if (m) {
+        await executeHubTask("/api/execute-task", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetDevice,
+            deviceId: selectedAdbDevice,
+            task: { id: `${idPrefix}_${Date.now()}`, name: instruction.slice(0, 30), action: "click", targetPosition: { x: parseInt(m[1]), y: parseInt(m[2]) } },
+          }),
+        });
+      }
+      setCollabChat((prev) => [
+        ...prev,
+        { role: "ai", text: m ? "Click verified and executed; added to the workflow sequence." : "No (x, y) target found; added to the workflow sequence without dispatching." },
+      ]);
+      handleAddSequenceStep({ x: aiThinking?.x || 960, y: aiThinking?.y || 540, name: `Collab: ${instruction.slice(0, 24)}` } as any);
+      setCollabInstruction("");
+    } catch (error) {
+      setCollabChat((prev) => [...prev, { role: "ai", text: `Not executed: ${error instanceof Error ? error.message : String(error)}` }]);
+    } finally {
+      setIsCollabSending(false);
+    }
   };
   // AI-driven single-target actions (navigate, entity, copilot element): record the step, then dispatch through the gate.
   const dispatchAiTarget = async (step: Partial<SequenceStep> & { x: number; y: number; name: string }) => {
@@ -2496,56 +2529,20 @@ export default function Dashboard({
                     <textarea
                       value={collabInstruction}
                       onChange={(e) => setCollabInstruction(e.target.value)}
-                      placeholder="Tell AI where to click: e.g. Click Submit button at (740, 520)..."
+                      onKeyDown={submitOnEnter(() => void sendCollabInstruction("collab"), isCollabSending)}
+                      disabled={isCollabSending}
+                      aria-label="Quick Collab instruction"
+                      placeholder="Tell AI where to click: e.g. Click Submit button at (740, 520)... (Enter to send, Shift+Enter for newline)"
                       className="w-full h-16 p-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 resize-none outline-none focus:border-cyan-500"
                     />
                     <div className="flex gap-1.5">
                       <Button
                         size="sm"
-                        onClick={async () => {
-                          if (!collabInstruction.trim()) return;
-                          setCollabChat((prev) => [
-                            ...prev,
-                            { role: "user", text: collabInstruction },
-                          ]);
-                          const m = collabInstruction.match(
-                            /\(?\s*(\d{2,4})\s*,\s*(\d{2,4})\s*\)?/,
-                          );
-                          if (m) {
-                            const x = parseInt(m[1]),
-                              y = parseInt(m[2]);
-                            await executeHubTask("/api/execute-task", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                targetDevice,
-                                deviceId: selectedAdbDevice,
-                                task: {
-                                  id: `collab_${Date.now()}`,
-                                  name: collabInstruction.slice(0, 30),
-                                  action: "click",
-                                  targetPosition: { x, y },
-                                },
-                              }),
-                            });
-                          }
-                          setCollabChat((prev) => [
-                            ...prev,
-                            {
-                              role: "ai",
-                              text: "Target locked and added to workflow sequence.",
-                            },
-                          ]);
-                          handleAddSequenceStep({
-                            x: aiThinking?.x || 960,
-                            y: aiThinking?.y || 540,
-                            name: `Collab: ${collabInstruction.slice(0, 20)}`,
-                          } as any);
-                          setCollabInstruction("");
-                        }}
+                        disabled={isCollabSending || !collabInstruction.trim()}
+                        onClick={() => void sendCollabInstruction("collab")}
                         className="h-7 text-xs bg-cyan-600 hover:bg-cyan-500 text-white flex-1 font-bold"
                       >
-                        Send & Add Step
+                        {isCollabSending ? "Sending…" : "Send & Add Step"}
                       </Button>
                       <Button
                         size="sm"
@@ -3189,56 +3186,20 @@ export default function Dashboard({
                     <textarea
                       value={collabInstruction}
                       onChange={(e) => setCollabInstruction(e.target.value)}
-                      placeholder="Describe precisely where to click: e.g. Click the Blue Submit button at (740, 520) or type 'hello' at (420, 380)..."
+                      onKeyDown={submitOnEnter(() => void sendCollabInstruction("collab_full"), isCollabSending)}
+                      disabled={isCollabSending}
+                      aria-label="Quick Collab instruction (full)"
+                      placeholder="Describe precisely where to click: e.g. Click the Blue Submit button at (740, 520) or type 'hello' at (420, 380)... (Enter to send, Shift+Enter for newline)"
                       className="w-full min-h-[120px] p-3 rounded bg-slate-950 border border-slate-800 text-sm text-slate-200"
                     />
                     <div className="flex gap-2">
                       <Button
                         size="sm"
-                        onClick={async () => {
-                          if (!collabInstruction.trim()) return;
-                          setCollabChat((prev) => [
-                            ...prev,
-                            { role: "user", text: collabInstruction },
-                          ]);
-                          const m = collabInstruction.match(
-                            /\(?\s*(\d{2,4})\s*,\s*(\d{2,4})\s*\)?/,
-                          );
-                          if (m) {
-                            const x = parseInt(m[1]),
-                              y = parseInt(m[2]);
-                            await executeHubTask("/api/execute-task", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                targetDevice,
-                                deviceId: selectedAdbDevice,
-                                task: {
-                                  id: `collab_full_${Date.now()}`,
-                                  name: collabInstruction.slice(0, 30),
-                                  action: "click",
-                                  targetPosition: { x, y },
-                                },
-                              }),
-                            });
-                          }
-                          setCollabChat((prev) => [
-                            ...prev,
-                            {
-                              role: "ai",
-                              text: `Got it — will target with ${movementMode} mode. Added as step.`,
-                            },
-                          ]);
-                          handleAddSequenceStep({
-                            x: aiThinking?.x || 960,
-                            y: aiThinking?.y || 540,
-                            name: `Collab: ${collabInstruction.slice(0, 24)}`,
-                          } as any);
-                          setCollabInstruction("");
-                        }}
+                        disabled={isCollabSending || !collabInstruction.trim()}
+                        onClick={() => void sendCollabInstruction("collab_full")}
                         className="h-9 text-sm bg-cyan-600 text-white flex-1"
                       >
-                        Send to AI & Add Step
+                        {isCollabSending ? "Sending…" : "Send to AI & Add Step"}
                       </Button>
                       <Button
                         size="sm"

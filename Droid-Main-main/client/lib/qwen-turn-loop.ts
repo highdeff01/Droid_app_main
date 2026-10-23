@@ -20,6 +20,7 @@ import {
 } from "@/lib/action-gate";
 import { assertStepsInScope } from "@/lib/ai-scope";
 import { startReplay, type ReplayRunSnapshot } from "@/lib/automation-runner";
+import { BackendNotRunningError, readApiJson } from "@/lib/backend-status";
 import { waitForReplayRun } from "@/lib/verified-replay";
 import {
   MAX_REVISIONS,
@@ -218,8 +219,8 @@ const getJson: GoalLoopDeps["get"] = async (url, { apiKey, signal }) => {
     cache: "no-store",
     signal,
   });
-  const data = await response.json();
-  if (!response.ok || data.success !== true) throw new Error(data.error || `${url} failed`);
+  const data = await readApiJson(response, url);
+  if (!response.ok || data?.success !== true) throw new Error(data?.error || `${url} failed`);
   return data;
 };
 
@@ -273,17 +274,41 @@ async function readText(ctx: TurnContext, frame: string): Promise<string[]> {
   }
 }
 
+/** Extra capture attempts after a transient capture failure (non-JSON replies are never retried). */
+export const MAX_CAPTURE_RETRIES = 2;
+
+/** Pause between capture attempts. */
+export const CAPTURE_RETRY_DELAY_MS = 500;
+
+/** A fresh frame from the device; transient failures are retried up to MAX_CAPTURE_RETRIES times, and the attempt count is reported. */
+async function captureFrame(ctx: TurnContext): Promise<{ image: string; hash?: string }> {
+  const { targetDevice, deviceId } = ctx.options.device;
+  const total = MAX_CAPTURE_RETRIES + 1;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const shot = await post(ctx, "/api/replay/capture", { targetDevice, deviceId });
+      const image: string | undefined = shot.frame?.image;
+      if (!image) throw new Error("Screen capture returned no frame");
+      return { image, hash: shot.frame?.hash };
+    } catch (error) {
+      ensureActive(ctx);
+      if (error instanceof BackendNotRunningError) throw error;
+      if (attempt >= total) throw new Error(`Screen capture failed after ${attempt} attempt(s): ${errorMessage(error)}`);
+      emit(ctx, { phase: "analyzing", message: `Capture attempt ${attempt}/${total} failed (${errorMessage(error)}); retrying` });
+      await ctx.deps.sleep(CAPTURE_RETRY_DELAY_MS);
+      ensureActive(ctx);
+    }
+  }
+}
+
 /** A fresh capture analyzed by perception (never a stale report) plus its OCR text. */
 async function capture(ctx: TurnContext): Promise<OperationOutcome> {
-  const { targetDevice, deviceId } = ctx.options.device;
   emit(ctx, { phase: "analyzing", message: "Capturing and analyzing a fresh screenshot" });
-  const shot = await post(ctx, "/api/replay/capture", { targetDevice, deviceId });
-  const frame: string | undefined = shot.frame?.image;
-  if (!frame) throw new Error("Screen capture returned no frame");
+  const { image: frame, hash } = await captureFrame(ctx);
   const analysis = await post(ctx, "/api/ai/describe-screen", { imageData: frame });
   if (!analysis.report) throw new Error("Screen analysis returned no report");
   const ocrText = await readText(ctx, frame);
-  ctx.seen = { observation: observeScreen(analysis.report, ocrText, shot.frame?.hash), frame, report: analysis.report };
+  ctx.seen = { observation: observeScreen(analysis.report, ocrText, hash), frame, report: analysis.report };
   ctx.fresh = true;
   return "ok";
 }

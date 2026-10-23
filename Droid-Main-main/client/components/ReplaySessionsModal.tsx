@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
-  DialogContent,
+  HudDialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
@@ -148,8 +148,8 @@ export const ReplaySessionsModal: React.FC<ReplaySessionsModalProps> = ({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-5xl bg-slate-950 border-slate-800 text-slate-100 p-0 overflow-hidden shadow-2xl">
+    <Dialog modal={false} open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <HudDialogContent className="max-w-5xl bg-slate-950 border-slate-800 text-slate-100 p-0 overflow-hidden shadow-2xl">
         <DialogHeader className="p-5 border-b border-slate-800/80 bg-slate-900/60">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
@@ -446,7 +446,7 @@ export const ReplaySessionsModal: React.FC<ReplaySessionsModalProps> = ({
             )}
           </div>
         </div>
-      </DialogContent>
+      </HudDialogContent>
     </Dialog>
   );
 };

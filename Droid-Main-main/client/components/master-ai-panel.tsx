@@ -20,6 +20,7 @@ import {
 } from "@/lib/master-ai";
 import { createMasterHooks, createMasterRunners, newTriggerActions } from "@/lib/master-ai-runners";
 import { startPollLoop } from "@/lib/poll-loop";
+import { submitOnEnter } from "@/lib/chat-submit";
 import type { AssistantExecution } from "@shared/assistant";
 import { WorkflowStatusCard } from "@/components/workflow-status-card";
 import {
@@ -172,7 +173,7 @@ function TextSubmit({ label, placeholder, disabled, onSubmit }: {
         value={text}
         disabled={disabled}
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
+        onKeyDown={submitOnEnter(submit, disabled)}
         placeholder={placeholder}
         className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-1"
       />

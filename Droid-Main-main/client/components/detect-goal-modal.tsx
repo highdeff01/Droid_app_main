@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import {
   Dialog,
-  DialogContent,
+  HudDialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -72,8 +72,8 @@ export const DetectGoalModal: React.FC<DetectGoalModalProps> = ({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl bg-slate-950 border-slate-800 text-slate-100 font-mono shadow-2xl p-6">
+    <Dialog modal={false} open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <HudDialogContent className="max-w-2xl bg-slate-950 border-slate-800 text-slate-100 font-mono shadow-2xl p-6">
         <DialogHeader className="pb-3 border-b border-slate-800">
           <div className="flex items-center justify-between">
             <DialogTitle className="text-base font-bold text-emerald-400 flex items-center gap-2">
@@ -194,7 +194,7 @@ export const DetectGoalModal: React.FC<DetectGoalModalProps> = ({
             </Button>
           </div>
         </div>
-      </DialogContent>
+      </HudDialogContent>
     </Dialog>
   );
 };

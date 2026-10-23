@@ -20,6 +20,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { HUD_MODAL_BOX_CLASS, HUD_MODAL_FRAME_CLASS } from "@/lib/hud-layout";
+import { cn } from "@/lib/utils";
 import { SequenceStep } from "./live-screen-hud";
 import type { ReplanResult, ReplanStepItem } from "@shared/goal-replan";
 
@@ -105,8 +107,8 @@ export const AIGoalReplannerModal: React.FC<AIGoalReplannerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="bg-slate-900 border-2 border-indigo-500/70 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden font-mono text-slate-200">
+    <div className={HUD_MODAL_FRAME_CLASS}>
+      <div className={cn("bg-slate-900 border-2 border-indigo-500/70 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden font-mono text-slate-200", HUD_MODAL_BOX_CLASS)}>
         {/* Modal Header */}
         <div className="p-4 bg-slate-950/90 border-b border-indigo-900/60 flex items-center justify-between">
           <div className="flex items-center gap-3">

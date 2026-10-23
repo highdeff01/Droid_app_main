@@ -6,6 +6,7 @@ import type {
   DetectedUIElement,
   ScreenPerceptionReport,
 } from "@/components/dual-ai-copilot-panel";
+import { readApiJson } from "@/lib/backend-status";
 import type { HudEntity, HudGuideResult, HudPack } from "@shared/api";
 import type { ReplayRun } from "@shared/replay";
 
@@ -36,7 +37,7 @@ export const postHudJson: HudPost = async (url, body) => {
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const data = await response.json().catch(() => null);
+  const data = await readApiJson(response, url);
   if (!response.ok || !data || data.success !== true) {
     throw new Error(data?.error || `${url} failed (HTTP ${response.status})`);
   }

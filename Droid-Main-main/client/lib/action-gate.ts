@@ -2,7 +2,7 @@ import type {
   DetectedUIElement,
   ScreenPerceptionReport,
 } from "@/components/dual-ai-copilot-panel";
-import { getAiScope, scopeReport, scopeTarget, type AiScope } from "@/lib/ai-scope";
+import { readApiJson } from "@/lib/backend-status";
 
 /** Slack around an element's bounding box when matching the action point. */
 export const TARGET_PADDING_PX = 12;
@@ -180,11 +180,9 @@ export const postGateJson: GatePost = async (url, body, { apiKey, signal }) => {
     body: JSON.stringify(body),
     signal,
   });
-  const reply = await readJsonReply(response);
-  if (!reply.json) throw new Error(backendNonJsonReason(reply.status));
-  const data = reply.body ?? {};
-  if (!response.ok || data.success !== true) {
-    throw new Error(data.error || `${url} failed`);
+  const data = await readApiJson(response, url);
+  if (!response.ok || data?.success !== true) {
+    throw new Error(data?.error || `${url} failed`);
   }
   return data;
 };

@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { SYNTHETIC_DRIFT_LABEL, isSyntheticDriftEntry } from "@/lib/synthetic-drift";
+import { HUD_MODAL_BOX_CLASS, HUD_MODAL_FRAME_CLASS } from "@/lib/hud-layout";
+import { cn } from "@/lib/utils";
 import {
   ShieldAlert,
   Search,
@@ -381,8 +383,8 @@ export const AutoCorrectionLog: React.FC<AutoCorrectionLogProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="bg-slate-950 border border-slate-800 rounded-2xl w-full max-w-6xl h-[88vh] flex flex-col overflow-hidden shadow-2xl font-mono text-slate-100 animate-in fade-in zoom-in-95 duration-200">
+    <div className={HUD_MODAL_FRAME_CLASS}>
+      <div className={cn("bg-slate-950 border border-slate-800 rounded-2xl w-full max-w-6xl h-full flex flex-col overflow-hidden shadow-2xl font-mono text-slate-100 animate-in fade-in zoom-in-95 duration-200", HUD_MODAL_BOX_CLASS)}>
         {/* Header Bar */}
         <div className="px-6 py-4 border-b border-slate-800/80 bg-slate-900/60 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">

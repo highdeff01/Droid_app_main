@@ -27,6 +27,8 @@ export const HUD_LAYERS = {
   vision: "z-20",
   steps: "z-30",
   cursor: "z-40",
+  /** Non-blocking HUD modals: above the frame overlays, below every control, popover and floating chip. */
+  modal: "z-[45]",
   controls: "z-50",
   drawing: "z-[55]",
   popover: "z-[60]",
@@ -198,4 +200,69 @@ export function isFrameStalled(
   thresholdMs = 5000,
 ) {
   return isCapturing && lastFrameAt !== null && now - lastFrameAt > thresholdMs;
+}
+
+// ---------- Panel dock and modals ----------
+
+/** Panels docked under the viewport; each is a collapsible section of the dock. */
+export const HUD_DOCK_PANELS = ["master", "intentions", "progress"] as const;
+export type HudDockPanel = (typeof HUD_DOCK_PANELS)[number];
+export type HudDockState = Record<HudDockPanel, boolean>;
+
+export const HUD_DOCK_STORAGE_KEY = "sightline_hud_dock_state";
+
+/** Panels start collapsed so opening the HUD never pushes its controls away. */
+export const DEFAULT_DOCK_STATE: HudDockState = { master: false, intentions: false, progress: false };
+
+/** Saved open/collapsed state; unknown keys and malformed values fall back to the default. */
+export function parseDockState(raw: string | null): HudDockState {
+  try {
+    const saved = raw ? JSON.parse(raw) : null;
+    return Object.fromEntries(
+      HUD_DOCK_PANELS.map((panel) => [panel, typeof saved?.[panel] === "boolean" ? saved[panel] : DEFAULT_DOCK_STATE[panel]]),
+    ) as HudDockState;
+  } catch {
+    return { ...DEFAULT_DOCK_STATE };
+  }
+}
+
+/**
+ * Largest height (px) the dock may take: a share of the window so the viewport
+ * and bottom bar always keep the rest, never below a usable minimum.
+ */
+export function hudDockMaxHeight(windowHeight: number, share = 0.3, minPx = 120, maxPx = 360) {
+  return Math.min(maxPx, Math.max(minPx, Math.round(windowHeight * share)));
+}
+
+/** Window bands a HUD modal keeps clear: the floating controls at the top and the control bar at the bottom. */
+export const HUD_MODAL_RESERVED = { top: 64, bottom: HUD_CONTROL_STRIP_PX } as const;
+
+/**
+ * Wrapper for an existing modal box: centres it between the reserved bands with no
+ * backdrop; the wrapper ignores the pointer so everything around the box stays clickable.
+ * The box itself takes HUD_MODAL_BOX_CLASS.
+ */
+export const HUD_MODAL_FRAME_CLASS = `fixed inset-x-0 top-16 bottom-16 flex items-center justify-center p-2 pointer-events-none ${HUD_LAYERS.modal}`;
+export const HUD_MODAL_BOX_CLASS = "pointer-events-auto max-h-full";
+
+/**
+ * Fixed-position rect for a centred, non-fullscreen modal of at most `desired`
+ * size inside the window, kept out of the reserved top and bottom bands.
+ */
+export function hudModalRect(
+  windowSize: FrameSize,
+  desired: FrameSize,
+  reserved: { top: number; bottom: number } = HUD_MODAL_RESERVED,
+  margin = 8,
+) {
+  const area = {
+    width: Math.max(0, windowSize.width),
+    height: Math.max(0, windowSize.height - reserved.top - reserved.bottom),
+  };
+  const box = {
+    width: Math.min(desired.width, Math.max(0, area.width - 2 * margin)),
+    height: Math.min(desired.height, Math.max(0, area.height - 2 * margin)),
+  };
+  const { left, top } = clampBoxToArea({ x: area.width / 2, y: area.height / 2 }, box, area, margin);
+  return { left, top: top + reserved.top, width: box.width, maxHeight: box.height };
 }
