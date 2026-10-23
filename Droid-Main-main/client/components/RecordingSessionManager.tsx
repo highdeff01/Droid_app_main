@@ -53,6 +53,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { PREVIEW_BADGE, isPreviewActive, simulateDeviceAction } from "@/lib/preview-mode";
 import {
   MouseTrajectoryStore,
   MouseRecordingSession,
@@ -787,6 +788,15 @@ export const RecordingSessionManager: React.FC<RecordingSessionManagerProps> = (
         )
       );
 
+      if (isPreviewActive()) {
+        const reply = simulateDeviceAction(`${pt.type || "move"} at (${pt.x}, ${pt.y})`);
+        setLiveLedgerLogs((prev) =>
+          prev.map((l, idx) => (idx === i ? { ...l, status: "pending", notes: reply.message } : l))
+        );
+        await new Promise((resolve) => setTimeout(resolve, Math.max(120, 350 / speedMultiplier)));
+        continue;
+      }
+
       const startTime = performance.now();
 
       try {
@@ -846,6 +856,20 @@ export const RecordingSessionManager: React.FC<RecordingSessionManagerProps> = (
 
       // Step pacing
       await new Promise((resolve) => setTimeout(resolve, Math.max(120, 350 / speedMultiplier)));
+    }
+
+    if (isPreviewActive()) {
+      setExecutionProgress({
+        currentStep: totalSteps,
+        totalSteps,
+        currentAction: "PREVIEW",
+        targetCoords: { x: pts[pts.length - 1].x, y: pts[pts.length - 1].y },
+        status: "idle",
+        message: `${PREVIEW_BADGE}: ${totalSteps} steps simulated — nothing was executed on a device.`,
+      });
+      setIsExecutingOnPC(false);
+      toast.info(`${PREVIEW_BADGE}: simulated session "${session.name}" — not executed on a device`);
+      return;
     }
 
     setExecutionProgress({
