@@ -173,9 +173,7 @@ import { InteractiveDeviceControlDeck } from "@/components/interactive-device-co
 import { GlobalSettingsModal, DEFAULT_MODEL_URL, QUANTUMCLAW_FALLBACK_URL } from "@/components/global-settings-modal";
 import { CoordinateCalibrationModal } from "@/components/coordinate-calibration-modal";
 import { ThreeAiAgentsSquad } from "@/components/three-ai-agents-squad";
-const CAPTURE_POLL_MS = 600;
-/** Capture re-check interval while the startup probe reports no backend. */
-const CAPTURE_BACKOFF_MS = 5000;
+import { captureDelayMs, nextFailureStreak, type CaptureOutcome } from "@/lib/capture-backoff";
 const CAPTURE_POLLING_KEY = "dashboard-capture-polling";
 export default function Dashboard({
   initialTab,
@@ -1145,40 +1143,42 @@ export default function Dashboard({
     captureFailureNotifiedRef.current = true;
     toast.error(`Live screen capture failed: ${message}`);
   };
-  const captureScreen = async (signal?: AbortSignal) => {
+  const captureScreen = async (signal?: AbortSignal): Promise<CaptureOutcome> => {
     if (isBackendUnreachable()) {
       // Startup probe found no JSON API: back off instead of polling a dead endpoint.
       setCaptureError(BACKEND_UNREACHABLE_MESSAGE);
-      return;
+      return "failure";
     }
     const data = await safeFetchJson<{ imageData?: string | null; method?: string; status?: "live" | "standby" }>(
       "/api/capture-screen",
       { signal, cache: "no-store" },
     );
-    if (signal?.aborted) return;
+    if (signal?.aborted) return "failure";
     if (data.success && data.imageData) {
       captureFailureNotifiedRef.current = false;
       setCaptureError(null);
       setCaptureStandby(null);
       applyCapturedFrame(data.imageData, data.method);
-      return;
+      return "frame";
     }
     if (data.status === "standby") {
       // No live source yet (or only stale frames): not a failure, keep the last frame and say so.
       setCaptureError(null);
       setCaptureStandby(data.message || "Waiting for a live frame");
-      return;
+      return "standby";
     }
     reportCaptureFailure(describeCaptureFailure(data));
+    return "failure";
   };
   useEffect(() => {
     localStorage.setItem(CAPTURE_POLLING_KEY, String(isCapturing));
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let failureStreak = 0;
     const poll = async () => {
-      await captureScreen(controller.signal);
+      failureStreak = nextFailureStreak(failureStreak, await captureScreen(controller.signal));
       if (isCapturing && !controller.signal.aborted) {
-        timer = setTimeout(poll, isBackendUnreachable() ? CAPTURE_BACKOFF_MS : CAPTURE_POLL_MS);
+        timer = setTimeout(poll, captureDelayMs(failureStreak, isBackendUnreachable()));
       }
     };
     void poll();
