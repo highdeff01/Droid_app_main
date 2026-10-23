@@ -39,7 +39,6 @@ import { createHudToolsRouter } from "./routes/hud-tools";
 import { createStoryPresentationRouter } from "./routes/story-presentations";
 import { fetchPageText } from "./presentation-generator";
 import { replayEngine } from "./replay-engine";
-import { companionService } from "./routes/companion";
 import { DurableStore } from "./durable-store";
 import { recognizeWithProviders } from "./ocr-provider";
 import { sendQwenChatRequest } from "./ai-endpoint";

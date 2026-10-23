@@ -164,9 +164,15 @@ function IntentionSection({ gateReport, replayRun, sequence, detectedElements, t
 
 function GoalRow({ goal, props }: { goal: RunnableGoal; props: AiIntentionsPanelProps }) {
   const paused = goal.status === "blocked";
+  const verdict = goal.assessment;
   return (
     <li className="flex items-center justify-between gap-1" data-goal-id={goal.id} data-goal-status={goal.status}>
       <span className="truncate text-slate-200">{goal.title}</span>
+      {verdict ? (
+        <span className={`truncate ${verdict.onTrack ? "text-amber-300" : "text-rose-300"}`} data-goal-verdict title={verdict.reason}>
+          {verdict.onTrack ? "Not complete" : "Off track"}: {verdict.reason}
+        </span>
+      ) : null}
       <span className="text-slate-500 shrink-0">{goal.progressPercent}%</span>
       <span className="flex gap-0.5 shrink-0">
         <button title="Execute" aria-label={`Execute ${goal.title}`} onClick={() => props.onExecuteGoal?.(goal.id)}><Play className="w-3 h-3" /></button>
@@ -220,6 +226,7 @@ function GoalsSection(props: AiIntentionsPanelProps) {
           {done.map((g) => (
             <li key={g.id} className="flex items-center gap-1 text-emerald-300" data-completed-goal={g.id}>
               <CheckCircle2 className="w-3 h-3" />{g.title}
+              {g.assessment?.reason ? <span className="text-slate-400 truncate" data-goal-verdict>— {g.assessment.reason}</span> : null}
             </li>
           ))}
         </ul>

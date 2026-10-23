@@ -82,10 +82,12 @@ import { applyUserOverride, canUserOverride, gateTargetForSteps, runActionGate, 
 import {
   correctionOutcomes, fetchLearningProfile, gateOutcome, gateReportFromResult, gateStepLabel, goalExecutionSteps,
   goalFromSequence, isLiveRun, newStepOutcomes, postDelayMultiplier, postLearningOutcomes, syncGoalsWithRun,
+  applyAssessmentToGoal,
   verifyingGateReport, type GateReport, type RunnableGoal,
 } from "@/lib/ai-intentions";
 import { applyDelayMultiplier, type LearningOutcome, type UserHabitProfile } from "@shared/learning";
 import { buildRetryStep, toReplayStepPayload } from "@/lib/step-replay";
+import { assessGoalOnScreen } from "@/lib/workflow-status";
 import { GoalWorkflowPanel } from "@/components/goal-workflow-panel";
 import { GOAL_PHASE_BADGE, type GoalLoopEvent } from "@/lib/goal-loop-runner";
 import type { MasterSnapshot } from "@/lib/master-ai";
@@ -850,9 +852,30 @@ export default function Dashboard({
     return () => { disposed = true; };
   }, [replayApiKey]);
   const reportedStepsRef = useRef(new Set<string>());
+  const assessedRunsRef = useRef(new Set<string>());
+  /** A goal whose replay finished checks off only from the real /api/goal-workflows/assess verdict. */
+  const assessCompletedGoals = (run: ReplayRun) => {
+    if (run.status !== "completed" || assessedRunsRef.current.has(run.id)) return;
+    const goals = (goalsState as RunnableGoal[]).filter((g) => goalRunsRef.current[g.id] === run.id);
+    if (goals.length === 0) return;
+    assessedRunsRef.current.add(run.id);
+    const device = { targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined };
+    for (const goal of goals) {
+      void assessGoalOnScreen(goal.title, device, AbortSignal.timeout(60_000))
+        .then((assessment) => {
+          setGoalsState((prev) => prev.map((g) => (g.id === goal.id ? applyAssessmentToGoal(g, assessment) : g)));
+          const show = assessment.complete ? toast.success : toast.info;
+          show(`Goal "${goal.title}" ${assessment.complete ? "complete" : "not complete yet"}: ${assessment.reason}`);
+        })
+        .catch((error) =>
+          toast.error(`Goal "${goal.title}" could not be assessed; it stays open: ${error instanceof Error ? error.message : error}`),
+        );
+    }
+  };
   useEffect(() => {
     if (!replayRun) return;
     setGoalsState((prev) => syncGoalsWithRun(prev, goalRunsRef.current, replayRun));
+    assessCompletedGoals(replayRun);
     reportOutcomes(newStepOutcomes(replayRun, sequence, reportedStepsRef.current));
   }, [replayRun]);
   useEffect(() => {

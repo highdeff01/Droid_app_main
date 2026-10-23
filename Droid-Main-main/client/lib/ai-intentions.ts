@@ -3,6 +3,7 @@ import type { ClickZone, LearningOutcome, UserHabitProfile } from "@shared/learn
 import type { ComplexGoal } from "@/components/goals-manager-panel";
 import type { SequenceStep } from "@/components/live-screen-hud";
 import type { GateResult, GateTarget } from "@/lib/action-gate";
+import type { GoalAssessment } from "@shared/goal-loop";
 
 /**
  * Pure derivations behind the HUD "AI Intentions, Goals & Learning" panel.
@@ -29,9 +30,10 @@ export interface Intention {
   source: "replay" | "gate";
 }
 
-/** A goal that may carry the HUD sequence snapshot it executes. */
+/** A goal that may carry the HUD sequence snapshot it executes and its latest real assessment. */
 export interface RunnableGoal extends ComplexGoal {
   steps?: SequenceStep[];
+  assessment?: GoalAssessment;
 }
 
 type StepNameSource = Pick<SequenceStep, "id" | "name">;
@@ -152,7 +154,8 @@ const RUN_TO_GOAL: Record<ReplayRun["status"], ComplexGoal["status"]> = {
   running: "in_progress",
   // A paused run is a paused goal: the HUD's pause sets "blocked" and Resume is offered from there.
   paused: "blocked",
-  completed: "completed",
+  // A finished replay only proves its steps ran; the goal checks off from /api/goal-workflows/assess.
+  completed: "in_progress",
   failed: "failed",
   cancelled: "blocked",
 };
@@ -165,7 +168,7 @@ export function goalStatusFromRun(run: ReplayRun): ComplexGoal["status"] {
 export function applyRunToGoal<G extends ComplexGoal>(goal: G, run: ReplayRun): G {
   const status = goalStatusFromRun(run);
   const progressPercent =
-    status === "completed" ? 100 : run.total > 0 ? Math.round((run.completed / run.total) * 100) : goal.progressPercent;
+    run.status === "completed" ? 100 : run.total > 0 ? Math.round((run.completed / run.total) * 100) : goal.progressPercent;
   const subtasks = goal.subtasks.map((sub) => {
     const step = run.steps.find((s) => s.id === sub.id);
     return step ? { ...sub, status: step.status } : sub;
@@ -181,6 +184,19 @@ export function syncGoalsWithRun<G extends ComplexGoal>(
 ): G[] {
   if (!run || !goals.some((g) => goalRuns[g.id] === run.id)) return goals;
   return goals.map((g) => (goalRuns[g.id] === run.id ? applyRunToGoal(g, run) : g));
+}
+
+/**
+ * A goal updated from a real /api/goal-workflows/assess verdict: it checks off
+ * only when the assessment says complete; an incomplete or off-track verdict
+ * keeps it open (or blocked) with the reason recorded.
+ */
+export function applyAssessmentToGoal<G extends ComplexGoal>(
+  goal: G,
+  assessment: GoalAssessment,
+): G & { assessment: GoalAssessment } {
+  const status: ComplexGoal["status"] = assessment.complete ? "completed" : assessment.onTrack ? "in_progress" : "blocked";
+  return { ...goal, status, assessment };
 }
 
 export function activeGoal<G extends ComplexGoal>(goals: G[]): G | null {

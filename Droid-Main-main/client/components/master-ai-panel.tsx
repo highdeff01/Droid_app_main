@@ -20,6 +20,17 @@ import {
 } from "@/lib/master-ai";
 import { createMasterHooks, createMasterRunners, newTriggerActions } from "@/lib/master-ai-runners";
 import { startPollLoop } from "@/lib/poll-loop";
+import type { AssistantExecution } from "@shared/assistant";
+import { WorkflowStatusCard } from "@/components/workflow-status-card";
+import {
+  approveAlternateExecution,
+  approvePendingExecution,
+  focusExecution,
+  listExecutions,
+  rejectExecution,
+  summarizeExecution,
+  type ExecutionFetch,
+} from "@/lib/workflow-status";
 
 export const TRIGGER_POLL_MS = 5000;
 const MINUTE_MS = 60_000;
@@ -255,6 +266,69 @@ function Approvals({ controller, snapshot }: { controller: MasterAiController; s
 }
 
 const ACTIVE_STATUSES = new Set(["running", "awaiting_approval"]);
+export const EXECUTION_POLL_MS = 2000;
+
+/** Fetch with the HUD's API key, for the execution endpoints. */
+function keyedFetch(apiKey?: string): ExecutionFetch {
+  return (url, init) =>
+    fetch(url, { ...init, headers: { ...(init?.headers ?? {}), ...(apiKey ? { "x-api-key": apiKey } : {}) } });
+}
+
+/** The latest approved-plan execution, polled from GET /api/assistant/execution, with its recovery controls. */
+function ExecutionStatusSection({ apiKey }: { apiKey?: string }) {
+  const fetcher = useMemo(() => keyedFetch(apiKey), [apiKey]);
+  const [execution, setExecution] = useState<AssistantExecution>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  useEffect(
+    () =>
+      startPollLoop(
+        [
+          {
+            everyTicks: 1,
+            enabled: () => true,
+            run: async () => {
+              try {
+                setExecution(focusExecution(await listExecutions(fetcher)));
+                setError(undefined);
+              } catch (cause) {
+                setError(`Workflow status unavailable: ${errorText(cause)}`);
+              }
+            },
+          },
+        ],
+        EXECUTION_POLL_MS,
+      ),
+    [fetcher],
+  );
+  if (!execution) return error ? <p className="text-rose-300">{error}</p> : null;
+  const decide = async (action: () => Promise<AssistantExecution>) => {
+    setBusy(true);
+    try {
+      setExecution(await action());
+      setError(undefined);
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section>
+      <h5 className="text-[9px] uppercase text-fuchsia-400 font-bold">Workflow status</h5>
+      <WorkflowStatusCard
+        summary={summarizeExecution(execution)}
+        busy={busy}
+        error={error}
+        actions={{
+          onApprove: () => void decide(() => approvePendingExecution(execution.id, fetcher)),
+          onApproveAlternate: () => void decide(() => approveAlternateExecution(execution.id, fetcher)),
+          onReject: () => void decide(() => rejectExecution(execution.id, undefined, fetcher)),
+        }}
+      />
+    </section>
+  );
+}
 
 function OperationList({ heading, operations }: { heading: string; operations: MasterOperation[] }) {
   return (
@@ -311,6 +385,7 @@ export const MasterAiPanel: React.FC<MasterAiPanelProps> = (props) => {
       <QueueControls controller={controller} active={snapshot.active} sequence={props.sequence} objective={props.objective} />
       <LimitControls controller={controller} snapshot={snapshot} />
       <Approvals controller={controller} snapshot={snapshot} />
+      <ExecutionStatusSection apiKey={props.device.apiKey} />
       <OperationBoard snapshot={snapshot} />
       {snapshot.lastStop && !snapshot.active ? <p className="text-slate-400" data-last-stop>Last stop: {summarizeStop(snapshot.lastStop)}</p> : null}
     </div>
