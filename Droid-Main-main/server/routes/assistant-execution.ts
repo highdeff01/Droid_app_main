@@ -131,6 +131,10 @@ assistantExecutionRouter.post("/", (req, res) => {
   return res.status(202).json({ success: true, execution });
 });
 
+assistantExecutionRouter.get("/", (_req, res) => {
+  res.json({ success: true, executions: executionStateRepository.list() });
+});
+
 assistantExecutionRouter.get("/:executionId", (req, res) => {
   const execution = executionStateRepository.get(req.params.executionId);
   if (!execution)
@@ -155,6 +159,22 @@ assistantExecutionRouter.post("/:executionId/cancel", (req, res) => {
     return res
       .status(404)
       .json({ success: false, error: "Execution not found" });
+  res.json({ success: true, execution });
+});
+
+assistantExecutionRouter.post("/:executionId/reject", (req, res) => {
+  const existing = executionStateRepository.get(req.params.executionId);
+  if (!existing)
+    return res
+      .status(404)
+      .json({ success: false, error: "Execution not found" });
+  const reason =
+    typeof req.body?.reason === "string" ? req.body.reason.slice(0, 500) : undefined;
+  const execution = executionStateRepository.reject(existing.id, reason);
+  if (!execution)
+    return res
+      .status(409)
+      .json({ success: false, error: "No pending approval exists" });
   res.json({ success: true, execution });
 });
 

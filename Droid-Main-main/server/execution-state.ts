@@ -35,6 +35,15 @@ function stepReport(step: PlannedStep, action: AllowlistedAction): OperationStep
   };
 }
 
+/** Steps named as another step's alternate: they only run when approved in that step's place. */
+function reserveStepIds(plan: AssistantPlan): Set<string> {
+  return new Set(
+    plan.steps
+      .map((step) => step.adaptive?.retry?.alternateStepId)
+      .filter((stepId): stepId is string => Boolean(stepId)),
+  );
+}
+
 export type SafeActionExecutor = (
   action: AllowlistedAction,
 ) => Promise<ActionExecutionResult>;
@@ -62,6 +71,10 @@ export class ExecutionStateRepository {
     { paused: boolean; cancelled: boolean }
   >();
   private readonly elementTrackers = new Map<string, RealTimeElementTracker>();
+  /** Step ids held in reserve as alternates, from the plan the execution first started with. */
+  private readonly reserves = new Map<string, Set<string>>();
+  /** Plan slots where an approved alternate was swapped in; those slots run despite the reserve. */
+  private readonly swappedSlots = new Map<string, Set<number>>();
 
   constructor(
     private readonly executeAction: SafeActionExecutor = defaultExecutor,
@@ -94,6 +107,14 @@ export class ExecutionStateRepository {
   get(id: string): AssistantExecution | undefined {
     this.load();
     return this.executions.get(id);
+  }
+
+  /** Every stored execution, newest first. */
+  list(): AssistantExecution[] {
+    this.load();
+    return [...this.executions.values()].sort((a, b) =>
+      (b.startedAt ?? "").localeCompare(a.startedAt ?? ""),
+    );
   }
 
   create(plan: AssistantPlan): AssistantExecution {
@@ -196,6 +217,8 @@ export class ExecutionStateRepository {
     this.persist();
 
     const deadline = Date.now() + EXECUTION_TIMEOUT_MS;
+    if (!this.reserves.has(execution.id))
+      this.reserves.set(execution.id, reserveStepIds(plan));
     for (
       let index = execution.currentStep;
       index < plan.steps.length;
@@ -210,6 +233,7 @@ export class ExecutionStateRepository {
         return this.fail(execution, "Execution timed out");
 
       const step = plan.steps[index];
+      if (this.isReserved(execution.id, step.id, index)) continue;
       const action = step.action;
       if (!action)
         return this.fail(execution, `Step ${index + 1} has no approved action`);
@@ -323,9 +347,43 @@ export class ExecutionStateRepository {
         index === currentIndex ? { ...alternate, order: step.order } : step,
       ),
     };
+    const slots = this.swappedSlots.get(executionId) ?? new Set<number>();
+    slots.add(currentIndex);
+    this.swappedSlots.set(executionId, slots);
+    this.addEvent(
+      execution,
+      "info",
+      `Alternate step ${alternate.id} approved; it replaces step ${currentIndex + 1}.`,
+      alternate.id,
+    );
     execution.currentStep = currentIndex;
     execution.status = "paused";
+    this.persist();
     return this.start(execution, alternatePlan);
+  }
+
+  /** Ends an execution awaiting approval as failed; undefined when nothing awaits approval. */
+  reject(executionId: string, reason?: string): AssistantExecution | undefined {
+    this.load();
+    const execution = this.executions.get(executionId);
+    if (!execution || execution.status !== "awaiting_approval") return undefined;
+    const pending = execution.pendingApproval;
+    execution.pendingApproval = undefined;
+    this.addEvent(
+      execution,
+      "approval",
+      `Approval rejected by user${reason ? `: ${reason}` : ""}`,
+      pending?.stepId,
+    );
+    return this.fail(
+      execution,
+      `Rejected by user: ${reason || pending?.reason || "no reason given"}`,
+    );
+  }
+
+  private isReserved(executionId: string, stepId: string, index: number) {
+    if (this.swappedSlots.get(executionId)?.has(index)) return false;
+    return this.reserves.get(executionId)?.has(stepId) ?? false;
   }
 
   async approvePending(executionId: string, plan: AssistantPlan) {
@@ -338,6 +396,7 @@ export class ExecutionStateRepository {
     if (stepIndex < 0) return undefined;
     execution.currentStep = pending.retryStep ? stepIndex : stepIndex + 1;
     execution.status = "paused";
+    this.persist();
     return this.start(execution, plan);
   }
 
@@ -440,6 +499,7 @@ export class ExecutionStateRepository {
       undefined,
       evidence.id,
     );
+    this.persist();
     return execution;
   }
 
@@ -460,6 +520,7 @@ export class ExecutionStateRepository {
       `Alternate step ${alternateStepId} is available for explicit approval.`,
       step.id,
     );
+    this.persist();
     return execution;
   }
 

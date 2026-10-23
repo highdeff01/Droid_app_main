@@ -1,9 +1,25 @@
 import { assistantStateRepository } from "./assistant-state";
 import { executionStateRepository } from "./execution-state";
 import { liveEvents } from "./live-events";
-import type { AssistantWorkflow, AssistantPlan } from "@shared/assistant";
+import type { AssistantExecution } from "@shared/assistant";
 
-type ScheduledTask = {
+/** Runs a scheduled task's workflow once and returns the finished execution. */
+export type ScheduledRunner = (task: ScheduledTask) => Promise<AssistantExecution>;
+export type WorkerPublish = (sessionId: string, type: string, payload: unknown) => void;
+
+const runLatestPlan: ScheduledRunner = async (task) => {
+  const workflow = assistantStateRepository.getWorkflow(task.workflowId, task.sessionId);
+  if (!workflow) throw new Error("Workflow not found");
+  const plan = assistantStateRepository.listPlans(task.sessionId)[0];
+  if (!plan) throw new Error("No execution plan found");
+  const execution = executionStateRepository.create(plan);
+  return executionStateRepository.start(execution, plan);
+};
+
+/** Retry delay after the given failure count: 2^retryCount minutes (2 min, then 4 min). */
+export const retryBackoffMs = (retryCount: number) => Math.pow(2, retryCount) * 60000;
+
+export type ScheduledTask = {
   id: string;
   workflowId: string;
   sessionId: string;
@@ -16,13 +32,18 @@ type ScheduledTask = {
   dependencies: string[];
 };
 
-class SchedulingWorker {
+export class SchedulingWorker {
   private scheduledTasks: Map<string, ScheduledTask> = new Map();
   private workerInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
-  constructor() {
-    this.start();
+  constructor(
+    private readonly runTask: ScheduledRunner = runLatestPlan,
+    private readonly publish: WorkerPublish = (sessionId, type, payload) =>
+      liveEvents.publish(sessionId, type, payload),
+    autoStart = true,
+  ) {
+    if (autoStart) this.start();
   }
 
   start() {
@@ -69,7 +90,7 @@ class SchedulingWorker {
     
     this.scheduledTasks.set(taskId, task);
     
-    liveEvents.publish(sessionId, "workflow.scheduled", {
+    this.publish(sessionId, "workflow.scheduled", {
       taskId,
       workflowId,
       scheduledTime,
@@ -79,7 +100,8 @@ class SchedulingWorker {
     return taskId;
   }
 
-  private async processScheduledTasks() {
+  /** Runs every due task once; the interval calls this each second. */
+  async processScheduledTasks() {
     const now = Date.now();
     const readyTasks = Array.from(this.scheduledTasks.values()).filter(
       task => 
@@ -110,58 +132,44 @@ class SchedulingWorker {
     task.status = "running";
     this.scheduledTasks.set(task.id, task);
     
-    liveEvents.publish(task.sessionId, "workflow.started", {
+    this.publish(task.sessionId, "workflow.started", {
       taskId: task.id,
       workflowId: task.workflowId,
       estimatedDuration: task.estimatedDuration,
     });
 
     try {
-      const workflow = assistantStateRepository.getWorkflow(task.workflowId, task.sessionId);
-      if (!workflow) {
-        throw new Error("Workflow not found");
-      }
-
-      // Get the execution plan
-      const plans = assistantStateRepository.listPlans(task.sessionId);
-      const plan = plans[0];
-      if (!plan) {
-        throw new Error("No execution plan found");
-      }
-
-      // Execute the workflow
-      const execution = executionStateRepository.create(plan);
-      const result = await executionStateRepository.start(execution, plan);
+      const result = await this.runTask(task);
 
       if (result.status === "completed") {
         task.status = "completed";
-        liveEvents.publish(task.sessionId, "workflow.completed", {
+        this.publish(task.sessionId, "workflow.completed", {
           taskId: task.id,
           workflowId: task.workflowId,
           success: true,
           duration: task.estimatedDuration,
         });
       } else {
-        throw new Error(result.error || "Execution failed");
+        throw new Error(result.error || `Execution ended ${result.status}`);
       }
     } catch (error) {
       task.retryCount++;
       
       if (task.retryCount < task.maxRetries) {
         task.status = "pending";
-        // Reschedule with exponential backoff
-        const backoffMs = Math.pow(2, task.retryCount) * 60000; // 1min, 2min, 4min
-        task.scheduledTime = new Date(Date.now() + backoffMs).toISOString();
+        task.scheduledTime = new Date(Date.now() + retryBackoffMs(task.retryCount)).toISOString();
         
-        liveEvents.publish(task.sessionId, "workflow.retry_scheduled", {
+        this.publish(task.sessionId, "workflow.retry_scheduled", {
           taskId: task.id,
           workflowId: task.workflowId,
           retryCount: task.retryCount,
+          maxRetries: task.maxRetries,
+          error: error instanceof Error ? error.message : "Unknown error",
           nextAttempt: task.scheduledTime,
         });
       } else {
         task.status = "failed";
-        liveEvents.publish(task.sessionId, "workflow.failed", {
+        this.publish(task.sessionId, "workflow.failed", {
           taskId: task.id,
           workflowId: task.workflowId,
           error: error instanceof Error ? error.message : "Unknown error",
@@ -179,7 +187,7 @@ class SchedulingWorker {
     
     if (task.status === "running") {
       // Can't cancel running tasks immediately, but mark for cancellation
-      liveEvents.publish(task.sessionId, "workflow.cancel_requested", {
+      this.publish(task.sessionId, "workflow.cancel_requested", {
         taskId,
         workflowId: task.workflowId,
       });
@@ -187,7 +195,7 @@ class SchedulingWorker {
     }
     
     this.scheduledTasks.delete(taskId);
-    liveEvents.publish(task.sessionId, "workflow.cancelled", {
+    this.publish(task.sessionId, "workflow.cancelled", {
       taskId,
       workflowId: task.workflowId,
     });

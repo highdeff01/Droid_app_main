@@ -11,6 +11,7 @@ import type {
 } from "@shared/companion";
 import type { FollowUpThread, LedgerEntry, LedgerOutcome } from "@shared/feedback";
 import type { PresentationDraft } from "@shared/presentation";
+import { httpFailure } from "@/lib/companion-connection";
 
 export interface CompanionWorkflow {
   id?: string;

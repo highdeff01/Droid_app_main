@@ -63,6 +63,7 @@ import { VisionDebugOverlay } from "./VisionDebugOverlay";
 import { VisionDebugPanel } from "./vision-debug-panel";
 import { DriftCorrectionEventsTable } from "./drift-correction-events-table";
 import { WorkflowHistoryScrubber } from "./workflow-history-scrubber";
+import { ContextSourcesPanel } from "./context-sources-panel";
 import {
   computePixelDriftHeatmap,
   executeAutoCalibration,
