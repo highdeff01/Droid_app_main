@@ -18,6 +18,7 @@ import {
   runActionGate,
   type GatePost,
 } from "@/lib/action-gate";
+import { assertStepsInScope } from "@/lib/ai-scope";
 import { startReplay, type ReplayRunSnapshot } from "@/lib/automation-runner";
 import { waitForReplayRun } from "@/lib/verified-replay";
 import {
@@ -37,6 +38,7 @@ import {
   type GoalState,
   type GoalStep,
   type PlanProposal,
+  type ProgressAssessment,
   type RunEvidence,
   type ScreenObservation,
 } from "@shared/goal-loop";
@@ -75,6 +77,36 @@ export const GOAL_PHASE_BADGE: Record<GoalLoopPhase, VerificationBadgeState["sta
   failed: "failed",
 };
 
+/** A planned step as the HUD shows it: what, how, and where (coordinates only when the step has them). */
+export interface StepBrief {
+  name: string;
+  action: string;
+  x: number;
+  y: number;
+  label?: string;
+}
+
+/** The on-track check after a step: its verifyStep result, assessProgress verdict and the next objective. */
+export interface StepNarration {
+  step: string;
+  passed: boolean;
+  /** The verifyStep check details, joined. */
+  checks: string;
+  progress: ProgressAssessment["kind"];
+  progressReason?: string;
+  /** The next planned step, or null when the plan has none left. */
+  nextObjective: string | null;
+}
+
+/** The next step's pre-verification, computed while the current step ran on the device. */
+export interface PipelineReport {
+  /** "pre" = against the latest frame while the current step ran; "confirmed" = re-checked on the post-step frame. */
+  stage: "pre" | "confirmed";
+  step: string;
+  verdict: SimulatedGoalStep["verdict"];
+  reason: string;
+}
+
 export interface GoalLoopEvent {
   phase: GoalLoopPhase;
   message: string;
@@ -82,6 +114,14 @@ export interface GoalLoopEvent {
   y?: number;
   label?: string;
   confidence?: number;
+  /** The run's goal (every event of a goal run carries it). */
+  goal?: string;
+  /** The step being verified/acted on. */
+  current?: StepBrief;
+  /** The step planned after it; null when none is left. */
+  next?: StepBrief | null;
+  narration?: StepNarration;
+  pipeline?: PipelineReport;
 }
 
 export interface GoalDevice {
@@ -168,6 +208,8 @@ interface TurnContext {
   answer?: string;
   saved: boolean;
   saveError?: string;
+  /** Qwen judged an unexpected page change on track: the next correction runs without asking (once). */
+  continueWithoutApproval?: string;
 }
 
 const getJson: GoalLoopDeps["get"] = async (url, { apiKey, signal }) => {
@@ -198,7 +240,17 @@ function ensureActive(ctx: TurnContext) {
   if (ctx.options.signal.aborted) throw new Error("Stopped by user");
 }
 
-const emit = (ctx: TurnContext, event: GoalLoopEvent) => ctx.options.onEvent(event);
+const emit = (ctx: TurnContext, event: GoalLoopEvent) =>
+  ctx.options.onEvent(ctx.goal ? { goal: ctx.goal, ...event } : event);
+
+const brief = (step: GoalStep | undefined): StepBrief | null =>
+  step ? { name: step.name, action: step.action, x: step.x, y: step.y, label: step.targetLabel } : null;
+
+/** The step planned after the cursor (the one that runs once the current step verifies). */
+function upcomingStep(ctx: TurnContext): GoalStep | undefined {
+  const state = requireState(ctx);
+  return state.plan[state.cursor + 1];
+}
 
 /** The step the cursor points at, numbered for the HUD ("step 3"). */
 function stepDetail(ctx: TurnContext): string | undefined {
@@ -301,6 +353,12 @@ function untilAborted(signal: AbortSignal): Promise<boolean> {
 }
 
 async function approved(ctx: TurnContext, proposal: PlanProposal, reason: string): Promise<boolean> {
+  const pageChange = ctx.continueWithoutApproval;
+  ctx.continueWithoutApproval = undefined;
+  if (pageChange) {
+    emit(ctx, { phase: "thinking", message: `Continuing toward the goal without pausing: ${pageChange}` });
+    return true;
+  }
   if (ctx.options.autoApprove) {
     emit(ctx, { phase: "thinking", message: `Auto-approved (auto-approve is on): ${reason}` });
     return true;
@@ -349,7 +407,12 @@ function applyPlan(ctx: TurnContext): OperationOutcome {
   ctx.problem = undefined;
   ctx.retries = 0;
   ctx.options.onPlan?.(ctx.state);
-  emit(ctx, { phase: "thinking", message: `Plan updated: ${ctx.state.plan.length - ctx.state.cursor} step(s) to run` });
+  emit(ctx, {
+    phase: "thinking",
+    message: `Plan updated: ${ctx.state.plan.length - ctx.state.cursor} step(s) to run`,
+    current: brief(nextStep(ctx.state)) ?? undefined,
+    next: brief(upcomingStep(ctx)),
+  });
   return "ok";
 }
 
@@ -422,11 +485,36 @@ export function toSequenceSteps(steps: GoalStep[]): SequenceStep[] {
   return steps.map((step, index) => ({ ...toReplayStep(step), stepNumber: index + 1, status: "pending" }));
 }
 
-/** Gate, then replay. Returns the gate's block reason, or null once the replay finished. */
-async function dispatchStep(ctx: TurnContext, step: GoalStep): Promise<string | null> {
+/** What the device dispatch produced: the gate's block reason, or the next step's pre-verification running alongside. */
+type DispatchResult = { blocked: string; preVerified?: undefined } | { blocked: null; preVerified: Promise<SimulatedGoalStep | null> };
+
+/**
+ * Background agent: while the current step runs on the device, checks the step
+ * planned after it against the latest analyzed frame (the gate's). Analysis
+ * only — it dispatches nothing, and the gate still runs before that step.
+ */
+async function preVerifyNext(ctx: TurnContext, frame: string, report: ScreenPerceptionReport): Promise<SimulatedGoalStep | null> {
+  const upcoming = upcomingStep(ctx);
+  if (!upcoming) return null;
+  await Promise.resolve();
+  const observed: Observed = { observation: observeScreen(report, [], undefined), frame, report };
+  const verdict = simulateVerdict(upcoming, observed, true);
+  emit(ctx, {
+    phase: "verifying",
+    message: `Pre-verifying next step "${upcoming.name}" while the current step runs: ${verdict.reason}`,
+    next: brief(upcoming),
+    pipeline: { stage: "pre", step: upcoming.name, verdict: verdict.verdict, reason: verdict.reason },
+  });
+  return verdict;
+}
+
+/** Gate, then replay (the one real mouse: strictly serial), with the next step pre-verified concurrently. */
+async function dispatchStep(ctx: TurnContext, step: GoalStep): Promise<DispatchResult> {
   const { device, signal } = ctx.options;
   const label = step.targetLabel ?? step.name;
-  emit(ctx, { phase: "verifying", message: `Verifying target for "${step.name}"`, x: step.x, y: step.y, label });
+  const current = brief(step)!;
+  const next = brief(upcomingStep(ctx));
+  emit(ctx, { phase: "verifying", message: `Verifying target for "${step.name}"`, x: step.x, y: step.y, label, current, next });
   const gate = await ctx.deps.gate({
     targetDevice: device.targetDevice,
     deviceId: device.deviceId,
@@ -435,8 +523,10 @@ async function dispatchStep(ctx: TurnContext, step: GoalStep): Promise<string | 
     signal: AbortSignal.any([signal, AbortSignal.timeout(GATE_TIMEOUT_MS)]),
   });
   ensureActive(ctx);
-  if (gate.status !== "verified") return `Action blocked: ${gate.reason}`;
-  emit(ctx, { phase: "acting", message: `Acting: ${step.name}`, x: step.x, y: step.y, label: gate.element?.name ?? label, confidence: gate.confidence });
+  if (gate.status !== "verified") return { blocked: `Action blocked: ${gate.reason}` };
+  emit(ctx, { phase: "acting", message: `Acting: ${step.name}`, x: step.x, y: step.y, label: gate.element?.name ?? label, confidence: gate.confidence, current, next });
+  const preVerified = preVerifyNext(ctx, gate.frame, gate.report);
+  assertStepsInScope([{ action: step.action as string, x: step.x, y: step.y, name: step.name }], device.targetDevice);
   const started = await post(ctx, "/api/replay", {
     targetDevice: device.targetDevice,
     deviceId: device.deviceId,
@@ -448,11 +538,88 @@ async function dispatchStep(ctx: TurnContext, step: GoalStep): Promise<string | 
   const fetchRun = async (id: string) =>
     (await ctx.deps.get(`/api/replay/${encodeURIComponent(id)}`, { apiKey: device.apiKey, signal })).run as ReplayRunSnapshot;
   await waitForReplayRun(started.run, { signal }, { gate: ctx.deps.gate, start: startReplay, fetch: fetchRun, sleep: ctx.deps.sleep });
-  return null;
+  return { blocked: null, preVerified };
+}
+
+/** The on-track check shown after a step: its verification, the progress verdict and the next objective. */
+function narrate(ctx: TurnContext, executed: ExecutedStep, state: GoalState, progress: ProgressAssessment) {
+  const upcoming = nextStep(state);
+  const narration: StepNarration = {
+    step: executed.step.name,
+    passed: executed.verification.passed,
+    checks: executed.verification.checks.map((c) => c.detail).join("; "),
+    progress: progress.kind,
+    progressReason: progress.kind === "on_track" ? undefined : progress.reason,
+    nextObjective: upcoming ? upcoming.name : null,
+  };
+  const verdict = executed.verification.passed ? "verified" : "did not verify";
+  const track = progress.kind === "on_track" ? "on track" : `${progress.kind}: ${progress.reason}`;
+  const then = upcoming ? `next: ${upcoming.name}` : "no planned step left";
+  emit(ctx, {
+    phase: "analyzing",
+    message: `"${executed.step.name}" ${verdict} (${narration.checks || "no checks"}); ${track}; ${then}`,
+    narration,
+    current: brief(executed.step) ?? undefined,
+    next: brief(upcoming),
+  });
+}
+
+/**
+ * The screen changed but not as the step expected (form advanced, new page,
+ * modal or ad): Qwen assesses the new screen. Complete → completion check;
+ * on track → the fix path re-plans from the new screen without pausing;
+ * off track, a blocker or no verdict → the existing approval path.
+ */
+async function evaluatePageChange(ctx: TurnContext, step: GoalStep, failure: string): Promise<OperationOutcome> {
+  const state = requireState(ctx);
+  const { observation, frame } = seen(ctx);
+  emit(ctx, { phase: "thinking", message: `Screen changed unexpectedly after "${step.name}"; evaluating the new screen against the goal` });
+  let assessment: GoalAssessment | undefined;
+  try {
+    const data = await post(ctx, "/api/goal-workflows/assess", { goal: ctx.goal, observation, screenshot: frame, history: historyOf(state), ...guidanceOf(ctx) });
+    assessment = data.assessment as GoalAssessment | undefined;
+  } catch (error) {
+    ensureActive(ctx);
+    emit(ctx, { phase: "thinking", message: `Could not evaluate the page change: ${errorMessage(error)}` });
+  }
+  ctx.problem = `Page changed after "${step.name}" (${failure}; dispatched; not repeated)`;
+  if (!assessment) return "off_track";
+  ctx.problem = `${ctx.problem}: ${assessment.reason}`;
+  if (assessment.complete) return "plan_done";
+  if (assessment.onTrack) ctx.continueWithoutApproval = `page change is on track (${assessment.reason})`;
+  return "off_track";
+}
+
+/**
+ * The pipelined pre-verdict re-checked on the post-step frame. A confirmed next
+ * step is ready the moment the completion check (same frame, no new capture)
+ * says the goal is not yet reached; the gate still runs before it dispatches.
+ */
+async function confirmPipelined(ctx: TurnContext, state: GoalState, preVerified: Promise<SimulatedGoalStep | null>): Promise<OperationOutcome> {
+  const pre = await preVerified;
+  const upcoming = nextStep(state);
+  if (!pre || !upcoming) return "verified";
+  const confirmed = simulateVerdict(upcoming, seen(ctx), true);
+  const holds = confirmed.verdict === "pass" || confirmed.verdict === "moved";
+  emit(ctx, {
+    phase: "verifying",
+    message: holds
+      ? `Next step "${upcoming.name}" pre-verified and confirmed on the fresh screen; ready to advance`
+      : `Next step "${upcoming.name}" not confirmed on the fresh screen (${confirmed.reason}); the gate re-checks it before acting`,
+    next: brief(upcoming),
+    pipeline: { stage: "confirmed", step: upcoming.name, verdict: confirmed.verdict, reason: confirmed.reason },
+  });
+  return "verified";
 }
 
 /** Verifies the executed step on a fresh capture and records it; the outcome names the next stage. */
-async function verifyExecuted(ctx: TurnContext, step: GoalStep, before: Observed, relocation: ExecutedStep["relocation"]): Promise<OperationOutcome> {
+async function verifyExecuted(
+  ctx: TurnContext,
+  step: GoalStep,
+  before: Observed,
+  relocation: ExecutedStep["relocation"],
+  preVerified: Promise<SimulatedGoalStep | null>,
+): Promise<OperationOutcome> {
   await capture(ctx);
   const after = seen(ctx);
   const executed: ExecutedStep = {
@@ -468,17 +635,20 @@ async function verifyExecuted(ctx: TurnContext, step: GoalStep, before: Observed
   ctx.state = state;
   ctx.options.onStep?.(executed, state);
   const progress = assessProgress(state);
+  narrate(ctx, executed, state, progress);
   if (progress.kind !== "on_track") {
     ctx.problem = progress.reason;
     return "off_track";
   }
   if (!executed.verification.passed) {
+    const failure = executed.verification.checks.find((c) => !c.passed)?.detail ?? `"${step.name}" did not verify`;
+    if (executed.verification.screenChanged) return evaluatePageChange(ctx, step, failure);
     // Already dispatched: its effect may have occurred, so it is never repeated; forward to the fix path.
-    ctx.problem = `${executed.verification.checks.find((c) => !c.passed)?.detail ?? `"${step.name}" did not verify`} (dispatched; not repeated)`;
+    ctx.problem = `${failure} (dispatched; not repeated)`;
     return "off_track";
   }
   ctx.retries = 0;
-  return nextStep(state) ? "verified" : "plan_done";
+  return nextStep(state) ? confirmPipelined(ctx, state, preVerified) : "plan_done";
 }
 
 /** Executes the next planned step through the action gate and the replay engine, then verifies it. */
@@ -493,14 +663,16 @@ async function executeNext(ctx: TurnContext): Promise<OperationOutcome> {
     ctx.problem = refused;
     return "off_track";
   }
+  let preVerified: Promise<SimulatedGoalStep | null>;
   try {
-    const blocked = await dispatchStep(ctx, step);
-    if (blocked) {
+    const dispatched = await dispatchStep(ctx, step);
+    if (dispatched.blocked !== null) {
       // Nothing was dispatched: re-inspect on a fresh capture (bounded retry) before proposing a fix.
-      ctx.problem = blocked;
+      ctx.problem = dispatched.blocked;
       ctx.fresh = false;
       return "failed";
     }
+    preVerified = dispatched.preVerified!;
   } catch (error) {
     ensureActive(ctx);
     // The step may already have taken effect (docs/verified-replay.md): never re-dispatch it; propose a fix.
@@ -508,7 +680,7 @@ async function executeNext(ctx: TurnContext): Promise<OperationOutcome> {
     ctx.fresh = false;
     return "off_track";
   }
-  return verifyExecuted(ctx, step, before, relocation);
+  return verifyExecuted(ctx, step, before, relocation, preVerified);
 }
 
 /** A bounded re-inspection: the next stage re-captures (with OCR) and runs the step again. */

@@ -6,6 +6,7 @@
  */
 import type { SequenceStep } from "@/components/live-screen-hud";
 import type { AIReviewResult } from "@/components/ai-workflow-review-modal";
+import { assertStepsInScope } from "@/lib/ai-scope";
 
 export type ReplayStatus =
   | "running"
@@ -109,6 +110,7 @@ export async function startReplay(
   steps: SequenceStep[],
   signal?: AbortSignal,
 ): Promise<ReplayRunSnapshot> {
+  assertStepsInScope(steps, "desktop");
   const data = await requestJson<{ run: ReplayRunSnapshot }>(
     "/api/replay",
     { targetDevice: "desktop", steps, iterations: 1, confirmation: true },
