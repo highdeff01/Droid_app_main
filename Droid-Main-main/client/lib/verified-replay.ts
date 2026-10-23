@@ -5,6 +5,7 @@
  * every failure rejects with the reason so callers surface it and stop.
  */
 import type { SequenceStep } from "@/components/live-screen-hud";
+import { assertStepsInScope } from "@/lib/ai-scope";
 import {
   gateTargetForSteps,
   runActionGate,
@@ -149,6 +150,7 @@ export async function runVerifiedReplay(
     throw new Error(`Action blocked: ${gate.reason}`);
   }
   if (options.signal.aborted) throw new Error("Replay cancelled before dispatch");
+  assertStepsInScope(steps, "desktop");
   const run = await deps.start(steps, options.signal);
   return waitForReplayRun(run, options, deps);
 }

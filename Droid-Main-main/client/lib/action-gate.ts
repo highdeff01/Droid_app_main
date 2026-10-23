@@ -45,6 +45,8 @@ export interface GateRequest {
   signal: AbortSignal;
   /** The step being verified, for the blocked reason. */
   stepLabel?: string;
+  /** Where the AI may act; defaults to the user's persisted scope (lib/ai-scope). */
+  scope?: AiScope;
 }
 
 /** Extra capture+analysis rounds after a "target not found" (docs/verified-replay.md: at most twice). */
@@ -347,30 +349,29 @@ export async function runActionGate(
   post: GatePost = postGateJson,
   sleep: GateSleep = abortableSleep,
 ): Promise<GateResult> {
-  const { target, signal } = request;
+  const { signal } = request;
+  const scope = request.scope ?? getAiScope();
+  const scoped = scopeTarget(request.target, scope, request.targetDevice);
+  if (scoped.reason !== undefined) return { status: "blocked", reason: scoped.reason };
+  const target = scoped.target!;
+  const scopedRequest = { ...request, target };
   let attempts = 0;
   let transientRetries = 0;
   for (;;) {
     attempts++;
     let inspection: Inspection;
     try {
-      inspection = await inspectOnce(request, post);
+      inspection = await inspectOnce(scopedRequest, post);
     } catch (error) {
       if (signal.aborted) return CANCELLED;
-      if (transientRetries >= MAX_TRANSIENT_RETRIES) {
-        return blocked(request, error as GateStageError, attempts);
-      }
-      transientRetries++;
-      await sleep(TRANSIENT_RETRY_BACKOFF_MS, signal);
-      if (signal.aborted) return CANCELLED;
-      continue;
+      return blocked(scopedRequest, error as GateStageError, attempts);
     }
     if (signal.aborted) return CANCELLED;
     const { frame, report, point } = inspection;
     if (!target.needsTarget) {
       return { status: "verified", frame, report, confidence: analysisConfidence(report), attempts };
     }
-    const element = findTargetElement(report, point.x, point.y);
+    const element = findTargetElement(scopeReport(report, scope, request.targetDevice), point.x, point.y);
     if (element) {
       return {
         status: "verified",
@@ -388,7 +389,7 @@ export async function runActionGate(
         `Target ${name}not found at (${point.x}, ${point.y}) in the analyzed screen`,
         inspection,
       );
-      return blocked(request, miss, attempts);
+      return blocked(scopedRequest, miss, attempts);
     }
   }
 }

@@ -80,6 +80,9 @@ import { CompanionChatPanel } from "@/components/companion-chat-panel";
 import { CompanionTasksPanel } from "@/components/companion-tasks-panel";
 import { ProgressFeed } from "@/components/progress-feed";
 import { applyUserOverride, canUserOverride, gateTargetForSteps, runActionGate, USER_VERIFIED_OVERRIDE, type GateResult } from "@/lib/action-gate";
+import { getAiScope, stepsOutsideScope } from "@/lib/ai-scope";
+import { INITIAL_COGNITION, reduceCognition, replayActivity, type CognitionState } from "@/lib/cognition-feed";
+import { AiCognitionPanel } from "@/components/ai-cognition-panel";
 import {
   correctionOutcomes, fetchLearningProfile, gateOutcome, gateReportFromResult, gateStepLabel, goalExecutionSteps,
   goalFromSequence, isLiveRun, newStepOutcomes, postDelayMultiplier, postLearningOutcomes, syncGoalsWithRun,
@@ -327,6 +330,7 @@ export default function Dashboard({
   const [learningProfile, setLearningProfile] = useState<UserHabitProfile | null>(null);
   const [learningError, setLearningError] = useState<string | null>(null);
   const [globalCursorState, setGlobalCursorState] = useState<GlobalAICursorState | null>(null);
+  const [cognition, setCognition] = useState<CognitionState>(INITIAL_COGNITION);
   const [isApkModalOpen, setIsApkModalOpen] = useState(false);
   const [isMobileSettingsModalOpen, setIsMobileSettingsModalOpen] = useState(false);
 
@@ -830,11 +834,7 @@ export default function Dashboard({
     setIsAutonomousRunning(active);
     setActiveStepId(active ? run.steps[run.currentStep]?.id : null);
     setSequence(prev => prev.map(step => ({ ...step, status: (run.steps.find(s => s.id === step.id)?.status as any) || step.status })));
-    if (!active) { setAiThinking(null); setGlobalCursorState(null); return; }
-    // Every step the engine dispatches moves the AI cursor so the overlay trail follows the replay.
-    const cursorSteps = replayStepsRef.current.length ? replayStepsRef.current : sequence;
-    const cursor = replayCursorState(run, cursorSteps);
-    if (cursor) setGlobalCursorState(cursor);
+    if (!active) { setAiThinking(null); setGlobalCursorState(null); setCognition((c) => (c.activity?.kind === "replay" ? replayActivity(c, null) : c)); }
   };
   useEffect(() => {
     if (!replayRun || !["running", "paused"].includes(replayRun.status)) return;
@@ -991,7 +991,13 @@ export default function Dashboard({
     learningProfile ? { ...step, delayMs: applyDelayMultiplier(step.delayMs, learningProfile.movement.delayMultiplier) } : step;
   const dispatchVerifiedReplay = async (steps: SequenceStep[]) => {
     if (!(await verifyBeforeDispatch(steps)) || replayStopRequested.current) return undefined;
-    replayStepsRef.current = steps;
+    const outOfScope = stepsOutsideScope(steps, getAiScope(), targetDevice);
+    if (outOfScope) {
+      setVerificationBadge({ status: "failed", message: outOfScope });
+      toast.error(`Replay not dispatched: ${outOfScope}`);
+      return undefined;
+    }
+    setCognition((c) => replayActivity(c, `Replaying ${steps.length} recorded step(s)`));
     const data = await replayRequest("/api/replay", { targetDevice, deviceId: selectedAdbDevice || undefined,
       steps: steps.map(scaleStepDelay).map(toReplayStepPayload), iterations: 1, confirmation: true });
     replayIdRef.current = data.run.id;
@@ -1007,6 +1013,7 @@ export default function Dashboard({
   const [turnChain, setTurnChain] = useState<string | null>(null);
   const turnDevice = { targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined };
   const handleGoalLoopEvent = (event: GoalLoopEvent) => {
+    setCognition((c) => reduceCognition(c, event));
     setVerificationBadge({ status: GOAL_PHASE_BADGE[event.phase], message: event.message });
     if (event.phase === "completed" || event.phase === "failed") { setAiThinking(null); return; }
     setAiThinking((prev) => ({
@@ -3358,6 +3365,7 @@ export default function Dashboard({
         </footer>
         {/* Global AI Cursor & Motion Trail Overlay */}
         <GlobalAICursorOverlay enabled={true} cursorState={globalCursorState} theme="cyan" />
+        <AiCognitionPanel cognition={cognition} master={masterSnapshot} aiCursor={cognition.point ?? globalCursorState} />
 
         {/* Android APK & WebAPK Standalone Build Modal */}
         <MobileSettingsModal open={isMobileSettingsModalOpen} onOpenChange={setIsMobileSettingsModalOpen} />
