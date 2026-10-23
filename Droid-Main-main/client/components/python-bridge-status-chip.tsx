@@ -54,7 +54,8 @@ export const BridgeStatusChipView: React.FC<{
       )}
     >
       <div className="flex flex-col">
-        <span className="font-semibold">{status.label}</span>
+        <span className="font-semibold">{status.control}</span>
+        <span>{status.label}</span>
         {status.fix && <span className="text-amber-300/90">Fix: {status.fix}</span>}
       </div>
       <button

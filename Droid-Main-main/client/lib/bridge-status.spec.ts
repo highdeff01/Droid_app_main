@@ -30,6 +30,20 @@ describe("bridge status chip", () => {
     expect(view.fix).not.toBeNull();
   });
 
+  it("shows the active control backend", () => {
+    expect(describeBridgeStatus({ controlBackend: "native" })).toMatchObject({ control: "Control: native", fix: null });
+    expect(describeBridgeStatus({ controlBackend: "python", pythonAvailable: true, pyautoguiAvailable: true }).control).toBe(
+      "Control: python fallback",
+    );
+    expect(describeBridgeStatus({ controlBackend: "unavailable", controlInstallHint: "nut-js" }).control).toBe(
+      "Control: unavailable (install nut-js)",
+    );
+  });
+
+  it("treats an unreachable endpoint as control unavailable with the install hint", () => {
+    expect(describeBridgeStatus(null).control).toMatch(/^Control: unavailable \(install .*nut-js.*\)$/);
+  });
+
   it("reads the health endpoint reply", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ pythonAvailable: true, pyautoguiAvailable: true }) }));
     expect((await fetchBridgeStatus()).label).toBe("Python: OK · pyautogui: OK");

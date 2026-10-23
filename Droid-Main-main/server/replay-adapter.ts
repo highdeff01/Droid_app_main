@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { spawnPython } from "./python-resolver";
+import { activeNativeControl, runNativeDesktopAction } from "./desktop-control";
 import { PYTHON_SETUP_FIX } from "../shared/device-execution";
 import type { ReplayRequest, ReplayStep } from "../shared/replay";
 import type { PhoneFrame, PhoneAction } from "../shared/phone";
@@ -101,6 +102,33 @@ export function phoneReplayAction(
     `Android replay does not support ${step.action}; use tap, text, key, scroll or wait`,
   );
 }
+/** Desktop screenshot from the native control when selected, else from the Python service. */
+async function desktopCaptureImage(): Promise<unknown> {
+  const native = await activeNativeControl();
+  if (native) return native.captureFrame();
+  return (await desktopOperation({ operation: "capture" })).image;
+}
+
+/** Runs a replay step natively when selected, else through the Python service; rejects unless executed. */
+async function desktopExecute(step: ReplayStep): Promise<void> {
+  const native = await activeNativeControl();
+  if (!native) {
+    await desktopOperation({ operation: "execute", step });
+    return;
+  }
+  const outcome = await runNativeDesktopAction(native, {
+    action: step.action,
+    x: step.x,
+    y: step.y,
+    toX: step.toX,
+    toY: step.toY,
+    text: step.text,
+    key: step.keyPayload,
+    delayMs: step.delayMs,
+  });
+  if (!outcome.executed) throw new Error(outcome.error ?? "Native desktop execution failed");
+}
+
 export function createReplayAdapter(
   request: Pick<ReplayRequest, "targetDevice" | "deviceId">,
 ): ReplayAdapter {
@@ -123,13 +151,13 @@ export function createReplayAdapter(
   }
   return {
     capture: async () => {
-      const result = await desktopOperation({ operation: "capture" });
+      const image = await desktopCaptureImage();
       if (
-        typeof result.image !== "string" ||
-        !result.image.startsWith("data:image/png;base64,")
+        typeof image !== "string" ||
+        !image.startsWith("data:image/png;base64,")
       )
         throw new Error("Desktop returned no PNG");
-      const bytes = Buffer.from(result.image.split(",")[1], "base64");
+      const bytes = Buffer.from(image.split(",")[1], "base64");
       if (
         bytes.length < 24 ||
         bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
@@ -140,15 +168,13 @@ export function createReplayAdapter(
       if (width < 2 || height < 2 || width > 16384 || height > 16384)
         throw new Error("Invalid screenshot dimensions");
       return {
-        image: result.image,
+        image,
         width,
         height,
         hash: createHash("sha256").update(bytes).digest("hex"),
         capturedAt: Date.now(),
       };
     },
-    execute: async (step) => {
-      await desktopOperation({ operation: "execute", step });
-    },
+    execute: desktopExecute,
   };
 }

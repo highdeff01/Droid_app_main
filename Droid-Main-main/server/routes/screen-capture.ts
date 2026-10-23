@@ -3,6 +3,8 @@ import { fileURLToPath } from "url";
 import type { Request, Response } from "express";
 import { isFrameStale } from "../capture-frame";
 import { PYTHON_SETUP_FIX, resolvePython, spawnPython } from "../python-resolver";
+import { activeNativeControl, nativeDesktopAdapters } from "../desktop-control";
+import type { NativeDesktopControl } from "../native-desktop-bridge";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,6 +66,19 @@ function captureFailureReason(stderr: string): string {
   return `Desktop capture failed: ${stderr.trim() || "Python screen capture service exited with error"}.`;
 }
 
+/** Full-screen capture through the native control, behind the existing DesktopCaptureAdapter. */
+async function captureNativeFrame(native: NativeDesktopControl) {
+  try {
+    const { imageData } = await nativeDesktopAdapters(native).capture.capture(true);
+    return { success: true, imageData, method: "native_desktop_capture", timestamp: Date.now() };
+  } catch (err) {
+    return {
+      success: false,
+      error: `Desktop capture failed: ${err instanceof Error ? err.message : String(err)}.`,
+    };
+  }
+}
+
 export const captureDesktopFrame = async (): Promise<{
   success: boolean;
   imageData?: string;
@@ -84,6 +99,9 @@ export const captureDesktopFrame = async (): Promise<{
       timestamp: latestSyncedRealFrame.timestamp,
     };
   }
+
+  const native = await activeNativeControl();
+  if (native) return captureNativeFrame(native);
 
   const pythonScript = path.join(__dirname, "../../python-service/capture.py");
   const resolution = resolvePython();

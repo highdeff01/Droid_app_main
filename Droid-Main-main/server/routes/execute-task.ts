@@ -10,6 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { centralLogHub } from "../log-hub";
 import { queueMobileAction } from "./mobile-stream";
+import { activeNativeControl, runNativeDesktopAction } from "../desktop-control";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -108,7 +109,29 @@ export async function executeDeviceTask(body: any): Promise<{
     } catch {}
   }
 
-  // 3. Dispatch to python service
+  // 3. Native desktop control when selected at startup; Python only as its fallback
+  const native = await activeNativeControl();
+  if (native && targetDevice !== "android") {
+    const targetPosition = raw.targetPosition || { x: raw.x ?? 960, y: raw.y ?? 540 };
+    const outcome = await runNativeDesktopAction(native, {
+      action,
+      x: targetPosition.x,
+      y: targetPosition.y,
+      toX: raw.toX ?? raw.endPosition?.x,
+      toY: raw.toY ?? raw.endPosition?.y,
+      text: raw.textPayload || raw.text,
+      key: raw.keyPayload || raw.key,
+      delayMs: raw.delayMs,
+    });
+    return {
+      ...outcome,
+      backend: "native",
+      explanation: describeDeviceOutcome(outcome, action).text,
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  // 4. Dispatch to python service
   return new Promise((resolve) => {
     const pythonScript = path.join(__dirname, "../../python-service/execute-task.py");
     const python = spawnPython([pythonScript], { stdio: ["pipe", "pipe", "pipe"] });

@@ -19,6 +19,13 @@ export interface DeviceExecutionOutcome {
 export const PYTHON_SETUP_FIX =
   "Run setup-python.bat (Windows) or ./setup-python.sh (macOS/Linux), or: pip install pyautogui mss pillow";
 
+/** Desktop control backend chosen at server startup: native Node module, Python fallback, or none. */
+export type DesktopControlBackend = "native" | "python" | "unavailable";
+
+/** What to install when no desktop control backend is available. */
+export const DESKTOP_CONTROL_INSTALL_HINT =
+  "@nut-tree-fork/nut-js via npm install, or Python: pip install pyautogui mss pillow";
+
 /** Exit code the generated pyautogui scripts use when `import pyautogui` fails. */
 export const PYAUTOGUI_MISSING_EXIT_CODE = 3;
 
