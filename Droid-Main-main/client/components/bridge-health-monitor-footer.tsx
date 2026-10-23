@@ -21,7 +21,6 @@ import { Badge } from "@/components/ui/badge";
 import { useBackendStatus } from "@/hooks/use-backend-status";
 import { BACKEND_UNREACHABLE_MESSAGE } from "@/lib/backend-status";
 import {
-  BRIDGE_NON_JSON_MESSAGE,
   fetchBridgeHealth,
   runQuickReconnect,
   runTogglePause,
@@ -47,6 +46,16 @@ export interface BridgeHealthState {
     lastSynced: number;
   };
   error?: string;
+  /** No JSON API answered (transport failure, non-JSON body, or the startup probe found no backend). */
+  unreachable?: boolean;
+}
+
+/** Badge text: paused, online, unreachable (no API answered) or offline (the bridge itself reported down). */
+export function bridgeStatusLabel(health: Pick<BridgeHealthState, "online" | "paused" | "latencyMs" | "unreachable">): string {
+  if (health.paused) return "PAUSED (MANUAL INTERVENTION)";
+  if (health.online) return `ONLINE (${health.latencyMs}ms latency)`;
+  if (health.unreachable) return "UNREACHABLE";
+  return "DISCONNECTED / OFFLINE";
 }
 
 export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ className = "" }) => {
@@ -59,15 +68,7 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
     pyautoguiAvailable: false,
     screenResolution: undefined,
     activeProcesses: [],
-    coordSync: {
-      latencyMs: 9,
-      driftPx: 1.2,
-      bridgeX: 960,
-      bridgeY: 540,
-      canvasX: 960,
-      canvasY: 540,
-      lastSynced: Date.now(),
-    },
+    coordSync: undefined,
   });
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
@@ -75,11 +76,12 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
   const backend = useBackendStatus();
   const backendUnreachable = backend.state === "unreachable";
 
-  const markOffline = useCallback((error: string, immediate: boolean) => {
+  const markOffline = useCallback((error: string, unreachable: boolean) => {
     setConsecutiveFailures((prev) => {
       const next = prev + 1;
-      if (immediate || next >= 2) {
-        setHealth((h) => ({ ...h, online: false, error }));
+      // An unreachable API is definitive and reported at once; a transient bridge error after two misses.
+      if (unreachable || next >= 2) {
+        setHealth((h) => ({ ...h, online: false, unreachable, error }));
         window.dispatchEvent(
           new CustomEvent("pyautogui-bridge-health-update", {
             detail: { online: false, paused: false, error },
@@ -95,8 +97,7 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
     const result = await fetchBridgeHealth();
     const latency = Math.round(performance.now() - startTime);
     if (!result.ok) {
-      // A non-JSON reply is definitive (no backend), so it is reported at once.
-      markOffline(result.error, result.error === BRIDGE_NON_JSON_MESSAGE || result.error === BACKEND_UNREACHABLE_MESSAGE);
+      markOffline(result.error ?? "Bridge health check failed", result.unreachable === true);
       return;
     }
     const data = result.value;
@@ -112,6 +113,7 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
       activeProcesses: data.activeProcesses,
       coordSync: coordData || prev.coordSync,
       error: data.error,
+      unreachable: false,
     }));
     setConsecutiveFailures(0);
     window.dispatchEvent(
@@ -203,12 +205,14 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
             </div>
             <div className="text-slate-200 font-semibold flex items-center justify-between">
               <span>Bridge &lt;&gt; Canvas Lag:</span>
-              <span className="text-cyan-300 font-bold">{health.coordSync?.latencyMs ?? 8}ms</span>
+              <span className="text-cyan-300 font-bold">{health.coordSync ? `${health.coordSync.latencyMs}ms` : "n/a"}</span>
             </div>
             <div className="text-slate-400 flex items-center justify-between text-[11px]">
               <span>Reported Position:</span>
               <span className="text-emerald-400">
-                ({health.coordSync?.bridgeX ?? 960}, {health.coordSync?.bridgeY ?? 540}) Δ {health.coordSync?.driftPx ?? 0}px
+                {health.coordSync
+                  ? `(${health.coordSync.bridgeX}, ${health.coordSync.bridgeY}) Δ ${health.coordSync.driftPx}px`
+                  : "Not measured"}
               </span>
             </div>
           </div>
@@ -284,12 +288,9 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
                   ? "bg-emerald-950/80 text-emerald-300 border-emerald-500"
                   : "bg-red-950/80 text-red-300 border-red-500"
               }`}
+              title={health.online ? undefined : health.error}
             >
-              {health.paused
-                ? "PAUSED (MANUAL INTERVENTION)"
-                : health.online
-                ? `ONLINE (${health.latencyMs}ms latency)`
-                : "DISCONNECTED / OFFLINE"}
+              {bridgeStatusLabel(health)}
             </Badge>
           </div>
 
@@ -301,11 +302,11 @@ export const BridgeHealthMonitorFooter: React.FC<{ className?: string }> = ({ cl
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300" title="Latency between Python execution bridge reported mouse position and browser canvas coordinates">
               <Activity className="w-3 h-3 text-cyan-400 animate-pulse" />
               <span>Coord Sync:</span>
-              <span className={`font-bold ${(health.coordSync?.latencyMs ?? 8) < 25 ? "text-emerald-400" : "text-amber-400"}`}>
-                {health.coordSync?.latencyMs ?? 8}ms
+              <span className={`font-bold ${health.coordSync && health.coordSync.latencyMs < 25 ? "text-emerald-400" : "text-amber-400"}`}>
+                {health.coordSync ? `${health.coordSync.latencyMs}ms` : "n/a"}
               </span>
               <span className="text-slate-500 font-mono text-[10px]">
-                (Δ {health.coordSync?.driftPx ?? 0}px)
+                {health.coordSync ? `(Δ ${health.coordSync.driftPx}px)` : ""}
               </span>
             </div>
             <span className="text-slate-600">•</span>
