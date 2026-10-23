@@ -62,7 +62,7 @@ describe("runStepwiseReplay", () => {
 
     const result = await runStepwiseReplay(steps, { signal, verifyDrift: false, onProgress }, deps);
 
-    expect(deps.runStep.mock.calls.map(([step]) => step.id)).toEqual(["s1", "s2", "s3"]);
+    expect(vi.mocked(deps.runStep).mock.calls.map(([step]) => step.id)).toEqual(["s1", "s2", "s3"]);
     expect(onProgress.mock.calls.map(([p]) => ({ phase: p.phase, current: p.current, total: p.total }))).toEqual([
       { phase: "executing", current: 1, total: 3 },
       { phase: "executed", current: 1, total: 3 },

@@ -38,7 +38,7 @@ export interface StepwiseDeps {
   capture: (signal: AbortSignal) => Promise<string>;
   loadFrame: (dataUrl: string) => Promise<LoadedFrame>;
   /** Dispatches one step through the action gate and resolves once it completed on the device. */
-  runStep: <T extends StepwiseStep>(step: T, signal: AbortSignal) => Promise<void>;
+  runStep: (step: StepwiseStep, signal: AbortSignal) => Promise<void>;
   /** Whether an element is at the step's target on the frame (the element check). */
   findElement: (frame: string, step: StepwiseStep, signal: AbortSignal) => Promise<string | null>;
   /** Hands a drift to the replanner; resolves with what the replanner reported. */

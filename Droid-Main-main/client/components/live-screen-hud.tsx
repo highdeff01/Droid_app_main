@@ -69,7 +69,22 @@ import { VideoRecordingBreakdownModal } from "./video-recording-breakdown-modal"
 import { ReplaySessionsModal } from "./ReplaySessionsModal";
 import { RecordingSessionManager } from "./RecordingSessionManager";
 import { FocusAttentionOverlay, FocusAttentionConfig } from "./focus-attention-overlay";
-import { MouseTrajectoryStore, MouseRecordingSession } from "@/lib/mouse-trajectory-store";
+import { MAX_SESSION_THUMBNAILS, MouseTrajectoryStore, MouseRecordingSession, type SessionThumbnail } from "@/lib/mouse-trajectory-store";
+import { DEFAULT_TRAIL_SETTINGS, appendTrailPoint, normalizeTrailSettings, type TrailRecorderSettings } from "@/lib/mouse-trail-recorder";
+import { runStepwiseReplay, summarizeOutcomes, type StepwiseProgress, type StepwiseResult } from "@/lib/stepwise-replay";
+import {
+  createStepwiseDeps,
+  describeReplanResult,
+  makeThumbnail,
+  overlayCursorEvent,
+  playTrailTimeline,
+  replayTrailOnPC,
+  sessionToTrail,
+  toGoalSteps,
+  trailToSessionPoints,
+} from "@/lib/hud-replay";
+import { ReplaySessionPicker } from "./replay-session-picker";
+import type { TrailPoint } from "@shared/trail-replay";
 import { compareFramesPixelLevel } from "../utils/pixelDiffEngine";
 import { ActionExecutionLog, ActionLogEntry } from "./action-execution-log";
 import { StepCorrectionModal, StepCorrectionData } from "./step-correction-modal";
@@ -172,10 +187,32 @@ import {
 import { HudAgentPanel } from "./hud-agent-panel";
 import { PythonBridgeStatusChip } from "./python-bridge-status-chip";
 import type { GoalDevice, GoalLoopEvent } from "@/lib/qwen-turn-loop";
+import { runTurnLoop } from "@/lib/qwen-turn-loop";
 import type { HudSuggestedAction } from "@shared/api";
 
 /** How often the Qwen guide re-reads the live frame while enabled. */
 const QWEN_GUIDE_POLL_MS = 8000;
+
+/** Sliders for the trail recorder: sample rate, point cap and smoothing. */
+const TrailSettingsPopover: React.FC<{
+  settings: TrailRecorderSettings;
+  onChange: (patch: Partial<TrailRecorderSettings>) => void;
+}> = ({ settings, onChange }) => (
+  <div className="absolute top-9 left-0 z-50 w-64 p-3 space-y-3 rounded-lg border border-amber-600/50 bg-slate-950 text-[11px] font-mono text-slate-200 shadow-2xl">
+    <label className="block space-y-1">
+      <span>Sample rate: {settings.sampleRateHz} Hz</span>
+      <Slider value={[settings.sampleRateHz]} min={1} max={120} step={1} onValueChange={([v]) => onChange({ sampleRateHz: v })} />
+    </label>
+    <label className="block space-y-1">
+      <span>Trail length: {settings.maxPoints} points</span>
+      <Slider value={[settings.maxPoints]} min={10} max={2000} step={10} onValueChange={([v]) => onChange({ maxPoints: v })} />
+    </label>
+    <label className="block space-y-1">
+      <span>Smoothing: {Math.round(settings.smoothing * 100)}%</span>
+      <Slider value={[settings.smoothing]} min={0} max={0.9} step={0.05} onValueChange={([v]) => onChange({ smoothing: v })} />
+    </label>
+  </div>
+);
 
 /** Footprint of the record popover, used to keep it inside the viewport. */
 const RECORD_POPOVER_SIZE = { width: 288, height: 420 };
@@ -559,9 +596,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   // High-Resolution Mouse Trail Recording & Exact Playback State
   const [isRecordingMouseTrail, setIsRecordingMouseTrail] = useState<boolean>(false);
-  const [liveMouseTrail, setLiveMouseTrail] = useState<
-    Array<{ x: number; y: number; time: number; isClick?: boolean }>
-  >([]);
+  const [liveMouseTrail, setLiveMouseTrail] = useState<TrailPoint[]>([]);
   const [trailSpeedMultiplier, setTrailSpeedMultiplier] = useState<number>(1.0);
   const [isExecutingTrailOnPC, setIsExecutingTrailOnPC] = useState<boolean>(false);
   const [showSyncDiagnosticsModal, setShowSyncDiagnosticsModal] = useState<boolean>(false);
@@ -569,6 +604,13 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   const [isRecordingSessionManagerOpen, setIsRecordingSessionManagerOpen] = useState<boolean>(false);
   const [showPastMouseMovement, setShowPastMouseMovement] = useState<boolean>(true);
   const [isMouseTrailSettingsOpen, setIsMouseTrailSettingsOpen] = useState<boolean>(false);
+  const [trailSettings, setTrailSettings] = useState<TrailRecorderSettings>(DEFAULT_TRAIL_SETTINGS);
+  const [isReplayPickerOpen, setIsReplayPickerOpen] = useState<boolean>(false);
+  const [savedSessions, setSavedSessions] = useState<MouseRecordingSession[]>(() => MouseTrajectoryStore.getInstance().getSessions());
+  /** Frames captured during the current recording (start, clicks, stop), turned into thumbnails on stop. */
+  const recordingFramesRef = useRef<SessionThumbnail[]>([]);
+  /** Aborts the running stepwise execution or trail replay. */
+  const replayAbortRef = useRef<AbortController | null>(null);
 
   // Focus Attention Spotlight Feature State
   const [focusAttentionConfig, setFocusAttentionConfig] = useState<FocusAttentionConfig>({
@@ -586,17 +628,9 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   // Granular Step-by-Step Execution Progress State
   const [isExecutingStepByStep, setIsExecutingStepByStep] = useState<boolean>(false);
   const [executingStepIndex, setExecutingStepIndex] = useState<number | null>(null);
-  const [executingStepProgress, setExecutingStepProgress] = useState<{
-    current: number;
-    total: number;
-    stepName: string;
+  const [executingStepProgress, setExecutingStepProgress] = useState<(StepwiseProgress & {
     coords: { x: number; y: number };
-    phase: "pre_diff" | "hardware_dispatch" | "post_verify" | "recalibrating" | "completed" | "paused";
-    message: string;
-    diffScore?: number;
-    driftPx?: number;
-    latencyMs?: number;
-  } | null>(null);
+  }) | null>(null);
 
   // Live Screen Drift Alert & Auto-Recalculation Notification Banner
   const [driftNotificationAlert, setDriftNotificationAlert] = useState<{
@@ -774,6 +808,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   const handleStopAllExecution = async () => {
     stopExecutionRef.current = true;
+    replayAbortRef.current?.abort();
     setIsExecutingStepByStep(false);
     setIsAutoPlayingWorkflow(false);
     setIsExecutingTrailOnPC(false);
@@ -1797,19 +1832,30 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     selectedCanvasTitle?.toLowerCase().includes("phone") ||
     selectedTabName === "mobile";
 
-  // Record continuous trajectory as user moves
+  // Record the user's movement with the trail settings (sample rate, point cap, smoothing).
   const recordMovementPoint = (x: number, y: number) => {
-    const isActivelyRecording = isRecordingMouseTrail || isRecordMode;
-    const cap = isActivelyRecording ? 2000 : 500;
-    if (isActivelyRecording) {
-      setLiveMouseTrail((prev) => [...prev.slice(-cap), { x, y, time: Date.now(), isClick: false }]);
+    const time = Date.now();
+    if (isRecordingMouseTrail || isRecordMode) {
+      setLiveMouseTrail((prev) => appendTrailPoint(prev, { x, y, time }, trailSettings));
     }
     if (isRecordMode) {
-      setRecordedTrajectory((prev) => [
-        ...prev.slice(-cap),
-        { x, y, time: Date.now() },
-      ]);
+      setRecordedTrajectory((prev) => [...prev.slice(-trailSettings.maxPoints), { x, y, time }]);
     }
+  };
+
+  /** Keeps a frame for the recording's thumbnails: the first few, then always the stop frame. */
+  const captureRecordingFrame = (isFinal: boolean) => {
+    const frame = currentHudFrame();
+    const frames = recordingFramesRef.current;
+    if (frame && (isFinal || frames.length < MAX_SESSION_THUMBNAILS - 1)) {
+      frames.push({ imageData: frame, timestamp: Date.now() });
+    }
+  };
+
+  /** A click during recording: always kept (never smoothed); a recording keeps a frame of it. */
+  const recordTrailClick = (x: number, y: number) => {
+    setLiveMouseTrail((prev) => appendTrailPoint(prev, { x, y, time: Date.now(), isClick: true }, trailSettings));
+    if (isRecordingMouseTrail) captureRecordingFrame(false);
   };
 
   /** The live video frame as a JPEG data URL, or null when no stream is playing. No side effects. */
@@ -1883,13 +1929,82 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   // Execute on hardware: the chosen sequence steps (else the trail's recorded clicks) go through
   // onReplaySteps → gate-verified /api/replay, which moves the real mouse via the device bridge.
-  const handleExecuteRecordedTrailOnPC = async () => {
-    if (!onReplaySteps) { toast.error("Verified replay is unavailable here"); return; }
-    const steps = selectedReplaySteps(sequence, selectedStepIds);
-    if (steps.length > 0) { onReplaySteps(steps); return; }
-    const clicks = liveMouseTrail.filter(point => point.isClick);
-    if (!clicks.length) { toast.info(NO_HARDWARE_CLICKS_MESSAGE); return; }
-    onReplaySteps(clicks.slice(0, 100).map((point, index) => ({ id: `trail-${Date.now()}-${index}`, stepNumber: index + 1, name: `Recorded click ${index + 1}`, action: "click", x: point.x, y: point.y, delayMs: 500, status: "pending" })));
+  /**
+   * Replays a recorded trail exactly as recorded: every waypoint at its recorded offset drives the
+   * AI cursor overlay; with `onHardware` the same waypoints go to the real mouse (manual control,
+   * ungated) and the bridge's real result is reported.
+   */
+  const replayRecordedTrail = async (points: TrailPoint[], onHardware: boolean, label: string) => {
+    if (points.length === 0) { toast.info(NO_REPLAY_PATH_MESSAGE); return; }
+    const controller = new AbortController();
+    replayAbortRef.current = controller;
+    setIsReplayingMovement(true);
+    setIsExecutingTrailOnPC(onHardware);
+    setSplineMotionTrail([]);
+    const overlay = playTrailTimeline(points, trailSpeedMultiplier, {
+      signal: controller.signal,
+      onWaypoint: (waypoint, index, total) => {
+        setReplayingCursorPos({ x: waypoint.x, y: waypoint.y });
+        setSplineMotionTrail((prev) => [...prev.slice(-25), { x: waypoint.x, y: waypoint.y }]);
+        window.dispatchEvent(new CustomEvent("ai-cursor-action", { detail: overlayCursorEvent(waypoint, index, total) }));
+        if (waypoint.isClick) playClickPip();
+      },
+    });
+    const hardware = onHardware ? replayTrailOnPC(points, trailSpeedMultiplier, controller.signal) : null;
+    const [played, dispatch] = await Promise.all([overlay, hardware]);
+    setIsReplayingMovement(false);
+    setIsExecutingTrailOnPC(false);
+    setReplayingCursorPos(null);
+    replayAbortRef.current = null;
+    const overlayLine = `${label}: ${played} recorded waypoint(s) shown on the overlay${controller.signal.aborted ? " (stopped)" : ""}`;
+    if (!dispatch) { toast.info(overlayLine); return; }
+    if (dispatch.executed) toast.success(dispatch.message, { description: overlayLine });
+    else toast.error(dispatch.message, { description: overlayLine });
+  };
+
+  // REPLAY TRAIL ON PC: the recorded waypoints (with their timing) on the overlay and the real mouse.
+  const handleReplayTrailOnPC = () => replayRecordedTrail(liveMouseTrail, true, "Recorded trail");
+
+  /** Stop: saves the trail as a NEW session (with its frames) in the 100-session store. */
+  const saveTrailRecording = async () => {
+    captureRecordingFrame(true);
+    const frames = recordingFramesRef.current;
+    recordingFramesRef.current = [];
+    const thumbnails = (await Promise.all(frames.map((frame) => makeThumbnail(frame)))).filter(Boolean);
+    const store = MouseTrajectoryStore.getInstance();
+    const session = store.saveRecording({ points: trailToSessionPoints(liveMouseTrail), thumbnails, targetDevice: turnDevice.targetDevice });
+    setSavedSessions([...store.getSessions()]);
+    toast.success(`Saved "${session.name}"`, {
+      description: `${session.stepCount} click step(s), ${((session.durationMs ?? 0) / 1000).toFixed(1)}s, ${thumbnails.length} frame(s)`,
+    });
+  };
+
+  // RECORD MOUSE TRAIL: each press starts a fresh trail; stopping saves it as its own session.
+  const handleToggleTrailRecording = async () => {
+    if (!isRecordingMouseTrail) {
+      setLiveMouseTrail([]);
+      recordingFramesRef.current = [];
+      captureRecordingFrame(false);
+      setIsRecordingMouseTrail(true);
+      toast.info(`Recording a new mouse trail (${trailSettings.sampleRateHz} Hz, up to ${trailSettings.maxPoints} pts). Move on the canvas.`);
+      return;
+    }
+    setIsRecordingMouseTrail(false);
+    if (liveMouseTrail.length === 0) { toast.info("Nothing was recorded; no session saved."); return; }
+    await saveTrailRecording();
+  };
+
+  /** Replay picker: a saved session's recorded trail on the overlay, and on the PC when asked. */
+  const handleReplaySavedSession = (session: MouseRecordingSession, onHardware: boolean) => {
+    const trail = sessionToTrail(session);
+    setLiveMouseTrail(trail);
+    void replayRecordedTrail(trail, onHardware, `"${session.name}"`);
+  };
+
+  const handleDeleteSavedSession = (id: string) => {
+    const store = MouseTrajectoryStore.getInstance();
+    store.deleteSession(id);
+    setSavedSessions([...store.getSessions()]);
   };
 
   const handleClearRecordedTrail = () => {
@@ -1897,18 +2012,80 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     setIsRecordingMouseTrail(false);
   };
 
-  // Physically execute entire sequence or active step on real user desktop via PyAutoGUI
-  // With detailed step-by-step progress updates, frame-by-frame diff verification, and auto-recalculation
-  const handleExecuteAllOnActualPC = async () => {
-    const steps = selectedReplaySteps(sequence, selectedStepIds);
-    if (!steps.length) { toast.info(NO_RECORDED_STEPS_MESSAGE); return; }
-    if (!onReplaySteps) { toast.error("Verified replay is unavailable here"); return; }
-    onReplaySteps(steps);
-    setAiCheckStatus({ status: "verifying", message: "Replay requested. Inspect the Replay agent monitor for actual completion and screenshot evidence." });
+  /** Hands a drift to the Qwen turn loop: it adopts the remaining steps and re-plans toward the goal. */
+  const replanAfterDrift = async (reason: string, remaining: HudStepLike[], signal: AbortSignal) => {
+    const goal = activeWorkflowName || "Continue the recorded workflow";
+    const result = await runTurnLoop(goal, {
+      device: turnDevice,
+      signal,
+      onEvent: (event) => onTurnEvent?.(event),
+      onChain: (_links, text) => onTurnChain?.(text),
+      approve: (proposal) =>
+        Promise.resolve(window.confirm(`Qwen proposes a new route (${proposal.steps.length} step(s)) after: ${reason}\n\n${proposal.reason}\n\nApply it?`)),
+      entry: "apply_plan",
+      initialSteps: toGoalSteps(remaining),
+      guidance: () => [reason],
+    });
+    return describeReplanResult(result);
   };
 
-  const handleReplayUserMovementWithDrift = (executeOnHardware = false) => {
-    if (executeOnHardware) { void handleExecuteRecordedTrailOnPC(); return; }
+  /** One line and a toast per terminal state of a stepwise run; nothing is reported as done unless it was. */
+  const reportStepwiseResult = (result: StepwiseResult, total: number) => {
+    const summary = summarizeOutcomes(result.outcomes, total);
+    if (result.status === "completed") {
+      setAiCheckStatus({ status: "verified", message: `Completed: ${summary}` });
+      toast.success(`Execution completed: ${summary}`);
+    } else if (result.status === "replanned") {
+      setAiCheckStatus({ status: "stuck", message: `${result.reason}. ${result.replan}` });
+      toast.warning(result.reason, { description: result.replan });
+    } else {
+      setAiCheckStatus({ status: "stuck", message: `${result.reason} (${summary})` });
+      toast.error(result.status === "unavailable" ? `Control backend unavailable: ${result.reason}` : result.reason, { description: summary });
+    }
+  };
+
+  /**
+   * Runs the selected (else all) steps one at a time through the action gate with real per-step
+   * progress. With `verifyDrift` each step is checked against its saved frame before and the
+   * outcome after, and a backtrack/wrong page is surfaced and handed to the Qwen replanner.
+   */
+  const runStepwise = async (verifyDrift: boolean) => {
+    const steps = selectedReplaySteps(sequence, selectedStepIds);
+    if (!steps.length) { toast.info(NO_RECORDED_STEPS_MESSAGE); return; }
+    const controller = new AbortController();
+    replayAbortRef.current = controller;
+    stopExecutionRef.current = false;
+    setIsExecutingStepByStep(true);
+    setExecutingStepProgress(null);
+    const deps = createStepwiseDeps({
+      targetDevice: turnDevice.targetDevice,
+      runStep: (step) => runGatedSteps([step as HudStepLike]),
+      replan: (reason, remaining, signal) => replanAfterDrift(reason, remaining as HudStepLike[], signal),
+    });
+    const result = await runStepwiseReplay(steps, {
+      signal: controller.signal,
+      verifyDrift,
+      onProgress: (progress) => {
+        const step = steps[progress.current - 1];
+        setExecutingStepIndex(progress.current - 1);
+        setExecutingStepProgress({ ...progress, coords: { x: step.x, y: step.y } });
+      },
+      onDrift: (drift, step) => toast.warning(`Replay drift at "${step.name}": ${drift.kind.replace("_", " ")}`, { description: drift.reason }),
+    }, deps);
+    setIsExecutingStepByStep(false);
+    setExecutingStepIndex(null);
+    replayAbortRef.current = null;
+    reportStepwiseResult(result, steps.length);
+  };
+
+  // EXECUTE ON PC: per-step gated execution with honest progress.
+  const handleExecuteAllOnActualPC = () => runStepwise(false);
+
+  // VERIFIED DRIFT REPLAY ON PC: saved-frame pre-check, outcome post-check, drift → Qwen replan.
+  const handleVerifiedDriftReplayOnPC = () => runStepwise(true);
+
+  // Replay Drift (HUD preview): animates the route with human drift on the overlay only; nothing is sent to the device.
+  const handleReplayUserMovementWithDrift = () => {
     const selection = selectReplayWaypoints(
       selectedReplaySteps(sequence, selectedStepIds),
       liveMouseTrail,
@@ -2012,10 +2189,6 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       ...prev.slice(-25),
       { x: coords.x, y: coords.y },
     ]);
-    setLiveMouseTrail((prev) => [
-      ...prev.slice(-40),
-      { x: coords.x, y: coords.y, time: Date.now(), isClick: false },
-    ]);
     recordMovementPoint(coords.x, coords.y);
     // Reset dwell start if moved significantly (>20px)
     if (
@@ -2056,7 +2229,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     setTimeout(() => setHudActiveClickPoint(null), 600);
 
     if (isRecordMode || isRecordingMouseTrail || deviceBridgeMode) {
-      setLiveMouseTrail((prev) => [...prev, { x: coords.x, y: coords.y, time: Date.now(), isClick: true }]);
+      recordTrailClick(coords.x, coords.y);
     }
 
     // Always dispatch hardware click to active device / PC
@@ -2141,7 +2314,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     if (draggingStepId) return;
     const coords = getNativeCoordinates(e);
     if (isRecordMode || isRecordingMouseTrail || deviceBridgeMode) {
-      setLiveMouseTrail((prev) => [...prev, { x: coords.x, y: coords.y, time: Date.now(), isClick: true }]);
+      recordTrailClick(coords.x, coords.y);
     }
 
     // Set and open rich in-situ interactive Context Menu at cursor
@@ -2930,69 +3103,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           {/* Record User Mouse Trail with 100-Session Store */}
           <Button
             size="sm"
-            onClick={() => {
-              if (isRecordingMouseTrail) {
-                // Stopping recording: persist session to 100-session store
-                if (liveMouseTrail.length > 0) {
-                  const startTime = liveMouseTrail[0].time || Date.now();
-                  const durationSec = Math.max(0.5, (Date.now() - startTime) / 1000);
-                  const clickCount = liveMouseTrail.filter((p) => p.isClick).length;
-
-                  let totalDistance = 0;
-                  let maxSpeed = 0;
-                  for (let i = 1; i < liveMouseTrail.length; i++) {
-                    const d = Math.hypot(
-                      liveMouseTrail[i].x - liveMouseTrail[i - 1].x,
-                      liveMouseTrail[i].y - liveMouseTrail[i - 1].y
-                    );
-                    const dt = Math.max(
-                      0.01,
-                      ((liveMouseTrail[i].time || Date.now()) -
-                        (liveMouseTrail[i - 1].time || Date.now())) /
-                        1000
-                    );
-                    const spd = d / dt;
-                    totalDistance += d;
-                    if (spd > maxSpeed) maxSpeed = spd;
-                  }
-                  const avgSpeed = Math.round(
-                    totalDistance / Math.max(0.1, durationSec)
-                  );
-
-                  const sessionData: MouseRecordingSession = {
-                    id: `rec_${Date.now()}`,
-                    name: `Mouse Trail #${Date.now().toString().slice(-4)} (${liveMouseTrail.length} pts)`,
-                    recordedAt: Date.now(),
-                    durationSec,
-                    frameCount: Math.max(1, Math.round(durationSec * 30)),
-                    clickCount,
-                    averageSpeed: avgSpeed,
-                    maxSpeed: Math.round(maxSpeed || 420),
-                    points: liveMouseTrail.map((p, idx) => ({
-                      x: p.x,
-                      y: p.y,
-                      timestamp: p.time || Date.now() + idx * 40,
-                      type: p.isClick ? "click" : "move",
-                      speed: 1.0,
-                    })),
-                    sessionType: "mouse_trail",
-                    tags: ["Live-HUD", "Desktop PC", "PyAutoGUI"],
-                    notes: "Recorded live in HUD session.",
-                    source: "live_hud",
-                    targetDevice: "desktop",
-                  };
-                  MouseTrajectoryStore.getInstance().saveSession(sessionData);
-                  toast.success(
-                    `Saved "${sessionData.name}" to 100-session recording ledger!`
-                  );
-                }
-                setIsRecordingMouseTrail(false);
-              } else {
-                setLiveMouseTrail([]);
-                setIsRecordingMouseTrail(true);
-                toast.info("🔴 Recording mouse trail... Move your cursor on the canvas.");
-              }
-            }}
+            onClick={handleToggleTrailRecording}
             className={`h-8 text-xs font-mono font-bold ${
               isRecordingMouseTrail
                 ? "bg-red-600 hover:bg-red-500 text-white animate-pulse ring-2 ring-red-400"
@@ -3004,6 +3115,37 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             ) : (
               <>🔴 RECORD MOUSE TRAIL</>
             )}
+          </Button>
+
+          {/* Trail recorder settings: sample rate, point cap, smoothing */}
+          <div className="relative">
+            <Button
+              size="sm"
+              onClick={() => setIsMouseTrailSettingsOpen((open) => !open)}
+              className="h-8 text-xs font-mono font-bold bg-slate-900 border border-amber-600/50 text-amber-300 hover:bg-slate-800 gap-1"
+              title="Mouse trail recorder settings"
+            >
+              <Sliders className="w-3.5 h-3.5" /> TRAIL SETTINGS
+            </Button>
+            {isMouseTrailSettingsOpen && (
+              <TrailSettingsPopover
+                settings={trailSettings}
+                onChange={(patch) => setTrailSettings((prev) => normalizeTrailSettings({ ...prev, ...patch }))}
+              />
+            )}
+          </div>
+
+          {/* Replay picker: saved recording sessions as frames or mouse trail */}
+          <Button
+            size="sm"
+            onClick={() => {
+              setSavedSessions([...MouseTrajectoryStore.getInstance().getSessions()]);
+              setIsReplayPickerOpen(true);
+            }}
+            className="h-8 text-xs font-mono font-bold bg-slate-900 border border-purple-500/70 text-purple-300 hover:bg-purple-950/60 gap-1.5"
+            title="Pick a saved recording and replay it as frames or as its mouse trail"
+          >
+            <PlayCircle className="w-3.5 h-3.5" /> REPLAY PICKER ({savedSessions.length})
           </Button>
 
           {/* 100-Session Manager & Live Ledger Modal Trigger */}
@@ -3083,8 +3225,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             <>
               <Button
                 size="sm"
-                onClick={handleExecuteRecordedTrailOnPC}
-                disabled={isExecutingTrailOnPC}
+                onClick={handleReplayTrailOnPC}
+                disabled={isExecutingTrailOnPC || isReplayingMovement || isRecordingMouseTrail}
                 className="h-8 text-xs font-mono font-bold bg-gradient-to-r from-amber-600 to-red-600 hover:from-amber-500 hover:to-red-500 text-white shadow-md gap-1"
               >
                 <Zap className="w-3.5 h-3.5 text-yellow-300" />
@@ -3480,28 +3622,28 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           >
             <Zap className={`w-3.5 h-3.5 ${isExecutingStepByStep ? "text-yellow-200 animate-spin" : "text-yellow-300"}`} />
             {isExecutingStepByStep && executingStepProgress
-              ? `EXECUTING STEP ${executingStepProgress.current}/${executingStepProgress.total} (${Math.round((executingStepProgress.current / Math.max(1, executingStepProgress.total)) * 100)}%)`
+              ? `EXECUTING STEP ${executingStepProgress.current}/${executingStepProgress.total} (${executingStepProgress.outcomes.length} done)`
               : "EXECUTE ON PC"}
           </Button>
 
           <Button
             size="sm"
-            onClick={() => handleReplayUserMovementWithDrift(false)}
+            onClick={handleReplayUserMovementWithDrift}
             disabled={isReplayingMovement}
             className="h-8 text-xs font-mono font-bold bg-cyan-600 hover:bg-cyan-500 text-white gap-1"
-            title="Simulate spline cursor route with human drift on HUD"
+            title="HUD-only preview: animates the route with human drift on the overlay; nothing is sent to the device"
           >
-            <Play className="w-3.5 h-3.5" /> Replay Drift (±{humanDriftPx}px)
+            <Play className="w-3.5 h-3.5" /> Preview Drift on HUD (±{humanDriftPx}px)
           </Button>
 
           <Button
             size="sm"
-            onClick={() => handleReplayUserMovementWithDrift(true)}
-            disabled={isReplayingMovement || isExecutingTrailOnPC}
+            onClick={handleVerifiedDriftReplayOnPC}
+            disabled={isExecutingStepByStep || isExecutingTrailOnPC}
             className="h-8 text-xs font-mono font-bold bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white gap-1 border border-emerald-400/40 shadow-lg"
-            title="Replay trail route with human drift directly on physical PC hardware"
+            title="Execute each step on the PC after checking the live frame against its saved frame; verify the outcome; on backtrack or wrong page, replan with Qwen"
           >
-            <Zap className="w-3.5 h-3.5 text-emerald-300" /> Replay & Execute on PC
+            <Zap className="w-3.5 h-3.5 text-emerald-300" /> Verified Drift Replay on PC
           </Button>
         </div>
       </div>
@@ -3715,7 +3857,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         <div className="px-4 py-2.5 bg-slate-950/95 border-b-2 border-amber-500 text-xs font-mono text-slate-100 flex flex-col gap-1.5 z-40 relative shadow-2xl backdrop-blur-md">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-400 animate-spin" style={{ animationDuration: "4s" }} />
+              <Zap className="w-4 h-4 text-amber-400" />
               <span className="font-bold text-amber-300">
                 STEP {executingStepProgress.current} OF {executingStepProgress.total}:
               </span>
@@ -3734,16 +3876,32 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             <div
               className="h-full bg-gradient-to-r from-amber-500 to-red-500 transition-all duration-300"
               style={{
-                width: `${(executingStepProgress.current / Math.max(1, executingStepProgress.total)) * 100}%`,
+                width: `${(executingStepProgress.outcomes.length / Math.max(1, executingStepProgress.total)) * 100}%`,
               }}
             />
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-400">
             <span>{executingStepProgress.message}</span>
-            {executingStepProgress.latencyMs !== undefined && (
-              <span className="text-emerald-400">Response: {executingStepProgress.latencyMs}ms</span>
-            )}
+            <span className="text-emerald-400">{summarizeOutcomes(executingStepProgress.outcomes, executingStepProgress.total)}</span>
           </div>
+          {executingStepProgress.outcomes.length > 0 && (
+            <ol className="flex flex-wrap gap-1 text-[10px]">
+              {executingStepProgress.outcomes.map((outcome, index) => (
+                <li
+                  key={outcome.stepId}
+                  title={[outcome.detail, outcome.postCheck?.reason, outcome.elementCheck].filter(Boolean).join(" · ")}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded border",
+                    outcome.status === "executed" && "border-emerald-600 text-emerald-300",
+                    outcome.status === "failed" && "border-red-600 text-red-300",
+                    outcome.status === "skipped" && "border-amber-600 text-amber-300",
+                  )}
+                >
+                  {index + 1}. {outcome.name}: {outcome.status}
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
       )}
 
@@ -5360,68 +5518,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         onLoadSessionToActiveTrail={(points) => {
           setLiveMouseTrail(points);
         }}
-        onSelectSessionForReplay={(session, executeOnHardware) => {
-          if (executeOnHardware) {
-            setIsExecutingTrailOnPC(true);
-            setAiCheckStatus({
-              status: "verifying",
-              message: `Streaming "${session.name}" (${session.points.length} waypoints) to PC hardware via PyAutoGUI...`,
-            });
-            executeVerifiedTask("/api/execute-task", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                targetDevice: session.targetDevice || "desktop",
-                task: {
-                  id: `session_replay_${session.id}`,
-                  name: `Replay ${session.name}`,
-                  action: "stream_mouse_route",
-                  routePoints: session.points.map((p) => ({
-                    x: p.x,
-                    y: p.y,
-                    isClick: p.type === "click" || p.type === "left_click" || p.type === "right_click",
-                    time: p.timestamp,
-                  })),
-                  speedMultiplier: trailSpeedMultiplier,
-                  driftPx: humanDriftPx,
-                },
-              }),
-            })
-              .then((r) => readJsonResponse(r))
-              .then((d) => {
-                setIsExecutingTrailOnPC(false);
-                if (d.success) {
-                  setAiCheckStatus({
-                    status: "verified",
-                    message: `✅ Replayed "${session.name}" on PC Hardware with exact coordinates!`,
-                    score: 1.0,
-                  });
-                  setTimeout(() => setAiCheckStatus(null), 4000);
-                } else {
-                  setAiCheckStatus({
-                    status: "stuck",
-                    message: `Replay failed: ${d.error || "Subprocess returned error"}`,
-                  });
-                }
-              })
-              .catch((err) => {
-                setIsExecutingTrailOnPC(false);
-                setAiCheckStatus({
-                  status: "stuck",
-                  message: `Replay failed: ${err.message}`,
-                });
-              });
-          } else {
-            // Visual replay on canvas
-            const formatted = session.points.map((p, idx) => ({
-              x: p.x,
-              y: p.y,
-              time: Date.now() + idx * 40,
-              isClick: p.type === "click" || p.type === "left_click" || p.type === "right_click",
-            }));
-            setLiveMouseTrail(formatted);
-          }
-        }}
+        onSelectSessionForReplay={(session, executeOnHardware) => handleReplaySavedSession(session as MouseRecordingSession, executeOnHardware)}
       />
 
       {/* AI Conscious Operator Workflow & Screen Auditor Modal */}
@@ -5679,6 +5776,25 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       />
 
       {/* 100-Session History & Recording Session Manager with Action Sequence Register & Live Ledger */}
+      {/* Replay picker: saved recording sessions (up to 100) */}
+      <HudModal
+        open={isReplayPickerOpen}
+        onClose={() => setIsReplayPickerOpen(false)}
+        maxWidth={880}
+        title={
+          <span className="flex items-center gap-2">
+            <PlayCircle className="w-4 h-4 text-purple-400" /> Replay picker — saved recordings
+          </span>
+        }
+      >
+        <ReplaySessionPicker
+          sessions={savedSessions}
+          busy={isReplayingMovement || isExecutingTrailOnPC}
+          onReplayTrail={handleReplaySavedSession}
+          onDelete={handleDeleteSavedSession}
+        />
+      </HudModal>
+
       <RecordingSessionManager
         isOpen={isRecordingSessionManagerOpen}
         onClose={() => setIsRecordingSessionManagerOpen(false)}
@@ -5691,53 +5807,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           setLiveMouseTrail(points);
           toast.success(`Loaded ${points.length} trajectory points onto HUD canvas.`);
         }}
-        onSelectSessionForReplay={async (session, executeOnHardware, speedMultiplier) => {
-          if (!session.points || session.points.length === 0) {
-            toast.error("Session has no trajectory points to replay.");
-            return;
-          }
-          if (executeOnHardware) {
-            setIsExecutingTrailOnPC(true);
-            try {
-              const res = await fetch("/api/pyautogui/replay-trail", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  trail: session.points.map((p) => ({
-                    x: p.x,
-                    y: p.y,
-                    time: p.timestamp,
-                    isClick: p.type === "click",
-                  })),
-                  speedMultiplier: speedMultiplier || trailSpeedMultiplier,
-                  humanDriftPx,
-                  executeOnHardware: true,
-                }),
-              });
-              const data = await res.json();
-              if (data.success) {
-                toast.success(`Session "${session.name}" executed successfully on PC hardware!`);
-              } else {
-                toast.error(`Session replay error: ${data.error || "Unknown error"}`);
-              }
-            } catch (e: any) {
-              toast.error(`Execution failed: ${e.message}`);
-            } finally {
-              setIsExecutingTrailOnPC(false);
-            }
-          } else {
-            // Replay purely visually on canvas
-            setLiveMouseTrail(
-              session.points.map((p) => ({
-                x: p.x,
-                y: p.y,
-                time: p.timestamp,
-                isClick: p.type === "click",
-              }))
-            );
-            toast.info(`Replaying "${session.name}" visually on HUD.`);
-          }
-        }}
+        onSelectSessionForReplay={(session, executeOnHardware) => handleReplaySavedSession(session as MouseRecordingSession, executeOnHardware)}
       />
 
       {/* Interactive Bottom Resize Drag Handle Bar */}
