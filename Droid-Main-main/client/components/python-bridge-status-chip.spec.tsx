@@ -7,7 +7,7 @@ describe("BridgeStatusChipView", () => {
   it("shows the missing state with the exact fix", () => {
     const html = renderToStaticMarkup(
       <BridgeStatusChipView
-        status={{ pythonOk: false, pyautoguiOk: false, label: "Python: missing · pyautogui: missing", fix: "run setup-python.bat", interpreter: "not found" }}
+        status={{ control: "Control: unavailable (install X)", pythonOk: false, pyautoguiOk: false, label: "Python: missing · pyautogui: missing", fix: "run setup-python.bat", interpreter: "not found" }}
         onDismiss={() => {}}
       />,
     );
@@ -19,11 +19,12 @@ describe("BridgeStatusChipView", () => {
   it("shows no fix when everything is OK", () => {
     const html = renderToStaticMarkup(
       <BridgeStatusChipView
-        status={{ pythonOk: true, pyautoguiOk: true, label: "Python: OK · pyautogui: OK", fix: null, interpreter: "python3" }}
+        status={{ control: "Control: native", pythonOk: true, pyautoguiOk: true, label: "Python: OK · pyautogui: OK", fix: null, interpreter: "python3" }}
         onDismiss={() => {}}
       />,
     );
     expect(html).toContain("Python: OK · pyautogui: OK");
     expect(html).not.toContain("Fix:");
+    expect(html).toContain("Control: native");
   });
 });

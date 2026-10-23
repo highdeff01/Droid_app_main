@@ -10,6 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { queueMobileAction } from "./mobile-stream";
 import { describePythonResolution, resolvePython, spawnPython } from "../python-resolver";
+import { activeNativeControl, desktopControlStatus, runNativeDesktopAction, runNativeDesktopActions } from "../desktop-control";
 import {
   type DeviceExecutionOutcome,
   PYAUTOGUI_MISSING_EXIT_CODE,
@@ -190,9 +191,54 @@ export function executePythonPyAutoGUI(scriptCode: string): Promise<PythonRunRes
 }
 
 /**
+ * Runs bridge actions through the native control when it was selected at startup;
+ * otherwise runs the Python script (the fallback path).
+ */
+async function runBridgeActions(actions: any[], pythonScript: () => string): Promise<PythonRunResult> {
+  const native = await activeNativeControl();
+  if (!native) return executePythonPyAutoGUI(pythonScript());
+  const requests = actions.map((act) => {
+    const x = act.x ?? 960;
+    const y = act.y ?? 540;
+    return {
+      action: String(act.type || act.action || "click"),
+      x,
+      y,
+      toX: act.toX ?? x + 50,
+      toY: act.toY ?? y + 50,
+      text: act.text,
+      key: act.key || act.keyPayload,
+      delayMs: act.delayMs,
+    };
+  });
+  return { ...(await runNativeDesktopActions(native, requests)), output: "" };
+}
+
+/**
  * Helper to build and execute a batch of actions via PyAutoGUI
  */
 export async function executePyAutoGUIActions(actions: any[]): Promise<PythonRunResult & { durationMs: number }> {
+  const startTime = Date.now();
+  const pyResult = await runBridgeActions(actions, () => buildBatchScript(actions));
+  const durationMs = Date.now() - startTime;
+
+  addBridgeLog(
+    "BATCH_SCHEDULED_RUN",
+    pyResult.error ? "warning" : "success",
+    `Dispatched ${actions.length} action(s) in ${durationMs}ms: ${pyResult.output}`,
+    {
+      type: "stdout",
+      stdout: pyResult.output,
+      stderr: pyResult.error,
+      durationMs,
+    }
+  );
+
+  return { ...pyResult, durationMs };
+}
+
+/** pyautogui script for a batch of scheduled actions (Python fallback path). */
+function buildBatchScript(actions: any[]): string {
   const pythonLines: string[] = [
     PYAUTOGUI_IMPORT_GUARD,
     "import time",
@@ -251,24 +297,7 @@ export async function executePyAutoGUIActions(actions: any[]): Promise<PythonRun
     }
   }
 
-  const script = pythonLines.join("\n");
-  const startTime = Date.now();
-  const pyResult = await executePythonPyAutoGUI(script);
-  const durationMs = Date.now() - startTime;
-
-  addBridgeLog(
-    "BATCH_SCHEDULED_RUN",
-    pyResult.error ? "warning" : "success",
-    `Dispatched ${actions.length} action(s) in ${durationMs}ms: ${pyResult.output}`,
-    {
-      type: "stdout",
-      stdout: pyResult.output,
-      stderr: pyResult.error,
-      durationMs,
-    }
-  );
-
-  return { ...pyResult, durationMs };
+  return pythonLines.join("\n");
 }
 
 /**
@@ -383,7 +412,7 @@ export const handlePyAutoGUIBridge: RequestHandler = async (req, res) => {
 
     const script = pythonLines.join("\n");
     const startTime = Date.now();
-    const pyResult = await executePythonPyAutoGUI(script);
+    const pyResult = await runBridgeActions(actionList, () => script);
     const durationMs = Date.now() - startTime;
     const currentPid = 14200 + Math.floor(Math.random() * 500);
 
@@ -491,6 +520,21 @@ export const handleBridgeHealth: RequestHandler = async (_req, res) => {
   const startTime = Date.now();
   lastHeartbeatTimestamp = Date.now();
   const python = pythonStatusFields();
+  const control = await desktopControlStatus();
+
+  if (control.controlBackend === "native") {
+    res.json({
+      success: true,
+      online: true,
+      paused: isExecutionBridgePaused,
+      latencyMs: Date.now() - startTime,
+      lastHeartbeat: lastHeartbeatTimestamp,
+      ...python,
+      ...control,
+      activeProcesses: [],
+    });
+    return;
+  }
 
   try {
     // Check python + pyautogui responsiveness; report only what was measured.
@@ -509,6 +553,7 @@ export const handleBridgeHealth: RequestHandler = async (_req, res) => {
         latencyMs,
         lastHeartbeat: lastHeartbeatTimestamp,
         ...python,
+        ...control,
         pyautoguiAvailable: false,
         pythonVersion: null,
         screenResolution: null,
@@ -525,6 +570,7 @@ export const handleBridgeHealth: RequestHandler = async (_req, res) => {
       latencyMs,
       lastHeartbeat: lastHeartbeatTimestamp,
       ...python,
+      ...control,
       pyautoguiAvailable: true,
       failsafe: false,
       pythonVersion: match[1],
@@ -539,6 +585,7 @@ export const handleBridgeHealth: RequestHandler = async (_req, res) => {
       error: err.message,
       lastHeartbeat: lastHeartbeatTimestamp,
       ...python,
+      ...control,
       pyautoguiAvailable: false,
       fix: PYTHON_SETUP_FIX,
     });
@@ -1251,6 +1298,36 @@ export const handleInteractiveDeviceAction: RequestHandler = async (req, res) =>
   });
 
   const startTime = Date.now();
+  const native = await activeNativeControl();
+  if (native) {
+    const outcome = await runNativeDesktopAction(native, { action, x, y, toX, toY, text, key });
+    const durationMs = Date.now() - startTime;
+    addBridgeLog(
+      "INTERACTIVE_DEVICE_MIRROR_ACTION",
+      outcome.success ? "success" : "warning",
+      `[Native Control] ${outcome.success ? "Executed" : `Did not execute (${outcome.status})`} ${action.toUpperCase()} at (${Math.round(x)}, ${Math.round(y)}). Duration: ${durationMs}ms.`,
+      { action, type: "command", durationMs, stderr: outcome.error },
+    );
+    res.json({
+      ...outcome,
+      backend: "native",
+      action,
+      x: Math.round(x),
+      y: Math.round(y),
+      toX: toX !== undefined ? Math.round(toX) : undefined,
+      toY: toY !== undefined ? Math.round(toY) : undefined,
+      text,
+      key,
+      deviceMode,
+      durationMs,
+      executedOnPC: outcome.executed,
+      message: outcome.success
+        ? `Interactive action ${action.toUpperCase()} executed at (${Math.round(x)}, ${Math.round(y)}).`
+        : `Interactive action ${action.toUpperCase()} did not execute: ${outcome.error}`,
+      timestamp: Date.now(),
+    });
+    return;
+  }
   let pythonScript = "";
 
   if (action === "click") {

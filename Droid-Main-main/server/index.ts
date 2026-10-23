@@ -2,6 +2,7 @@ import { replayRouter } from "./routes/replay";
 import { createPhoneRouter } from "./routes/phone";
 import { handleStopBridge, handleExecutePyAutoGUI, handleReplayTrail } from "./routes/pyautogui-bridge";
 import { resolvePython } from "./python-resolver";
+import { initDesktopControl } from "./desktop-control";
 import { handleAiReviewSteps, handleApplySuggestionsWithQwen } from "./routes/ai-workflow-review";
 import "dotenv/config";
 import express from "express";
@@ -235,6 +236,8 @@ export function createServer() {
   const app = express();
   // Probe for a Python interpreter once at startup; every Python spawn reuses the cached result.
   resolvePython();
+  // Select the desktop control backend once (native module first, Python as fallback) and log it.
+  void initDesktopControl();
 
   // CORS is an explicit allowlist; a failure here fails server creation (closed), never permissive.
   app.use(createCorsMiddleware());
