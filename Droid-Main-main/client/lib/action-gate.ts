@@ -2,6 +2,7 @@ import type {
   DetectedUIElement,
   ScreenPerceptionReport,
 } from "@/components/dual-ai-copilot-panel";
+import { readJsonReply } from "@/lib/backend-status";
 
 /** Slack around an element's bounding box when matching the action point. */
 export const TARGET_PADDING_PX = 12;
@@ -48,6 +49,26 @@ export interface GateRequest {
 
 /** Extra capture+analysis rounds after a "target not found" (docs/verified-replay.md: at most twice). */
 export const MAX_REINSPECTIONS = 2;
+
+/** Extra rounds after a capture/analysis failure (a transient hiccup gets one more try). */
+export const MAX_TRANSIENT_RETRIES = 1;
+/** Wait before retrying a failed capture/analysis round. */
+export const TRANSIENT_RETRY_BACKOFF_MS = 750;
+
+export type GateSleep = (ms: number, signal: AbortSignal) => Promise<void>;
+
+/** Resolves after `ms`, or at once when the signal aborts. */
+export const abortableSleep: GateSleep = (ms, signal) =>
+  new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
 
 /** Where the gate stopped: no frame, no usable analysis, or no element at the target. */
 export type GateStage = "capture" | "analysis" | "target_not_found";
@@ -141,7 +162,12 @@ export type GatePost = (
   options: { apiKey?: string; signal: AbortSignal },
 ) => Promise<any>;
 
-/** POST JSON with the caller's abort signal; rejects on HTTP or `success: false`. */
+/** Why a gate request got a non-JSON body: the Express automation API is not behind /api. */
+export function backendNonJsonReason(status: number): string {
+  return `backend API unreachable or returned non-JSON (HTTP ${status}) — the automation server is not running; start it locally (npm run dev, port 3000)`;
+}
+
+/** POST JSON with the caller's abort signal; rejects on a non-JSON body, HTTP error or `success: false`. */
 export const postGateJson: GatePost = async (url, body, { apiKey, signal }) => {
   const response = await fetch(url, {
     method: "POST",
@@ -152,7 +178,9 @@ export const postGateJson: GatePost = async (url, body, { apiKey, signal }) => {
     body: JSON.stringify(body),
     signal,
   });
-  const data = await response.json();
+  const reply = await readJsonReply(response);
+  if (!reply.json) throw new Error(backendNonJsonReason(reply.status));
+  const data = reply.body ?? {};
   if (!response.ok || data.success !== true) {
     throw new Error(data.error || `${url} failed`);
   }
@@ -313,14 +341,17 @@ function blocked(
 /**
  * Capture a fresh frame, analyze it, and confirm the target is on screen.
  * A missed target is re-captured and re-analyzed up to MAX_REINSPECTIONS times;
- * capture or analysis failures block at once. Never falls back to a stale frame.
+ * a capture or analysis failure is retried MAX_TRANSIENT_RETRIES times after a
+ * short backoff, then blocks with the total attempts. Never falls back to a stale frame.
  */
 export async function runActionGate(
   request: GateRequest,
   post: GatePost = postGateJson,
+  sleep: GateSleep = abortableSleep,
 ): Promise<GateResult> {
   const { target, signal } = request;
   let attempts = 0;
+  let transientRetries = 0;
   for (;;) {
     attempts++;
     let inspection: Inspection;
@@ -328,7 +359,13 @@ export async function runActionGate(
       inspection = await inspectOnce(request, post);
     } catch (error) {
       if (signal.aborted) return CANCELLED;
-      return blocked(request, error as GateStageError, attempts);
+      if (transientRetries >= MAX_TRANSIENT_RETRIES) {
+        return blocked(request, error as GateStageError, attempts);
+      }
+      transientRetries++;
+      await sleep(TRANSIENT_RETRY_BACKOFF_MS, signal);
+      if (signal.aborted) return CANCELLED;
+      continue;
     }
     if (signal.aborted) return CANCELLED;
     const { frame, report, point } = inspection;
@@ -346,7 +383,7 @@ export async function runActionGate(
         attempts,
       };
     }
-    if (attempts > MAX_REINSPECTIONS) {
+    if (attempts - transientRetries > MAX_REINSPECTIONS) {
       const name = target.label ? `"${target.label}" ` : "";
       const miss = new GateStageError(
         "target_not_found",
