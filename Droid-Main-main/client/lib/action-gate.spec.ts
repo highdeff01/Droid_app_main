@@ -1,14 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_REINSPECTIONS,
+  MAX_TRANSIENT_RETRIES,
   TARGET_PADDING_PX,
+  TRANSIENT_RETRY_BACKOFF_MS,
   USER_VERIFIED_OVERRIDE,
   analysisConfidence,
   applyUserOverride,
+  backendNonJsonReason,
   canUserOverride,
   findTargetElement,
   formatBlockedReason,
   gateTargetForSteps,
+  postGateJson,
   runActionGate,
   type GateBlockDetail,
   type GatePost,
@@ -352,9 +356,10 @@ describe("runActionGate", () => {
       expect(result.reason).toContain("target not found");
     });
 
-    it("blocks at the capture stage without ever calling describe-screen", async () => {
+    it("retries a failed capture once, then blocks at the capture stage without calling describe-screen", async () => {
       let captureCalls = 0;
       let describeCalled = false;
+      const sleeps: number[] = [];
       const post: GatePost = async (url) => {
         if (url === "/api/replay/capture") {
           captureCalls++;
@@ -368,19 +373,80 @@ describe("runActionGate", () => {
       const result = await runActionGate(
         { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
         post,
+        async (ms) => { sleeps.push(ms); },
       );
 
       expect(result.status).toBe("blocked");
       if (result.status !== "blocked" || !result.detail) throw new Error("expected blocked detail");
       expect(result.detail.stage).toBe("capture");
-      expect(result.detail.attempts).toBe(1);
+      expect(result.detail.attempts).toBe(1 + MAX_TRANSIENT_RETRIES);
       expect(result.detail.elementsDetected).toBeNull();
       expect(describeCalled).toBe(false);
-      expect(captureCalls).toBe(1);
-      expect(result.reason).toContain("screen capture failed");
+      expect(captureCalls).toBe(2);
+      expect(sleeps).toEqual([TRANSIENT_RETRY_BACKOFF_MS]);
+      expect(result.reason).toContain("screen capture failed after 2 inspections");
+      expect(canUserOverride(result)).toBe(false);
+      expect(applyUserOverride(result, true)).toBeUndefined();
     });
 
-    it("blocks at the analysis stage when describe-screen rejects", async () => {
+    it("verifies when a transient capture failure clears on the retry", async () => {
+      const near = makeElement({ boundingBox: { x: 90, y: 90, width: 20, height: 20 } });
+      let captureCalls = 0;
+      const post: GatePost = async (url) => {
+        if (url === "/api/replay/capture") {
+          captureCalls++;
+          if (captureCalls === 1) throw new Error("warming up");
+          return { success: true, frame: { image: "data:img" } };
+        }
+        return { success: true, report: makeReport({ elements: [near] }) };
+      };
+      const result = await runActionGate(
+        { targetDevice: "device-1", target: baseTarget, signal: new AbortController().signal },
+        post,
+        async () => {},
+      );
+      expect(result.status).toBe("verified");
+      if (result.status === "verified") expect(result.attempts).toBe(2);
+    });
+
+    it("counts a failed capture in the attempts of a later target-not-found block", async () => {
+      let captureCalls = 0;
+      const post: GatePost = async (url) => {
+        if (url === "/api/replay/capture") {
+          captureCalls++;
+          if (captureCalls === 1) throw new Error("warming up");
+          return { success: true, frame: { image: "data:img" } };
+        }
+        return { success: true, report: makeReport({ elements: [] }) };
+      };
+      const result = await runActionGate(
+        { targetDevice: "device-1", target: baseTarget, signal: new AbortController().signal },
+        post,
+        async () => {},
+      );
+      if (result.status !== "blocked" || !result.detail) throw new Error("expected blocked detail");
+      expect(result.detail.stage).toBe("target_not_found");
+      expect(result.detail.attempts).toBe(2 + MAX_REINSPECTIONS);
+      expect(canUserOverride(result)).toBe(true);
+    });
+
+    it("returns cancelled without posting again when aborted during the retry backoff", async () => {
+      let calls = 0;
+      const controller = new AbortController();
+      const post: GatePost = async () => {
+        calls++;
+        throw new Error("boom");
+      };
+      const result = await runActionGate(
+        { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
+        post,
+        async () => { controller.abort(); },
+      );
+      expect(result.status).toBe("cancelled");
+      expect(calls).toBe(1);
+    });
+
+    it("retries a failed analysis once, then blocks at the analysis stage", async () => {
       let captureCalls = 0;
       const post: GatePost = async (url) => {
         if (url === "/api/replay/capture") {
@@ -394,13 +460,16 @@ describe("runActionGate", () => {
       const result = await runActionGate(
         { targetDevice: "device-1", target: baseTarget, signal: controller.signal },
         post,
+        async () => {},
       );
 
       expect(result.status).toBe("blocked");
       if (result.status !== "blocked" || !result.detail) throw new Error("expected blocked detail");
       expect(result.detail.stage).toBe("analysis");
-      expect(captureCalls).toBe(1);
+      expect(result.detail.attempts).toBe(2);
+      expect(captureCalls).toBe(2);
       expect(result.reason).toContain("screen analysis failed");
+      expect(canUserOverride(result)).toBe(false);
     });
 
     it("verifies on the first attempt when the target needs no element", async () => {
@@ -572,5 +641,72 @@ describe("user override", () => {
 
   it("labels the override with the USER_VERIFIED_OVERRIDE constant", () => {
     expect(USER_VERIFIED_OVERRIDE).toBe("user-verified override");
+  });
+});
+
+describe("non-JSON gate responses (backend not running)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const html = "<!DOCTYPE html><html><body>Starting Server</body></html>";
+  const stubFetch = (respond: (url: string) => Response) => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(url);
+      return respond(url);
+    }));
+    return urls;
+  };
+
+  it("postGateJson rejects an HTML 200 reply with the backend-unreachable reason", async () => {
+    stubFetch(() => new Response(html, { status: 200, headers: { "content-type": "text/html" } }));
+    await expect(
+      postGateJson("/api/replay/capture", {}, { signal: new AbortController().signal }),
+    ).rejects.toThrow(
+      "backend API unreachable or returned non-JSON (HTTP 200) — the automation server is not running; start it locally (npm run dev, port 3000)",
+    );
+  });
+
+  it("names the actual HTTP status of a non-JSON reply", () => {
+    expect(backendNonJsonReason(502)).toContain("(HTTP 502)");
+  });
+
+  it("blocks the gate at the capture stage with the backend-unreachable reason after a retry", async () => {
+    const urls = stubFetch(() => new Response(html, { status: 200 }));
+    const result = await runActionGate(
+      {
+        targetDevice: "desktop",
+        target: { x: 86, y: 1238, label: "Step #2", needsTarget: true },
+        stepLabel: "#2 Step #2 (Click)",
+        signal: new AbortController().signal,
+      },
+      postGateJson,
+      async () => {},
+    );
+    if (result.status !== "blocked" || !result.detail) throw new Error("expected blocked detail");
+    expect(result.detail.stage).toBe("capture");
+    expect(result.detail.attempts).toBe(2);
+    expect(urls).toEqual(["/api/replay/capture", "/api/replay/capture"]);
+    expect(result.reason).toContain("screen capture failed after 2 inspections");
+    expect(result.reason).toContain(backendNonJsonReason(200));
+    expect(result.reason).not.toContain("Non-JSON response (HTTP 200)");
+    expect(canUserOverride(result)).toBe(false);
+  });
+
+  it("reports a non-JSON analysis reply at the analysis stage", async () => {
+    stubFetch((url) =>
+      url === "/api/replay/capture"
+        ? new Response(JSON.stringify({ success: true, frame: { image: "data:img" } }), { status: 200 })
+        : new Response(html, { status: 502 }),
+    );
+    const result = await runActionGate(
+      { targetDevice: "desktop", target: { x: 1, y: 1, needsTarget: false }, signal: new AbortController().signal },
+      postGateJson,
+      async () => {},
+    );
+    if (result.status !== "blocked" || !result.detail) throw new Error("expected blocked detail");
+    expect(result.detail.stage).toBe("analysis");
+    expect(result.reason).toContain(backendNonJsonReason(502));
   });
 });
