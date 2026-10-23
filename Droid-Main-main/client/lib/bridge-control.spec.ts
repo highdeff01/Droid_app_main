@@ -4,7 +4,13 @@ const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { success: vi.fn(), er
 vi.mock("sonner", () => ({ toast: toastMock }));
 
 import { BACKEND_UNREACHABLE_MESSAGE, setBackendStatus } from "./backend-status";
-import { fetchBridgeHealth, runQuickReconnect, runTogglePause, syncBridgeCoordinates } from "./bridge-control";
+import {
+  fetchBridgeHealth,
+  parseBridgeHealthBody,
+  runQuickReconnect,
+  runTogglePause,
+  syncBridgeCoordinates,
+} from "./bridge-control";
 
 const NON_JSON = "Bridge unreachable: API returned non-JSON (backend not running)";
 const WARMUP_HTML = "<!doctype html><html><head><title>Starting Server</title></head><body></body></html>";
@@ -61,16 +67,75 @@ describe("runQuickReconnect", () => {
 describe("fetchBridgeHealth / syncBridgeCoordinates", () => {
   it("reports HTML 200 health as a concise non-JSON error, never online", async () => {
     const result = await fetchBridgeHealth(vi.fn().mockResolvedValue(html()) as any);
-    expect(result).toEqual({ ok: false, error: NON_JSON });
+    expect(result).toEqual({ ok: false, unreachable: true, error: NON_JSON });
   });
 
   it("treats HTML labelled application/json as non-JSON", async () => {
     const body = new Response(WARMUP_HTML, { status: 200, headers: { "Content-Type": "application/json" } });
-    expect(await fetchBridgeHealth(vi.fn().mockResolvedValue(body) as any)).toEqual({ ok: false, error: NON_JSON });
+    expect(await fetchBridgeHealth(vi.fn().mockResolvedValue(body) as any)).toEqual({ ok: false, unreachable: true, error: NON_JSON });
   });
 
   it("returns no coordinate reading for an HTML reply", async () => {
     expect(await syncBridgeCoordinates(vi.fn().mockResolvedValue(html()) as any)).toBeNull();
+  });
+
+  it("returns no coordinate reading when the JSON reply has no measured position", async () => {
+    const reply = json({ success: false, bridgeReportedX: null, bridgeReportedY: null, spatialDriftPx: null });
+    expect(await syncBridgeCoordinates(vi.fn().mockResolvedValue(reply) as any)).toBeNull();
+  });
+
+  it("reports a network failure as unreachable, never online", async () => {
+    const result = await fetchBridgeHealth(vi.fn().mockRejectedValue(new TypeError("Failed to fetch")) as any);
+    expect(result).toEqual({ ok: false, unreachable: true, error: "Bridge unreachable: Failed to fetch" });
+  });
+
+  it.each([{}, { online: "true" }, { online: 1 }, { status: "ok" }, { success: true }])(
+    "never reports online for a 200 JSON body without online: true (%j)",
+    async (body) => {
+      const result = await fetchBridgeHealth(vi.fn().mockResolvedValue(json(body)) as any);
+      expect(result.ok && result.value?.online).toBe(false);
+    },
+  );
+
+  it.each([null, [], "ok", 42, true])("fails without crashing on a non-object JSON body (%j)", async (body) => {
+    const result = await fetchBridgeHealth(vi.fn().mockResolvedValue(json(body)) as any);
+    expect(result).toEqual({ ok: false, error: "Bridge health reply was not a status object" });
+  });
+});
+
+describe("parseBridgeHealthBody", () => {
+  it("is online only for a literal online: true and keeps well-formed fields", () => {
+    const result = parseBridgeHealthBody({
+      online: true,
+      paused: false,
+      pythonVersion: "3.11.4",
+      pyautoguiAvailable: true,
+      screenResolution: { width: 1920, height: 1080 },
+      activeProcesses: [{ name: "bridge", pid: 42, status: "running" }],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.value).toMatchObject({
+      online: true,
+      pythonVersion: "3.11.4",
+      screenResolution: { width: 1920, height: 1080 },
+      activeProcesses: [{ name: "bridge", pid: 42, status: "running" }],
+    });
+  });
+
+  it("drops malformed fields instead of crashing", () => {
+    const result = parseBridgeHealthBody({
+      online: true,
+      pythonVersion: 3,
+      screenResolution: "1920x1080",
+      activeProcesses: [null, "x", { name: "ok", pid: 1, status: "up" }],
+      latencyMs: "fast",
+    });
+    expect(result.value).toMatchObject({
+      pythonVersion: undefined,
+      screenResolution: undefined,
+      activeProcesses: [{ name: "ok", pid: 1, status: "up" }],
+      latencyMs: undefined,
+    });
   });
 });
 
