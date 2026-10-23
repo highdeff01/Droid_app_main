@@ -47,7 +47,7 @@ import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
-  DialogContent,
+  HudDialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
@@ -879,8 +879,8 @@ export const RecordingSessionManager: React.FC<RecordingSessionManagerProps> = (
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-6xl w-[94vw] h-[90vh] bg-slate-950 border border-slate-800 text-slate-100 p-0 flex flex-col overflow-hidden font-mono shadow-2xl rounded-2xl">
+    <Dialog modal={false} open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <HudDialogContent className="max-w-5xl w-[calc(100vw-1rem)] h-[min(80vh,calc(100vh-128px))] bg-slate-950 border border-slate-800 text-slate-100 p-0 flex flex-col overflow-hidden font-mono shadow-2xl rounded-2xl">
         {/* Header Bar */}
         <DialogHeader className="px-6 py-4 border-b border-slate-800/80 bg-slate-900/60 flex flex-row items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -1973,7 +1973,7 @@ export const RecordingSessionManager: React.FC<RecordingSessionManagerProps> = (
             )}
           </div>
         </div>
-      </DialogContent>
+      </HudDialogContent>
     </Dialog>
   );
 };

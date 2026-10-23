@@ -3,7 +3,7 @@ import { Bot, FlaskConical, FolderOpen, Package, Presentation as PresentationIco
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, HudDialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   createPack,
   loadPack,
@@ -279,10 +279,10 @@ export const HudAgentPanel: React.FC<HudAgentPanelProps> = ({ steps, replayRun, 
         </p>
       )}
       {pending && <ApprovalView pending={pending.proposal} onAnswer={answerApproval} />}
-      <Dialog open={!!result} onOpenChange={(open) => !open && setResult(null)}>
-        <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+      <Dialog modal={false} open={!!result} onOpenChange={(open) => !open && setResult(null)}>
+        <HudDialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
           {result && <ResultView result={result} onLoadPlan={handleLoadPlan} />}
-        </DialogContent>
+        </HudDialogContent>
       </Dialog>
     </div>
   );
