@@ -141,6 +141,7 @@ import { cn } from "@/lib/utils";
 import type { ReplayRun } from "@shared/replay";
 import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
 import { MasterAiPanel, type MasterAiPanelProps } from "./master-ai-panel";
+import { AiScopeSelector, useHudScopeRegion } from "./ai-scope-selector";
 import { useOverseerSnapshot } from "@/hooks/use-overseer";
 import { latestCheckups } from "@/lib/overseer-client";
 import { useActivityNotes } from "@/hooks/use-activity-notes";
@@ -377,6 +378,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const frameLayerRef = useRef<HTMLDivElement>(null);
+  useHudScopeRegion(frameLayerRef);
   const stepListRef = useRef<HTMLDivElement>(null);
   const streamSyncIntervalRef = useRef<number | null>(null);
   // Frame sync failures are reported once per failure streak (AI capture would otherwise read a stale frame).
@@ -5079,6 +5081,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <AiScopeSelector />
           {verificationBadge && (
             <div className={`px-2 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 border ${
               verificationBadge.status === "verified"

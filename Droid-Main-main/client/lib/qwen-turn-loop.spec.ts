@@ -323,6 +323,127 @@ describe("runTurnLoop", () => {
     }
   });
 
+  it("pipelinesNextStepPreVerificationWhileStepRuns", async () => {
+    const step1 = makeStep({ id: "s1", name: "Tap OK", action: "click", x: 10, y: 10, targetLabel: "OK" });
+    const step2 = makeStep({ id: "s2", name: "Tap OK again", action: "click", x: 10, y: 10, targetLabel: "OK" });
+    const harness = createHarness({
+      captures: [{ hash: "h0" }, { hash: "h1" }, { hash: "h2" }, { hash: "h3" }],
+      reports: [makeReport({ elements: [IN_PLACE_OK] })],
+      proposals: [{ goal: GOAL, reason: "", steps: [step1, step2] }],
+      gateResults: [{ status: "verified", frame: "gate-frame", report: makeReport({ elements: [IN_PLACE_OK] }), confidence: 0.9 }],
+      assessments: [
+        { complete: false, onTrack: true, reason: "one more" },
+        { complete: true, onTrack: true, reason: "done" },
+      ],
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const timeline: string[] = [];
+    const basePost = harness.deps.post;
+    harness.deps.post = async (url, body, opts) => {
+      if (url !== "/api/replay") return basePost(url, body, opts);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      timeline.push("replay:start");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      timeline.push("replay:end");
+      inFlight -= 1;
+      return basePost(url, body, opts);
+    };
+    const { options, events } = makeOptions({
+      onEvent: (event) => {
+        events.push(event);
+        if (event.pipeline) timeline.push(`pipeline:${event.pipeline.stage}`);
+      },
+    });
+
+    const result = await runTurnLoop(GOAL, options, harness.deps);
+
+    expect(result.status).toBe("completed");
+    // The next step was pre-verified while the first replay was still in flight, then confirmed on the fresh frame.
+    expect(timeline.slice(0, 4)).toEqual(["replay:start", "pipeline:pre", "replay:end", "pipeline:confirmed"]);
+    const pre = events.find((e) => e.pipeline?.stage === "pre");
+    expect(pre?.pipeline).toMatchObject({ step: "Tap OK again", verdict: "pass" });
+    expect(events.find((e) => e.pipeline?.stage === "confirmed")?.pipeline?.verdict).toBe("pass");
+    // Device actions stay serial and every step still passes the gate.
+    expect(maxInFlight).toBe(1);
+    expect(harness.gate).toHaveBeenCalledTimes(2);
+    expect(harness.calls.filter((c) => c.kind === "post" && c.url === "/api/replay")).toHaveLength(2);
+  });
+
+  it("narratesEachStepFromVerifyAndProgress", async () => {
+    const step = makeStep({ id: "s1", name: "Tap OK", action: "click", x: 10, y: 10, targetLabel: "OK" });
+    const harness = createHarness({
+      captures: [{ hash: "h0" }, { hash: "h1" }, { hash: "h2" }],
+      reports: [makeReport({ elements: [IN_PLACE_OK] })],
+      proposals: [{ goal: GOAL, reason: "", steps: [step] }],
+    });
+    const { options, events } = makeOptions();
+
+    await runTurnLoop(GOAL, options, harness.deps);
+
+    const narrated = events.filter((e) => e.narration);
+    expect(narrated).toHaveLength(1);
+    expect(narrated[0].narration).toEqual({
+      step: "Tap OK",
+      passed: true,
+      checks: "Screen changed",
+      progress: "on_track",
+      progressReason: undefined,
+      nextObjective: null,
+    });
+    expect(events.every((e) => e.goal === GOAL)).toBe(true);
+  });
+
+  it("continuesWithoutApprovalWhenAPageChangeIsOnTrack", async () => {
+    const step = makeStep({ id: "s1", action: "click", x: 10, y: 10, targetLabel: "OK", expectation: { kind: "text_found", text: "Saved" } });
+    const fixStep = makeStep({ id: "s2", action: "wait" });
+    const harness = createHarness({
+      captures: [{ hash: "h0" }, { hash: "h1" }, { hash: "h2" }, { hash: "h3" }, { hash: "h4" }, { hash: "h5" }],
+      reports: [makeReport({ elements: [IN_PLACE_OK] })],
+      proposals: [
+        { goal: GOAL, reason: "", steps: [step] },
+        { goal: GOAL, reason: "keep filling the form", steps: [fixStep] },
+      ],
+      assessments: [
+        { complete: false, onTrack: true, reason: "Form advanced to page 2" },
+        { complete: true, onTrack: true, reason: "Submitted" },
+      ],
+    });
+    const approve = vi.fn().mockResolvedValue(false);
+    const { options, events } = makeOptions({ approve });
+
+    const result = await runTurnLoop(GOAL, options, harness.deps);
+
+    expect(result.status).toBe("completed");
+    expect(approve).not.toHaveBeenCalled();
+    expect(events.some((e) => e.phase === "awaiting_approval")).toBe(false);
+    expect(events.some((e) => e.message.startsWith("Continuing toward the goal without pausing"))).toBe(true);
+    expect(harness.calls.filter((c) => c.kind === "post" && c.url === "/api/replay")).toHaveLength(2);
+  });
+
+  it("pausesForApprovalWhenAPageChangeIsABlocker", async () => {
+    const step = makeStep({ id: "s1", action: "click", x: 10, y: 10, targetLabel: "OK", expectation: { kind: "text_found", text: "Saved" } });
+    const harness = createHarness({
+      captures: [{ hash: "h0" }, { hash: "h1" }, { hash: "h2" }],
+      reports: [makeReport({ elements: [IN_PLACE_OK] })],
+      proposals: [
+        { goal: GOAL, reason: "", steps: [step] },
+        { goal: GOAL, reason: "dismiss", steps: [step] },
+      ],
+      assessments: [{ complete: false, onTrack: false, reason: "A payment modal appeared" }],
+    });
+    const approve = vi.fn().mockResolvedValue(false);
+    const { options, events } = makeOptions({ approve });
+
+    const result = await runTurnLoop(GOAL, options, harness.deps);
+
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.phase === "awaiting_approval" && e.message.includes("A payment modal appeared"))).toBe(true);
+    expect(harness.calls.filter((c) => c.kind === "post" && c.url === "/api/replay")).toHaveLength(1);
+    expect(result.status).toBe("failed");
+  });
+
   it("capturesBeforeAnswering", async () => {
     const harness = createHarness({ answers: ["What is here? It's a dialog box."] });
     const { options, chain } = makeOptions({ entry: "answer", question: "What is here?" });
