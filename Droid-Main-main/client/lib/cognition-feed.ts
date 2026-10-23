@@ -67,6 +67,7 @@ export const INITIAL_COGNITION: CognitionState = {
 
 /** Folds one real loop event into the panel state; fields the event does not carry keep their last real value. */
 export function reduceCognition(state: CognitionState, event: GoalLoopEvent): CognitionState {
+  if (event.pipeline?.stage === "pre") return reduceBackgroundPreVerify(state, event);
   const kind = PHASE_ACTIVITY[event.phase];
   const hasPoint = typeof event.x === "number" && typeof event.y === "number";
   return {
@@ -81,6 +82,20 @@ export function reduceCognition(state: CognitionState, event: GoalLoopEvent): Co
     narration: event.narration ?? state.narration,
     pipeline: event.pipeline ?? state.pipeline,
     activity: kind ? { kind, message: event.message } : null,
+  };
+}
+
+/**
+ * A background agent's pre-check of the next step runs while the current step
+ * is dispatched: it updates only the next step and the pipeline line, leaving
+ * the activity notice, phase and thought of the step in flight untouched.
+ */
+function reduceBackgroundPreVerify(state: CognitionState, event: GoalLoopEvent): CognitionState {
+  return {
+    ...state,
+    goal: event.goal ?? state.goal,
+    next: event.next !== undefined ? event.next : state.next,
+    pipeline: event.pipeline ?? state.pipeline,
   };
 }
 

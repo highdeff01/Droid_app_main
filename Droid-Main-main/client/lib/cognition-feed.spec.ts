@@ -93,6 +93,16 @@ describe("cognition panel mapping", () => {
 });
 
 describe("activity notices", () => {
+  it("keeps the acting notice and thought while a background pre-verification reports", () => {
+    const state = fold([
+      { phase: "acting", message: "Acting: Tap OK" },
+      { phase: "verifying", message: "Pre-verifying next step", pipeline: { stage: "pre", step: "Tap OK again", verdict: "pass", reason: "found" } },
+    ]);
+    expect(state.activity).toEqual({ kind: "acting", message: "Acting: Tap OK" });
+    expect(state.thought).toBe("Acting: Tap OK");
+    expect(state.pipeline?.step).toBe("Tap OK again");
+  });
+
   it("separates thinking, acting and plain replay", () => {
     expect(fold([{ phase: "verifying", message: "v" }]).activity?.kind).toBe("thinking");
     expect(fold([{ phase: "awaiting_approval", message: "a" }]).activity?.kind).toBe("thinking");
