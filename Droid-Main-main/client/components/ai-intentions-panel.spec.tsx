@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { UserHabitProfile } from "@shared/learning";
 import { AiIntentionsPanel, type AiIntentionsPanelProps } from "./ai-intentions-panel";
+import type { RunnableGoal } from "@/lib/ai-intentions";
 
 function makeProfile(overrides: Partial<UserHabitProfile> = {}): UserHabitProfile {
   return {
@@ -107,6 +108,67 @@ describe("AiIntentionsPanel completed goals", () => {
     const markup = renderPanel({ goals: [goal] });
 
     expect(markup).toContain(`data-completed-goal="${goal.id}"`);
+  });
+});
+
+describe("AiIntentionsPanel goal verdicts", () => {
+  function makeGoal(overrides: Partial<RunnableGoal> = {}): RunnableGoal {
+    return {
+      id: "goal-1",
+      title: "Check inbox",
+      description: "",
+      priority: 3 as const,
+      status: "in_progress" as const,
+      category: "navigation" as const,
+      targetRegion: { x: 0, y: 0, width: 0, height: 0 },
+      targetCenter: { x: 0, y: 0 },
+      targetLabel: "",
+      policy: {
+        mode: "strict_verification" as const,
+        maxRetries: 0,
+        timeoutSeconds: 30,
+        requireVisualConfirmation: true,
+        autoTriggerOnCaptcha: false,
+      },
+      dependencies: [],
+      subtasks: [],
+      progressPercent: 0,
+      ...overrides,
+    };
+  }
+
+  it("shows a completed goal with its assessment reason in the completed list", () => {
+    const goal = makeGoal({
+      status: "completed",
+      assessment: { complete: true, onTrack: true, reason: "Inbox shows 0 unread" },
+    });
+
+    const markup = renderPanel({ goals: [goal] });
+
+    expect(markup).toContain(`data-completed-goal="${goal.id}"`);
+    expect(markup).toContain("Inbox shows 0 unread");
+  });
+
+  it("shows an on-track, incomplete goal as not complete with its reason", () => {
+    const goal = makeGoal({
+      status: "in_progress",
+      assessment: { complete: false, onTrack: true, reason: "Still on login" },
+    });
+
+    const markup = renderPanel({ goals: [goal] });
+
+    expect(markup).toContain("Not complete: Still on login");
+  });
+
+  it("shows an off-track goal as off track with its reason", () => {
+    const goal = makeGoal({
+      status: "in_progress",
+      assessment: { complete: false, onTrack: false, reason: "Wrong screen" },
+    });
+
+    const markup = renderPanel({ goals: [goal] });
+
+    expect(markup).toContain("Off track: Wrong screen");
   });
 });
 

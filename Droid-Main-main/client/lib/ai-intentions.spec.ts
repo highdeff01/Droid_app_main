@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayRun } from "@shared/replay";
 import type { ClickZone, UserHabitProfile } from "@shared/learning";
+import type { GoalAssessment } from "@shared/goal-loop";
 import type { GateResult, GateTarget } from "@/lib/action-gate";
 import type { ComplexGoal } from "@/components/goals-manager-panel";
 import type { SequenceStep } from "@/components/live-screen-hud";
 import {
+  applyAssessmentToGoal,
   applyRunToGoal,
   correctionOutcomes,
   deriveIntention,
@@ -256,7 +258,7 @@ describe("gateOutcome", () => {
 
 describe("goalStatusFromRun", () => {
   it.each([
-    ["completed", "completed"],
+    ["completed", "in_progress"],
     ["failed", "failed"],
     ["cancelled", "blocked"],
     ["running", "in_progress"],
@@ -311,7 +313,9 @@ describe("syncGoalsWithRun", () => {
 
     const result = syncGoalsWithRun(goals, { g1: "run-1" }, run);
 
-    expect(result.find((g) => g.id === "g1")?.status).toBe("completed");
+    const updated = result.find((g) => g.id === "g1");
+    expect(updated?.status).toBe("in_progress");
+    expect(updated?.progressPercent).toBe(100);
     expect(result.find((g) => g.id === "g2")).toBe(unlinked);
   });
 
@@ -424,6 +428,42 @@ describe("newStepOutcomes", () => {
 
     expect(first.map((o) => o.kind)).toEqual(["step_completed", "step_failed"]);
     expect(second).toEqual([]);
+  });
+});
+
+describe("applyAssessmentToGoal", () => {
+  function makeAssessment(overrides: Partial<GoalAssessment> = {}): GoalAssessment {
+    return { complete: false, onTrack: true, reason: "Still on login", ...overrides };
+  }
+
+  it("checks the goal off as completed when the assessment says complete", () => {
+    const goal = makeGoal({ status: "in_progress" });
+    const assessment = makeAssessment({ complete: true, reason: "Inbox shows 0 unread" });
+
+    const updated = applyAssessmentToGoal(goal, assessment);
+
+    expect(updated.status).toBe("completed");
+    expect(updated.assessment).toBe(assessment);
+  });
+
+  it("keeps an incomplete, on-track goal in_progress with the reason recorded", () => {
+    const goal = makeGoal({ status: "in_progress" });
+    const assessment = makeAssessment({ complete: false, onTrack: true, reason: "Still on login" });
+
+    const updated = applyAssessmentToGoal(goal, assessment);
+
+    expect(updated.status).toBe("in_progress");
+    expect(updated.assessment?.reason).toBe("Still on login");
+  });
+
+  it("blocks an incomplete, off-track goal with the reason recorded", () => {
+    const goal = makeGoal({ status: "in_progress" });
+    const assessment = makeAssessment({ complete: false, onTrack: false, reason: "Wrong screen" });
+
+    const updated = applyAssessmentToGoal(goal, assessment);
+
+    expect(updated.status).toBe("blocked");
+    expect(updated.assessment?.reason).toBe("Wrong screen");
   });
 });
 

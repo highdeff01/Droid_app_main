@@ -121,7 +121,7 @@ function goalRunner(env: RunnerEnv): OperationRunner {
     if (result.status === "failed") return { status: "failed", reason: result.reason };
     return {
       status: "completed",
-      detail: `Goal reached with ${result.steps.length} verified step(s)`,
+      detail: `Goal reached with ${result.steps.length} verified step(s); assessment: ${result.evidence.goalAssessment.reason}`,
       next: [{ kind: "save_flow", title: `Save best flow: ${goal}`, payload: { goal, steps: result.steps, evidence: result.evidence } }],
     };
   };
