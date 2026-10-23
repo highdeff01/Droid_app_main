@@ -10,6 +10,10 @@ import { postDeviceAction } from "@/lib/gated-dispatch";
 export async function reportDeviceAction(url: string, body: unknown, actionLabel: string): Promise<any> {
   try {
     const reply = await postDeviceAction(url, body);
+    if (reply?.preview === true) {
+      toast.info(`${actionLabel}: ${reply.message}`);
+      return reply;
+    }
     const { level, text } = describeDeviceOutcome(reply ?? {}, actionLabel);
     toast[level](text);
     return reply;

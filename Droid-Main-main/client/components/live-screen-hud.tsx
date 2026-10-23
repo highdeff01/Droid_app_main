@@ -171,6 +171,8 @@ import {
 } from "@/lib/hud-actions";
 import { HudAgentPanel } from "./hud-agent-panel";
 import { PythonBridgeStatusChip } from "./python-bridge-status-chip";
+import { PreviewModeBadge } from "./preview-mode-banner";
+import { PREVIEW_BADGE, isPreviewActive } from "@/lib/preview-mode";
 import type { GoalDevice, GoalLoopEvent } from "@/lib/qwen-turn-loop";
 import type { HudSuggestedAction } from "@shared/api";
 
@@ -889,19 +891,24 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       x,
       y,
       frame: sequence.length + 1,
-      text: `[DEVICE BRIDGE] ${action.toUpperCase()} @ (${x}, ${y})`,
+      text: `${isPreviewActive() ? `[${PREVIEW_BADGE}]` : "[DEVICE BRIDGE]"} ${action.toUpperCase()} @ (${x}, ${y})`,
     });
     setTimeout(() => setHudActiveClickPoint(null), 600);
 
-    let result: { simulated: boolean; message: string };
+    let result: Awaited<ReturnType<typeof dispatchInteractiveAction>>;
     try {
       result = await dispatchInteractiveAction({ action, x, y, ...extra });
     } catch (err) {
       toast.error(`${action} @ (${x}, ${y}) failed: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
-    const where = result.simulated ? "virtual only (no display on the bridge)" : "executed on device";
-    toast.success(`${action} @ (${x}, ${y}): ${where}`, { description: result.message });
+    if (result.preview) {
+      toast.info(result.message);
+      logActionExecution({ level: "action", message: result.message, targetCoords: { x, y } });
+    } else {
+      const where = result.simulated ? "virtual only (no display on the bridge)" : "executed on device";
+      toast.success(`${action} @ (${x}, ${y}): ${where}`, { description: result.message });
+    }
 
     // Step auto-recording during usage, only after the dispatch succeeded
     if (autoRecordDuringUsage) {
@@ -2239,6 +2246,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       }}
     >
       <PythonBridgeStatusChip className={cn("absolute top-2 left-1/2 -translate-x-1/2", HUD_LAYERS.floating)} />
+      <PreviewModeBadge className={cn("absolute top-9 left-1/2 -translate-x-1/2", HUD_LAYERS.floating)} />
       {/* Fullscreen Floating Controls */}
       {hudSizeMode === "fullscreen" && (
         <div onClick={(e) => e.stopPropagation()} className={cn("absolute top-14 right-4 flex items-center gap-2 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded-xl shadow-2xl backdrop-blur-md", HUD_LAYERS.floating)}>

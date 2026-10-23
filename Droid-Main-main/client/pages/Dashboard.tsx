@@ -72,6 +72,9 @@ import { reportDeviceAction } from "@/lib/device-action-report";
 import { PythonBridgeStatusChip } from "@/components/python-bridge-status-chip";
 import { safeFetchJson, safePostJson } from "@/lib/api-helper";
 import { BACKEND_UNREACHABLE_MESSAGE, isBackendUnreachable } from "@/lib/backend-status";
+import { PREVIEW_BADGE, isPreviewActive, previewLabel } from "@/lib/preview-mode";
+import { simulateReplayRun } from "@/lib/preview-replay";
+import { PREVIEW_SEQUENCE_REASON } from "@/lib/gated-dispatch";
 import { describeCaptureFailure } from "@/lib/hud-frame-status";
 import { submitOnEnter } from "@/lib/chat-submit";
 import { companionApi } from "@/lib/companion-api";
@@ -1009,6 +1012,21 @@ export default function Dashboard({
   const releaseSequence = () => {
     sequenceRunningRef.current = false; setIsSequenceRunning(false); setIsAutonomousRunning(false);
   };
+  // Preview Mode: steps advance the timeline, cursor and feed on the simulated surface; nothing is dispatched.
+  const runPreviewSequence = async (steps: SequenceStep[]) => {
+    replayStopRequested.current = false;
+    setVerificationBadge({ status: "verifying", message: `${PREVIEW_BADGE}: running ${steps.length} step(s) on the simulated surface` });
+    toast.info(previewLabel(`running ${steps.length} step(s); nothing is sent to a device`));
+    const run = await simulateReplayRun(steps, {
+      stopped: () => replayStopRequested.current,
+      onUpdate: (snapshot, step) => {
+        applyReplay(snapshot);
+        if (step) setAiThinking({ x: step.x, y: step.y, action: previewLabel(step.name || step.action), isThinking: false, targetLabel: step.name });
+      },
+    });
+    setVerificationBadge({ status: "failed", message: run.error ?? PREVIEW_SEQUENCE_REASON });
+    return undefined;
+  };
   // Goal-loop phases drive the HUD truthfully: thinking/analyzing/verifying/acting/awaiting approval.
   const [turnChain, setTurnChain] = useState<string | null>(null);
   const turnDevice = { targetDevice, deviceId: selectedAdbDevice || undefined, apiKey: replayApiKey || undefined };
@@ -1026,6 +1044,9 @@ export default function Dashboard({
     const steps = Array.isArray(stepsToRun) ? stepsToRun : sequence;
     if (!steps.length) { toast.info(NO_RECORDED_STEPS_MESSAGE); return; }
     actionBusyRef.current = true;
+    if (isPreviewActive()) {
+      try { return await runPreviewSequence(steps); } finally { actionBusyRef.current = false; }
+    }
     sequenceRunningRef.current = true;
     replayStopRequested.current = false;
     setIsSequenceRunning(true);
@@ -1127,7 +1148,7 @@ export default function Dashboard({
       x: task.targetPosition?.x ?? task.x ?? 0, y: task.targetPosition?.y ?? task.y ?? 0,
       text: task.textPayload ?? task.text, keyPayload: task.keyPayload ?? task.key,
     }]);
-    if (!id) throw new Error("Action was not dispatched: screen verification failed, was cancelled, or another action is running.");
+    if (!id) throw new Error(isPreviewActive() ? PREVIEW_SEQUENCE_REASON : "Action was not dispatched: screen verification failed, was cancelled, or another action is running.");
     await waitForReplay(id);
     return new Response(JSON.stringify({ success: true, verified: true }), { status: 200, headers: { "Content-Type": "application/json" } });
   };

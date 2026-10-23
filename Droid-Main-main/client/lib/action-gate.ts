@@ -2,7 +2,8 @@ import type {
   DetectedUIElement,
   ScreenPerceptionReport,
 } from "@/components/dual-ai-copilot-panel";
-import { readApiJson } from "@/lib/backend-status";
+import { BackendNotRunningError, readJsonReply } from "@/lib/backend-status";
+import { getAiScope, scopeReport, scopeTarget, type AiScope } from "@/lib/ai-scope";
 
 /** Slack around an element's bounding box when matching the action point. */
 export const TARGET_PADDING_PX = 12;
@@ -180,7 +181,9 @@ export const postGateJson: GatePost = async (url, body, { apiKey, signal }) => {
     body: JSON.stringify(body),
     signal,
   });
-  const data = await readApiJson(response, url);
+  const reply = await readJsonReply(response);
+  if (!reply.json) throw new Error(`${backendNonJsonReason(reply.status)}. ${new BackendNotRunningError(url, reply.status).message}`);
+  const data = reply.body;
   if (!response.ok || data?.success !== true) {
     throw new Error(data?.error || `${url} failed`);
   }
@@ -364,7 +367,13 @@ export async function runActionGate(
       inspection = await inspectOnce(scopedRequest, post);
     } catch (error) {
       if (signal.aborted) return CANCELLED;
-      return blocked(scopedRequest, error as GateStageError, attempts);
+      if (transientRetries >= MAX_TRANSIENT_RETRIES) {
+        return blocked(scopedRequest, error as GateStageError, attempts);
+      }
+      transientRetries++;
+      await sleep(TRANSIENT_RETRY_BACKOFF_MS, signal);
+      if (signal.aborted) return CANCELLED;
+      continue;
     }
     if (signal.aborted) return CANCELLED;
     const { frame, report, point } = inspection;
