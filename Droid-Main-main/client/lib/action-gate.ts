@@ -2,7 +2,7 @@ import type {
   DetectedUIElement,
   ScreenPerceptionReport,
 } from "@/components/dual-ai-copilot-panel";
-import { BackendNotRunningError, readJsonReply } from "@/lib/backend-status";
+import { readApiJson } from "@/lib/backend-status";
 import { getAiScope, scopeReport, scopeTarget, type AiScope } from "@/lib/ai-scope";
 
 /** Slack around an element's bounding box when matching the action point. */

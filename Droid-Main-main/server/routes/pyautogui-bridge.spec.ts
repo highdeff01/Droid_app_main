@@ -249,4 +249,14 @@ describe("pyautogui bridge honest fallbacks", () => {
     const res = await run(handleReplayTrail, { trail: [{ x: 1, y: 2 }] });
     expect(res.body).toMatchObject({ success: true, status: "executed", executedOnHardware: true, replayedPoints: 1 });
   });
+
+  it("replay trail dispatches the recorded waypoints with their recorded timing", async () => {
+    const res = await run(handleReplayTrail, {
+      trail: [
+        { x: 1, y: 2, time: 1000 },
+        { x: 30, y: 40, time: 1250, isClick: true },
+      ],
+    });
+    expect(res.body).toMatchObject({ success: true, status: "executed", executedOnHardware: true, replayedPoints: 2 });
+  });
 });

@@ -23,6 +23,7 @@ import {
   type TurnLoopResult,
 } from "@/lib/qwen-turn-loop";
 import { parseProposedSteps, type GoalStep, type PlanProposal, type RunEvidence } from "@shared/goal-loop";
+import { toGoalSteps } from "@/lib/hud-replay";
 import type { HudPack } from "@shared/api";
 import type { ReplayRun } from "@shared/replay";
 
@@ -54,27 +55,6 @@ export interface HudAgentPanelProps {
 }
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-/** The HUD sequence as goal steps; a step the turn loop cannot verify is reported, never dropped silently. */
-function toGoalSteps(steps: HudStepLike[]): GoalStep[] {
-  const goalSteps = parseProposedSteps(
-    steps.map((step) => ({
-      id: step.id,
-      name: step.name,
-      action: step.action,
-      x: Math.max(0, Math.round(step.x)),
-      y: Math.max(0, Math.round(step.y)),
-      targetLabel: step.targetOcrLabel,
-      text: step.text,
-      delayMs: step.delayMs === undefined ? undefined : Math.min(5000, Math.max(0, Math.round(step.delayMs))),
-    })),
-    "hud_step",
-  );
-  if (goalSteps.length !== steps.length) {
-    throw new Error(`${steps.length - goalSteps.length} step(s) have an action or value the turn loop cannot verify`);
-  }
-  return goalSteps;
-}
 
 async function saveVerifiedRun(device: GoalDevice, goal: string, run: { steps: GoalStep[]; evidence: RunEvidence }) {
   const response = await fetch("/api/goal-workflows/flows", {
