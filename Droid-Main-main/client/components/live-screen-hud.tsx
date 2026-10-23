@@ -272,6 +272,8 @@ export interface RecalibrationNotice {
 
 interface LiveScreenHUDProps {
   screenshotUrl: string;
+  /** Headline for the empty state when a selected source (e.g. the phone) has no real frame. */
+  emptyStateNotice?: string;
   isCapturing: boolean;
   aiThinking: AIThinkingState | null;
   entities: DetectedEntity[];
@@ -342,6 +344,7 @@ interface LiveScreenHUDProps {
 
 export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   screenshotUrl,
+  emptyStateNotice,
   isCapturing,
   aiThinking,
   entities,
@@ -3565,6 +3568,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         {frameSource === "none" && (
           <HudEmptyState
             shareError={screenShareError}
+            notice={emptyStateNotice}
             isRequestingShare={isRequestingScreenShare}
             onStartShare={handleToggleRealScreenStream}
           />
