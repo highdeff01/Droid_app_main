@@ -104,6 +104,13 @@ import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
 import { readJsonResponse } from "@/lib/api-helper";
 import {
+  NO_HARDWARE_CLICKS_MESSAGE,
+  NO_RECORDED_STEPS_MESSAGE,
+  NO_REPLAY_PATH_MESSAGE,
+  selectReplayWaypoints,
+  selectedReplaySteps,
+} from "@/lib/replay-waypoints";
+import {
   frameBoxAsPercent,
   frameBoxContains,
   framePointAsPercent,
@@ -1349,7 +1356,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   const handleToggleAutoPlayWorkflow = () => {
     const steps = getScopedFlowSteps();
-    if (!steps.length || !onReplaySteps) { toast.info("Select a flow with recorded steps to replay"); return; }
+    if (!steps.length) { toast.info(NO_RECORDED_STEPS_MESSAGE); return; }
+    if (!onReplaySteps) { toast.error("Verified replay is unavailable here"); return; }
     onReplaySteps(steps);
   };
 
@@ -1579,7 +1587,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   // AI Play Similar Action on Screen for Frames 1-10 with PC Execution & Clickpoint ("..")
   const handleReplayFrames1To10OnPC = async () => {
-    if (!sequence.length || !onReplaySteps) { toast.info("Add recorded steps before replaying frames"); return; }
+    if (!sequence.length) { toast.info(NO_RECORDED_STEPS_MESSAGE); return; }
+    if (!onReplaySteps) { toast.error("Verified replay is unavailable here"); return; }
     onReplaySteps(sequence.slice(0, 10));
     setQwenLiveThought("Replay requested; fresh screenshot decisions appear in the Replay agent monitor.");
   };
@@ -1870,10 +1879,14 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
     }, 1000);
   };
 
-  // Replay exact recorded user mouse trail directly on PC via PyAutoGUI & Subprocess
+  // Execute on hardware: the chosen sequence steps (else the trail's recorded clicks) go through
+  // onReplaySteps → gate-verified /api/replay, which moves the real mouse via the device bridge.
   const handleExecuteRecordedTrailOnPC = async () => {
+    if (!onReplaySteps) { toast.error("Verified replay is unavailable here"); return; }
+    const steps = selectedReplaySteps(sequence, selectedStepIds);
+    if (steps.length > 0) { onReplaySteps(steps); return; }
     const clicks = liveMouseTrail.filter(point => point.isClick);
-    if (!clicks.length || !onReplaySteps) { toast.info("Record click actions first; movement-only trails are previewable"); return; }
+    if (!clicks.length) { toast.info(NO_HARDWARE_CLICKS_MESSAGE); return; }
     onReplaySteps(clicks.slice(0, 100).map((point, index) => ({ id: `trail-${Date.now()}-${index}`, stepNumber: index + 1, name: `Recorded click ${index + 1}`, action: "click", x: point.x, y: point.y, delayMs: 500, status: "pending" })));
   };
 
@@ -1885,39 +1898,30 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   // Physically execute entire sequence or active step on real user desktop via PyAutoGUI
   // With detailed step-by-step progress updates, frame-by-frame diff verification, and auto-recalculation
   const handleExecuteAllOnActualPC = async () => {
-    if (!sequence.length) { toast.info("Record or add actions before replaying"); return; }
-    if (!onRunSequence) { toast.error("Verified replay is unavailable here"); return; }
-    onRunSequence();
+    const steps = selectedReplaySteps(sequence, selectedStepIds);
+    if (!steps.length) { toast.info(NO_RECORDED_STEPS_MESSAGE); return; }
+    if (!onReplaySteps) { toast.error("Verified replay is unavailable here"); return; }
+    onReplaySteps(steps);
     setAiCheckStatus({ status: "verifying", message: "Replay requested. Inspect the Replay agent monitor for actual completion and screenshot evidence." });
   };
 
   const handleReplayUserMovementWithDrift = (executeOnHardware = false) => {
     if (executeOnHardware) { void handleExecuteRecordedTrailOnPC(); return; }
-    if (sequence.length === 0 && recordedTrajectory.length === 0 && liveMouseTrail.length === 0) {
-      alert("Please record or create at least one step/path to replay.");
+    const selection = selectReplayWaypoints(
+      selectedReplaySteps(sequence, selectedStepIds),
+      liveMouseTrail,
+      recordedTrajectory,
+    );
+    if (!selection) {
+      toast.info(NO_REPLAY_PATH_MESSAGE);
       return;
     }
 
     setIsReplayingMovement(true);
     setSplineMotionTrail([]);
 
-    // Determine waypoints: prioritize liveMouseTrail, then sequence steps, then recorded trajectory
-    const waypoints =
-      liveMouseTrail.length > 0
-        ? liveMouseTrail.map((pt) => ({
-            x: pt.x,
-            y: pt.y,
-            dwell: pt.isClick ? 300 : 20,
-            isClick: !!pt.isClick,
-          }))
-        : sequence.length > 0
-        ? sequence.map((s) => ({
-            x: s.x,
-            y: s.y,
-            dwell: s.dwellDurationMs || 350,
-            isClick: s.action?.includes("click") ?? true,
-          }))
-        : recordedTrajectory.map((t) => ({ x: t.x, y: t.y, dwell: 40, isClick: false }));
+    // Sequence steps (selected ones first) win over a possibly stale live trail.
+    const { waypoints } = selection;
 
     let currentWaypointIdx = 0;
     let startX = waypoints[0]?.x || 960;
