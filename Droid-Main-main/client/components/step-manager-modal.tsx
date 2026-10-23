@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { HUD_MODAL_BOX_CLASS, HUD_MODAL_FRAME_CLASS } from "@/lib/hud-layout";
+import { cn } from "@/lib/utils";
 import { DiffFramesTestModal } from "./DiffFramesTestModal";
 
 export interface WorkflowStep {
@@ -235,7 +236,7 @@ export const StepManagerModal: React.FC<StepManagerModalProps> = ({
       />
 
       <div className={HUD_MODAL_FRAME_CLASS}>
-        <div className={`bg-slate-900 border border-cyan-500/70 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden font-mono text-xs ${HUD_MODAL_BOX_CLASS}`}>
+        <div className={cn("bg-slate-900 border border-cyan-500/70 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden font-mono text-xs", HUD_MODAL_BOX_CLASS)}>
           {/* Header */}
           <div className="px-5 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-3">

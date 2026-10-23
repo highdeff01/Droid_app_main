@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import {
   Dialog,
-  DialogContent,
+  HudDialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -160,8 +160,8 @@ export const AIWorkflowReviewModal: React.FC<AIWorkflowReviewModalProps> = ({
     "text-amber-400 border-amber-500 bg-amber-950/70";
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl bg-slate-950 border border-cyan-500/50 text-slate-100 font-mono shadow-2xl p-0 overflow-hidden max-h-[88vh] flex flex-col">
+    <Dialog modal={false} open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <HudDialogContent className="max-w-3xl bg-slate-950 border border-cyan-500/50 text-slate-100 font-mono shadow-2xl p-0 overflow-hidden max-h-[88vh] flex flex-col">
         <DialogHeader className="p-4 bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 border-b border-slate-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -369,7 +369,7 @@ export const AIWorkflowReviewModal: React.FC<AIWorkflowReviewModalProps> = ({
             )}
           </div>
         </div>
-      </DialogContent>
+      </HudDialogContent>
     </Dialog>
   );
 };

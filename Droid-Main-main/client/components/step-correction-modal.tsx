@@ -1,5 +1,5 @@
 import React from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
+import { Dialog, HudDialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import {
@@ -68,8 +68,8 @@ export const StepCorrectionModal: React.FC<StepCorrectionModalProps> = ({
   const candidateY = correctionData.detectedCoords?.y ?? correctionData.expectedCoords.y;
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl bg-slate-950 border-2 border-amber-500/80 text-slate-100 p-6 shadow-2xl shadow-amber-950/60 font-mono">
+    <Dialog modal={false} open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <HudDialogContent className="max-w-3xl bg-slate-950 border-2 border-amber-500/80 text-slate-100 p-6 shadow-2xl shadow-amber-950/60 font-mono">
         <DialogHeader>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -230,7 +230,7 @@ export const StepCorrectionModal: React.FC<StepCorrectionModalProps> = ({
             </Button>
           </div>
         </DialogFooter>
-      </DialogContent>
+      </HudDialogContent>
     </Dialog>
   );
 };

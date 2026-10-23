@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { HUD_LAYERS } from "@/lib/hud-layout";
 
 const Dialog = DialogPrimitive.Root;
 
@@ -50,6 +51,40 @@ const DialogContent = React.forwardRef<
   </DialogPortal>
 ));
 DialogContent.displayName = DialogPrimitive.Content.displayName;
+
+/**
+ * HUD variant of DialogContent: no full-window overlay and the non-blocking HUD
+ * modal layer, so the screen canvas and HUD controls stay visible and clickable.
+ * Pair it with `<Dialog modal={false}>` so outside clicks reach the HUD.
+ */
+const HudDialogContent = React.forwardRef<
+  React.ElementRef<typeof DialogPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
+>(({ className, children, onInteractOutside, ...props }, ref) => (
+  <DialogPortal>
+    <DialogPrimitive.Content
+      ref={ref}
+      onInteractOutside={(e) => {
+        e.preventDefault();
+        onInteractOutside?.(e);
+      }}
+      className={cn(
+        "fixed left-[50%] top-[50%] grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg sm:rounded-lg",
+        className,
+        HUD_LAYERS.modal,
+        "max-h-[calc(100vh-128px)] max-w-[calc(100vw-1rem)] overflow-y-auto",
+      )}
+      {...props}
+    >
+      {children}
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring">
+        <X className="h-4 w-4" />
+        <span className="sr-only">Close</span>
+      </DialogPrimitive.Close>
+    </DialogPrimitive.Content>
+  </DialogPortal>
+));
+HudDialogContent.displayName = "HudDialogContent";
 
 const DialogHeader = ({
   className,
@@ -113,6 +148,7 @@ export {
   DialogClose,
   DialogTrigger,
   DialogContent,
+  HudDialogContent,
   DialogHeader,
   DialogFooter,
   DialogTitle,
