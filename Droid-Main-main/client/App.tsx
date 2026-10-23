@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { lazy, Suspense } from "react";
 import { RouteErrorBoundary } from "@/components/route-error-boundary";
 import { BridgeHealthMonitorFooter } from "@/components/bridge-health-monitor-footer";
+import { BackendUnreachableBanner } from "@/components/backend-unreachable-banner";
 
 import Dashboard from "./pages/Dashboard";
 const AiMonitor = lazy(() => import("./pages/AiMonitor"));
@@ -28,6 +29,7 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
+        <BackendUnreachableBanner />
         <BrowserRouter>
           <Suspense fallback={<RouteLoadingFallback />}>
             <div className="pb-10">

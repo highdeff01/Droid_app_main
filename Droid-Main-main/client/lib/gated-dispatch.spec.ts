@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_REINSPECTIONS, gateTargetForAction, type GatePost } from "./action-gate";
-import { gateFailure, runGatedSequence } from "./gated-dispatch";
+import { gateFailure, postDeviceAction, runGatedSequence } from "./gated-dispatch";
+import { BACKEND_UNREACHABLE_MESSAGE, setBackendStatus } from "./backend-status";
 
 function makeElement(overrides: Record<string, unknown> = {}) {
   return {
@@ -31,6 +32,41 @@ function makeReport(overrides: Record<string, unknown> = {}) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  setBackendStatus({ state: "unknown", aiStudio: false });
+});
+
+describe("backend unreachable fail-fast", () => {
+  it("blocks a gated run with the banner reason before any request", async () => {
+    setBackendStatus({ state: "unreachable", aiStudio: false });
+    const post = vi.fn();
+    const dispatch = vi.fn();
+    const result = await runGatedSequence([{ target: { x: 1, y: 1, label: "Button", needsTarget: true }, dispatch }], {
+      targetDevice: "desktop",
+      signal: new AbortController().signal,
+      post: post as any,
+    });
+    expect(result).toEqual({ status: "blocked", reason: BACKEND_UNREACHABLE_MESSAGE, results: [] });
+    expect(post).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a device POST without fetching while unreachable", async () => {
+    setBackendStatus({ state: "unreachable", aiStudio: true });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(postDeviceAction("/api/pyautogui/bridge", {})).rejects.toThrow(BACKEND_UNREACHABLE_MESSAGE);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports an HTML device reply as a failure, never success", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<!doctype html><html></html>", { status: 200 })));
+    expect(await postDeviceAction("/api/pyautogui/bridge", {})).toEqual({
+      success: false,
+      executed: false,
+      error: "Non-JSON response (HTTP 200)",
+    });
+  });
 });
 
 describe("runGatedSequence", () => {

@@ -1,5 +1,7 @@
 /** Honest empty-state content for the HUD when no real captured frame is available. */
 
+import { readJsonReply } from "@/lib/backend-status";
+
 export interface CaptureStandby {
   /** Server's standby message from /api/capture-screen (503), when it answered. */
   message?: string | null;
@@ -22,9 +24,24 @@ export interface HudEmptyState {
 /** Reads the capture endpoint's reply into a standby reason; a live frame (200) yields null. */
 export async function readCaptureStandby(response: Response): Promise<CaptureStandby | null> {
   if (response.ok) return null;
-  const body = await response.json().catch(() => null);
+  const reply = await readJsonReply(response);
+  const body = reply.json ? reply.body : null;
   if (!body) return { error: `Capture endpoint returned non-JSON (HTTP ${response.status})` };
   return { message: typeof body.message === "string" ? body.message : `HTTP ${response.status}` };
+}
+
+/** Toast/status text for a failed /api/capture-screen reply; never contains the response body. */
+export function describeCaptureFailure(reply: {
+  nonJson?: boolean;
+  httpStatus?: number;
+  error?: string;
+  message?: string;
+}): string {
+  if (reply.nonJson) {
+    return `Capture endpoint returned non-JSON (HTTP ${reply.httpStatus ?? "?"}) — backend API not running`;
+  }
+  const reason = reply.error || reply.message || "/api/capture-screen returned no frame";
+  return reason.length > 200 ? `${reason.slice(0, 200)}…` : reason;
 }
 
 /** Title, cause, bridge label and setup steps for the empty frame; never claims a live screen. */

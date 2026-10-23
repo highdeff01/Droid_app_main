@@ -8,9 +8,13 @@ import {
   installJsonGuard,
   type ErrorSurface,
 } from "@/lib/global-error-guard";
+import { startBackendProbe } from "@/lib/backend-status";
 
 // Non-JSON bodies (HTML fallbacks, plain-text rate limits) resolve to { success: false, error } and are logged.
 installJsonGuard(Response.prototype);
+
+// Detect static hosts (AI Studio) where /api/* returns HTML: shows the banner and backs off device polling.
+startBackendProbe();
 
 const surfaceError: ErrorSurface = (message, options) => {
   toast.error(message, options?.reload
