@@ -230,7 +230,17 @@ function normalizeKeyName(key: string, code?: string): string {
   return "enter";
 }
 
-function recordedEventsToActions(
+/**
+ * A key that types a visible character: any single character except space and
+ * control characters, so punctuation ("@", ".", "!") in emails or passwords
+ * replays as typed text instead of degrading to an Enter key press.
+ */
+export function isPrintableKey(key: string): boolean {
+  return [...key].length === 1 && key !== " " && !/^\p{Cc}$/u.test(key);
+}
+
+/** Convert recorded events into executable, allowlisted plan-step actions. */
+export function recordedEventsToActions(
   events: RecordedAction[],
 ): { action: AllowlistedAction; title: string }[] {
   const out: { action: AllowlistedAction; title: string }[] = [];
@@ -254,7 +264,7 @@ function recordedEventsToActions(
       const key = normalizeKeyName(event.key, event.code);
       // Shift is implied by the character itself for printable keys
       // ("A" vs "a"), so it only counts as a modifier for non-printables.
-      const isPrintable = event.key.length === 1 && /^[a-z0-9]$/i.test(event.key);
+      const isPrintable = isPrintableKey(event.key);
       const mods = (event.modifiers || [])
         .map((m) => normalizeKeyName(m))
         .filter(

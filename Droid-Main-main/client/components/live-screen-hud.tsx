@@ -104,6 +104,12 @@ import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
 import { readJsonResponse } from "@/lib/api-helper";
 import {
+  RECORDING_TRAIL_CAP,
+  appendBounded,
+  isFromHudControl,
+  trailCap,
+} from "@/lib/hud-pointer";
+import {
   NO_HARDWARE_CLICKS_MESSAGE,
   NO_RECORDED_STEPS_MESSAGE,
   NO_REPLAY_PATH_MESSAGE,
@@ -268,6 +274,8 @@ export interface RecalibrationNotice {
 
 interface LiveScreenHUDProps {
   screenshotUrl: string;
+  /** Headline for the empty state when a selected source (e.g. the phone) has no real frame. */
+  emptyStateNotice?: string;
   isCapturing: boolean;
   aiThinking: AIThinkingState | null;
   entities: DetectedEntity[];
@@ -338,6 +346,7 @@ interface LiveScreenHUDProps {
 
 export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   screenshotUrl,
+  emptyStateNotice,
   isCapturing,
   aiThinking,
   entities,
@@ -1810,16 +1819,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
   // Record continuous trajectory as user moves
   const recordMovementPoint = (x: number, y: number) => {
-    const isActivelyRecording = isRecordingMouseTrail || isRecordMode;
-    const cap = isActivelyRecording ? 2000 : 500;
-    if (isActivelyRecording) {
-      setLiveMouseTrail((prev) => [...prev.slice(-cap), { x, y, time: Date.now(), isClick: false }]);
-    }
     if (isRecordMode) {
-      setRecordedTrajectory((prev) => [
-        ...prev.slice(-cap),
-        { x, y, time: Date.now() },
-      ]);
+      setRecordedTrajectory((prev) =>
+        appendBounded(prev, { x, y, time: Date.now() }, RECORDING_TRAIL_CAP),
+      );
     }
   };
 
@@ -2023,10 +2026,13 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       ...prev.slice(-25),
       { x: coords.x, y: coords.y },
     ]);
-    setLiveMouseTrail((prev) => [
-      ...prev.slice(-40),
-      { x: coords.x, y: coords.y, time: Date.now(), isClick: false },
-    ]);
+    setLiveMouseTrail((prev) =>
+      appendBounded(
+        prev,
+        { x: coords.x, y: coords.y, time: Date.now(), isClick: false },
+        trailCap(isRecordingMouseTrail || isRecordMode),
+      ),
+    );
     recordMovementPoint(coords.x, coords.y);
     // Reset dwell start if moved significantly (>20px)
     if (
@@ -2049,7 +2055,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   };
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (draggingStepId) return;
+    if (draggingStepId || isFromHudControl(e.target, e.currentTarget)) return;
     const coords = getNativeCoordinates(e);
 
     // Visual ripple & audio feedback
@@ -2123,7 +2129,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   };
 
   const handleContainerDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (draggingStepId) return;
+    if (draggingStepId || isFromHudControl(e.target, e.currentTarget)) return;
     const coords = getNativeCoordinates(e);
 
     playClickPip();
@@ -2152,6 +2158,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   };
 
   const handleContainerContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isFromHudControl(e.target, e.currentTarget)) return;
     e.preventDefault();
     e.stopPropagation();
     if (draggingStepId) return;
@@ -3578,6 +3585,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         {frameSource === "none" && (
           <HudEmptyState
             shareError={screenShareError}
+            notice={emptyStateNotice}
             isRequestingShare={isRequestingScreenShare}
             onStartShare={handleToggleRealScreenStream}
           />

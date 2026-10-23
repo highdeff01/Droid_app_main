@@ -1,7 +1,8 @@
 import { MobileSettingsModal } from "@/components/mobile-settings-modal";
 import type { ReplayRun } from "@shared/replay";
 import { ReplayMonitor } from "@/components/replay-monitor";
-import { generateDefaultMobileFrame, generateDefaultDesktopFrame } from "@/lib/mobile-screen-generator";
+import { generateDefaultDesktopFrame } from "@/lib/mobile-screen-generator";
+import { NO_PHONE_CONNECTED_MESSAGE } from "@/lib/hud-frame-status";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -449,6 +450,8 @@ export default function Dashboard({
   // AI Canvas Screen & Auto-Actor State
   const [activeCanvasSourceId, setActiveCanvasSourceId] = useState<string>("live");
   const [activeCanvasUrl, setActiveCanvasUrl] = useState<string>("");
+  // Phone forwarded to the HUD but no real device frame yet: show the empty state, never a template.
+  const phoneAwaitingFrame = activeCanvasSourceId === "mobile" && !activeCanvasUrl;
   const [show2ndHudOverlay, setShow2ndHudOverlay] = useState<boolean>(true);
   const [showLiveIn2ndHud, setShowLiveIn2ndHud] = useState<boolean>(true);
   const [autoActEnabled, setAutoActEnabled] = useState<boolean>(false);
@@ -576,10 +579,13 @@ export default function Dashboard({
       handleLinkWorkflowToLiveVisionHud(wf);
     }
 
-    const frameToUse = payload?.mobileFrame || (typeof window !== "undefined" ? generateDefaultMobileFrame({
-      appName: payload?.deviceName || "Sightline Remote",
-      title: "Mobile Automation",
-    }) : "");
+    // Only a real phone frame is forwarded; with none the HUD shows its "no phone connected" empty state.
+    const frameToUse: string | undefined = payload?.mobileFrame || undefined;
+
+    if (!frameToUse) {
+      setActiveCanvasUrl("");
+      toast.info(NO_PHONE_CONNECTED_MESSAGE);
+    }
 
     if (frameToUse) {
       setScreenshotUrl(frameToUse);
@@ -2301,7 +2307,8 @@ export default function Dashboard({
                   onRetryStep={step => { void handleRunSequence([buildRetryStep(step)]); }}
                   onToggleCapture={toggleCapture}
                   onExecuteTask={executeHubTask}
-                  screenshotUrl={activeCanvasUrl || screenshotUrl}
+                  screenshotUrl={phoneAwaitingFrame ? "" : activeCanvasUrl || screenshotUrl}
+                  emptyStateNotice={phoneAwaitingFrame ? NO_PHONE_CONNECTED_MESSAGE : undefined}
                   isCapturing={isCapturing}
                   aiThinking={aiThinking}
                   entities={[]}

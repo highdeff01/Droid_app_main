@@ -174,7 +174,7 @@ import {
 import { mainAiChatRouter } from "./routes/main-ai-chat-controller";
 import { handleCompareScreenshots } from "./routes/compare-screenshots";
 import { handleAdbDevices, createAdbCaptureHandler, createAdbScanHandler } from "./routes/adb-capture";
-import { handleAdbConnect, createAdbDisconnectHandler } from "./routes/adb-link";
+import { handleAdbConnect, createAdbDisconnectHandler, createAdbPairHandler } from "./routes/adb-link";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -653,70 +653,7 @@ export function createServer() {
 
   app.post("/api/adb/connect", handleAdbConnect);
 
-  app.post("/api/adb/pair", async (req, res) => {
-    let responded = false;
-    const sendOnce = (obj: any) => {
-      if (!responded) {
-        responded = true;
-        res.json(obj);
-      }
-    };
-    try {
-      const { ip, port, code } = req.body;
-      if (!code || typeof code !== "string" || !/^\d{4,8}$/.test(code))
-        return sendOnce({ success: false, error: "A 4-8 digit pairing code is required" });
-      let target: string;
-      try { target = validateAdbEndpoint(ip, port); } catch (error) {
-        return sendOnce({ success: false, error: error instanceof Error ? error.message : "Invalid endpoint" });
-      }
-      const py = spawn("adb", ["pair", target, String(code)], { stdio: ["pipe", "pipe", "pipe"] });
-      let out = ""; let er = "";
-      py.stdout.on("data", (d) => (out += d.toString()));
-      py.stderr.on("data", (d) => (er += d.toString()));
-      py.on("close", () => {
-        const success = out.toLowerCase().includes("successfully paired") || out.toLowerCase().includes("paired") || !er;
-        if (success) simulatedConnectedDevices.add(target);
-        sendOnce({
-          success,
-          output: out.trim() || `Successfully paired to ${target}`,
-          error: er.trim() || undefined,
-          target,
-          hasLocalAdb: true,
-        });
-      });
-      py.on("error", () => {
-        simulatedConnectedDevices.add(target);
-        sendOnce({
-          success: true,
-          simulated: true,
-          isCloudSandbox: true,
-          output: `Virtual pairing code ${code} verified for ${target}. (Note: Cloud sandbox cannot reach LAN IP ${target} directly; run locally on PC for physical pairing).`,
-          target,
-        });
-      });
-      setTimeout(() => {
-        try { py.kill(); } catch {};
-        simulatedConnectedDevices.add(target);
-        sendOnce({
-          success: true,
-          simulated: true,
-          isCloudSandbox: true,
-          output: `Virtual pairing timeout for ${target}`,
-          target,
-        });
-      }, 12000);
-    } catch {
-      const target = `${req.body.ip || "192.168.1.50"}:${req.body.port || 5555}`;
-      simulatedConnectedDevices.add(target);
-      sendOnce({
-        success: true,
-        simulated: true,
-        isCloudSandbox: true,
-        output: `Virtual pairing recorded for ${target}`,
-        target,
-      });
-    }
-  });
+  app.post("/api/adb/pair", createAdbPairHandler(simulatedConnectedDevices));
 
   app.post("/api/adb/tcpip", async (req, res) => {
     let responded = false;
