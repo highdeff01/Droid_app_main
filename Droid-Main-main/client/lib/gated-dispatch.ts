@@ -9,6 +9,7 @@ import {
   assertBackendReachable,
   isBackendUnreachable,
 } from "@/lib/backend-status";
+import { PREVIEW_BADGE, isPreviewActive, simulateDeviceAction } from "@/lib/preview-mode";
 
 /** Same ceiling as the Dashboard gate: a check can never hang the UI. */
 export const GATE_TIMEOUT_MS = 45_000;
@@ -32,9 +33,27 @@ export interface GatedRunOptions {
 
 export type GatedRunResult =
   | { status: "completed"; results: unknown[] }
-  | { status: "blocked" | "cancelled"; reason: string; results: unknown[] };
+  | { status: "blocked" | "cancelled" | "preview"; reason: string; results: unknown[] };
 
 const CANCELLED = "Action cancelled before dispatch";
+export const PREVIEW_SEQUENCE_REASON = `${PREVIEW_BADGE}: steps were simulated, nothing ran on a device`;
+
+/**
+ * Preview Mode run: the screen-analysis gate needs the backend, so each action
+ * is simulated in order (timeline and feed still advance) and the run ends as
+ * "preview", never "completed".
+ */
+async function runPreviewSequence(actions: GatedAction[], signal: AbortSignal): Promise<GatedRunResult> {
+  const results: unknown[] = [];
+  for (const [index, action] of actions.entries()) {
+    if (signal.aborted) return { status: "cancelled", reason: CANCELLED, results };
+    const where = `(${action.target.x}, ${action.target.y})`;
+    results.push(simulateDeviceAction(`step ${index + 1}${action.target.label ? ` "${action.target.label}"` : ""} @ ${where}`));
+    await abortableDelay(action.delayMs ?? 0, signal);
+  }
+  if (signal.aborted) return { status: "cancelled", reason: CANCELLED, results };
+  return { status: "preview", reason: PREVIEW_SEQUENCE_REASON, results };
+}
 
 /** Why a gated run dispatched nothing (or not everything); null when it completed. */
 export function gateFailure(result: GatedRunResult | undefined): string | null {
@@ -81,8 +100,18 @@ async function gateOne(
   return { status: "blocked", reason, results };
 }
 
-/** POST a device action as JSON (the endpoints the components already use) and return the parsed body. */
+/** Short label of a device action body for the preview feed. */
+function describeActionBody(url: string, body: unknown): string {
+  const action = (body as { action?: unknown } | null)?.action;
+  return typeof action === "string" ? `${action} (${url})` : url;
+}
+
+/**
+ * POST a device action as JSON (the endpoints the components already use) and return the parsed body.
+ * In Preview Mode nothing is sent: the reply is the labelled simulation (never a success).
+ */
 export async function postDeviceAction(url: string, body: unknown): Promise<any> {
+  if (isPreviewActive()) return simulateDeviceAction(describeActionBody(url, body));
   assertBackendReachable();
   const response = await fetch(url, {
     method: "POST",
@@ -104,6 +133,7 @@ export async function runGatedSequence(
   options: GatedRunOptions,
 ): Promise<GatedRunResult> {
   const results: unknown[] = [];
+  if (isPreviewActive()) return runPreviewSequence(actions, options.signal);
   if (isBackendUnreachable()) return { status: "blocked", reason: BACKEND_UNREACHABLE_MESSAGE, results };
   for (const action of actions) {
     const failed = await gateOne(action, options, results);

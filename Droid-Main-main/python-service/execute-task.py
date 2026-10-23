@@ -39,6 +39,37 @@ from automation import (
 # Mirrors PYTHON_SETUP_FIX in shared/device-execution.ts.
 PYTHON_SETUP_FIX = "Run setup-python.bat (Windows) or ./setup-python.sh (macOS/Linux), or: pip install pyautogui mss pillow"
 
+# Android KEYCODE_* values for named keys; letters and digits are derived below.
+ANDROID_KEYCODES = {
+    "enter": 66, "return": 66, "back": 4, "home": 3, "tab": 61, "escape": 111, "esc": 111,
+    "space": 62, "delete": 67, "del": 67, "backspace": 67, "up": 19, "down": 20, "left": 21, "right": 22,
+    "menu": 82, "search": 84, "volume_up": 24, "volume_down": 25, "power": 26, "app_switch": 187,
+    "pageup": 92, "pagedown": 93, "move_home": 122, "end": 123,
+    ".": 56, ",": 55, "@": 77, "/": 76, "-": 69, "=": 70, "+": 81, ";": 74, "'": 75,
+    "[": 71, "]": 72, "\\": 73, "`": 68, "*": 17, "#": 18,
+}
+
+
+def android_keycode(key):
+    """KEYCODE for a key name, or None when the key has no Android mapping (never a silent Enter)."""
+    k = str(key or "").strip()
+    if k.lower() in ANDROID_KEYCODES:
+        return ANDROID_KEYCODES[k.lower()]
+    if len(k) == 1 and k.isascii() and k.isalpha():
+        return 29 + ord(k.lower()) - ord("a")  # KEYCODE_A = 29
+    if len(k) == 1 and k.isdigit():
+        return 7 + int(k)  # KEYCODE_0 = 7
+    return None
+
+
+def parse_delay_ms(task):
+    """Wait duration in ms from delayMs/delay/durationMs; 500 when missing or invalid, never negative."""
+    raw = task.get("delayMs", task.get("delay", task.get("durationMs", 500)))
+    try:
+        return max(0, int(float(raw)))
+    except (TypeError, ValueError):
+        return 500
+
 def main():
     try:
         raw_input = sys.stdin.read()
@@ -162,16 +193,21 @@ def main():
                 execute_adb_text(text_payload, device_id)
                 explanation = f"Typed \"{text_payload}\" on Android via ADB (no focus tap; field already focused)."
             elif action in ["wait", "sleep"]:
-                delay_ms = task.get("delayMs", task.get("delay", 500))
+                delay_ms = parse_delay_ms(task)
                 time.sleep(delay_ms / 1000.0)
                 explanation = f"Waited {delay_ms}ms on Android."
             elif action in ["key", "press_key", "hotkey"]:
-                keycode_map = {
-                    "enter": 66, "return": 66, "back": 4, "home": 3, "tab": 61, "escape": 111,
-                    "space": 62, "delete": 67, "backspace": 67, "up": 19, "down": 20, "left": 21, "right": 22,
-                    "menu": 82, "search": 84, "volume_up": 24, "volume_down": 25, "power": 26, "app_switch": 187
-                }
-                code = keycode_map.get(key_payload.lower().strip(), 66)
+                code = android_keycode(key_payload)
+                if code is None:
+                    # Refuse rather than default to Enter: an unmapped key
+                    # must never submit a form the user did not submit.
+                    print(json.dumps({
+                        "success": False,
+                        "targetDevice": "android",
+                        "action": action,
+                        "error": f"Unknown key '{key_payload}' on Android — no keyevent sent.",
+                    }))
+                    return
                 execute_adb_keyevent(code, device_id)
                 explanation = f"Sent keyevent {code} ({key_payload}) on Android via ADB."
             elif action in ["screenshot"]:
@@ -219,12 +255,8 @@ def main():
 
         # Handle wait action immediately (no physical movement needed)
         if action in ["wait", "sleep"]:
-            delay_ms = task.get("delayMs", task.get("delay", 500))
-            try:
-                delay_ms = int(delay_ms)
-            except:
-                delay_ms = 500
-            time.sleep(max(0, delay_ms) / 1000.0)
+            delay_ms = parse_delay_ms(task)
+            time.sleep(delay_ms / 1000.0)
             print(json.dumps({
                 "success": True,
                 "targetDevice": "desktop",

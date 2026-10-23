@@ -30,6 +30,8 @@ import {
   Activity,
 } from "lucide-react";
 import { toast } from "sonner";
+import { usePreviewMode } from "@/hooks/use-preview-mode";
+import { PREVIEW_BADGE, setPreviewOverride } from "@/lib/preview-mode";
 
 export const DEFAULT_MODEL_URL = "http://192.168.1.100:11434/api/chat";
 export const QUANTUMCLAW_FALLBACK_URL = "https://quantumclaw.net/ollama/api/chat";
@@ -60,6 +62,8 @@ export function GlobalSettingsModal({
   const [antiLoop, setAntiLoop] = useState<boolean>(true);
   const [speedMs, setSpeedMs] = useState<number>(400);
   const [autoHeal, setAutoHeal] = useState<boolean>(true);
+  // Preview Mode switches immediately (session only), independent of Save.
+  const preview = usePreviewMode();
 
   // Testing status
   const [isTesting, setIsTesting] = useState<boolean>(false);
@@ -400,6 +404,18 @@ export function GlobalSettingsModal({
                     <Smartphone className="w-3 h-3" /> Android
                   </Button>
                 </div>
+              </div>
+
+              {/* Preview Mode */}
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-fuchsia-800 flex items-center justify-between">
+                <div>
+                  <p className="font-bold text-[11px] text-slate-200">Preview Mode ({PREVIEW_BADGE})</p>
+                  <p className="text-[10px] text-slate-400">
+                    Simulate clicks, typing and steps; nothing runs on a device.{" "}
+                    {preview.detected ? `Auto: ${preview.detected}.` : "Auto: real backend available."}
+                  </p>
+                </div>
+                <Switch checked={preview.active} onCheckedChange={(on) => setPreviewOverride(on)} />
               </div>
 
               {/* Anti-Loop Guard */}

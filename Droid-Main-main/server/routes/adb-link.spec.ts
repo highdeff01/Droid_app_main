@@ -30,7 +30,14 @@ function fakeChild() {
 
 vi.mock("child_process", () => ({ spawn: vi.fn(() => fakeChild()) }));
 
-import { ADB_CONNECT_TIMEOUT_MS, ADB_DISCONNECT_TIMEOUT_MS, createAdbDisconnectHandler, handleAdbConnect } from "./adb-link";
+import {
+  ADB_CONNECT_TIMEOUT_MS,
+  ADB_DISCONNECT_TIMEOUT_MS,
+  ADB_PAIR_TIMEOUT_MS,
+  createAdbDisconnectHandler,
+  createAdbPairHandler,
+  handleAdbConnect,
+} from "./adb-link";
 
 function makeRes() {
   const res: any = {
@@ -120,6 +127,78 @@ describe("POST /api/adb/connect", () => {
     const res = await run(handleAdbConnect, { ip: "not-an-ip" });
     expect(res.statusCode).toBe(400);
     expect(res.body.success).toBe(false);
+  });
+});
+
+describe("POST /api/adb/pair", () => {
+  const body = { ip: "10.0.0.9", port: 37099, code: "482915" };
+
+  function expectNoClaimedPairing(res: any, registered: Set<string>) {
+    expect(res.body.success).toBe(false);
+    expect(JSON.stringify(res.body)).not.toMatch(/verified|Virtual pairing/i);
+    expect(registered.size).toBe(0);
+    expect(res.calls).toBe(1);
+  }
+
+  it("succeeds and registers the target only when adb confirms the pairing", async () => {
+    behaviour = { kind: "close", code: 0, stdout: "Successfully paired to 10.0.0.9:37099 [guid=adb-XYZ]\n" };
+    const registered = new Set<string>();
+    const res = await run(createAdbPairHandler(registered), body);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ success: true, simulated: false, target: "10.0.0.9:37099", hasLocalAdb: true });
+    expect([...registered]).toEqual(["10.0.0.9:37099"]);
+  });
+
+  it("fails when adb reports a wrong code, even with empty stderr and exit 0", async () => {
+    behaviour = { kind: "close", code: 0, stdout: "Failed: Wrong password or connection was dropped.\n" };
+    const registered = new Set<string>();
+    const res = await run(createAdbPairHandler(registered), body);
+    expect(res.body).toMatchObject({ status: "failed", target: "10.0.0.9:37099" });
+    expectNoClaimedPairing(res, registered);
+  });
+
+  it("fails when adb exits non-zero", async () => {
+    behaviour = { kind: "close", code: 1, stderr: "error: protocol fault" };
+    const registered = new Set<string>();
+    const res = await run(createAdbPairHandler(registered), body);
+    expect(res.body).toMatchObject({ status: "failed", error: "error: protocol fault" });
+    expectNoClaimedPairing(res, registered);
+  });
+
+  it("is unavailable, not a verified pairing, when no adb binary exists", async () => {
+    behaviour = { kind: "error" };
+    const registered = new Set<string>();
+    const res = await run(createAdbPairHandler(registered), body);
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toMatchObject({ status: "unavailable", simulated: true, executed: false, hasLocalAdb: false });
+    expect(res.body.error).toContain("ENOENT");
+    expectNoClaimedPairing(res, registered);
+  });
+
+  it("is unavailable when spawn throws", async () => {
+    behaviour = { kind: "throw" };
+    const registered = new Set<string>();
+    const res = await run(createAdbPairHandler(registered), body);
+    expect(res.body.status).toBe("unavailable");
+    expectNoClaimedPairing(res, registered);
+  });
+
+  it("fails when adb hangs", async () => {
+    const registered = new Set<string>();
+    const res = await runTimedOut(createAdbPairHandler(registered), body, ADB_PAIR_TIMEOUT_MS);
+    expect(res.statusCode).toBe(504);
+    expect(res.body.status).toBe("failed");
+    expectNoClaimedPairing(res, registered);
+  });
+
+  it("rejects a missing pairing code or invalid endpoint without running adb", async () => {
+    behaviour = { kind: "error" };
+    const noCode = await run(createAdbPairHandler(new Set()), { ip: "10.0.0.9", port: 37099 });
+    expect(noCode.statusCode).toBe(400);
+    expect(noCode.body.success).toBe(false);
+    const badIp = await run(createAdbPairHandler(new Set()), { ip: "not-an-ip", port: 37099, code: "123456" });
+    expect(badIp.statusCode).toBe(400);
+    expect(badIp.body.success).toBe(false);
   });
 });
 

@@ -7,6 +7,7 @@ import { replyOnce, type Reply } from "./adb-capture";
 
 export const ADB_CONNECT_TIMEOUT_MS = 8000;
 export const ADB_DISCONNECT_TIMEOUT_MS = 4000;
+export const ADB_PAIR_TIMEOUT_MS = 12000;
 
 /** Exit status and output of a finished adb command. */
 interface AdbResult {
@@ -79,6 +80,47 @@ export const handleAdbConnect: RequestHandler = (req, res) => {
   }
   runAdb(["connect", target], ADB_CONNECT_TIMEOUT_MS, { target }, send, connectReply(target));
 };
+
+/** True only when adb exited cleanly and reported the device as paired. */
+export function isAdbPaired({ code, out }: AdbResult): boolean {
+  const text = out.toLowerCase();
+  return code === 0 && /successfully paired/.test(text) && !/failed|cannot|unable/.test(text);
+}
+
+function pairReply(target: string, onPaired: () => void): ResultMapper {
+  return (result) => {
+    const output = result.out.trim();
+    if (isAdbPaired(result)) {
+      onPaired();
+      return { status: 200, body: { success: true, simulated: false, output, target, hasLocalAdb: true } };
+    }
+    const reason = result.err.trim() || output || `adb pair exited with code ${result.code ?? "unknown"}.`;
+    return { status: 502, body: { ...failedOutcome(reason), output, target, hasLocalAdb: true } };
+  };
+}
+
+/**
+ * POST /api/adb/pair: success only when adb reports the pairing; the target is registered
+ * only then. Missing adb is unavailable and a hang is failed, never a "verified" pairing.
+ */
+export function createAdbPairHandler(registered: Set<string>): RequestHandler {
+  return (req, res) => {
+    const send = replyOnce(res);
+    const code = req.body?.code;
+    if (typeof code !== "string" || !/^\d{4,8}$/.test(code)) {
+      send({ status: 400, body: { success: false, error: "A 4-8 digit pairing code is required" } });
+      return;
+    }
+    let target: string;
+    try {
+      target = validateAdbEndpoint(req.body?.ip, req.body?.port);
+    } catch (error) {
+      send({ status: 400, body: { success: false, error: error instanceof Error ? error.message : "Invalid endpoint" } });
+      return;
+    }
+    runAdb(["pair", target, code], ADB_PAIR_TIMEOUT_MS, { target }, send, pairReply(target, () => registered.add(target)));
+  };
+}
 
 function disconnectReply(label: string): ResultMapper {
   return ({ code, out, err }) => {

@@ -2,6 +2,9 @@
 
 import { readJsonReply } from "@/lib/backend-status";
 
+/** Shown when the phone was forwarded to the HUD but no real device frame exists. */
+export const NO_PHONE_CONNECTED_MESSAGE = "No phone connected — pair a device or start phone screen share";
+
 export interface CaptureStandby {
   /** Server's standby message from /api/capture-screen (503), when it answered. */
   message?: string | null;

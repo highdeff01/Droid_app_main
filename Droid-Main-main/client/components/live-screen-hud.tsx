@@ -119,6 +119,12 @@ import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
 import { readJsonResponse } from "@/lib/api-helper";
 import {
+  RECORDING_TRAIL_CAP,
+  appendBounded,
+  isFromHudControl,
+  trailCap,
+} from "@/lib/hud-pointer";
+import {
   NO_HARDWARE_CLICKS_MESSAGE,
   NO_RECORDED_STEPS_MESSAGE,
   NO_REPLAY_PATH_MESSAGE,
@@ -186,6 +192,8 @@ import {
 } from "@/lib/hud-actions";
 import { HudAgentPanel } from "./hud-agent-panel";
 import { PythonBridgeStatusChip } from "./python-bridge-status-chip";
+import { PreviewModeBadge } from "./preview-mode-banner";
+import { PREVIEW_BADGE, isPreviewActive, previewLabel, simulateDeviceAction } from "@/lib/preview-mode";
 import type { GoalDevice, GoalLoopEvent } from "@/lib/qwen-turn-loop";
 import { runTurnLoop } from "@/lib/qwen-turn-loop";
 import type { HudSuggestedAction } from "@shared/api";
@@ -303,6 +311,8 @@ export interface RecalibrationNotice {
 
 interface LiveScreenHUDProps {
   screenshotUrl: string;
+  /** Headline for the empty state when a selected source (e.g. the phone) has no real frame. */
+  emptyStateNotice?: string;
   isCapturing: boolean;
   aiThinking: AIThinkingState | null;
   entities: DetectedEntity[];
@@ -373,6 +383,7 @@ interface LiveScreenHUDProps {
 
 export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   screenshotUrl,
+  emptyStateNotice,
   isCapturing,
   aiThinking,
   entities,
@@ -924,19 +935,24 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       x,
       y,
       frame: sequence.length + 1,
-      text: `[DEVICE BRIDGE] ${action.toUpperCase()} @ (${x}, ${y})`,
+      text: `${isPreviewActive() ? `[${PREVIEW_BADGE}]` : "[DEVICE BRIDGE]"} ${action.toUpperCase()} @ (${x}, ${y})`,
     });
     setTimeout(() => setHudActiveClickPoint(null), 600);
 
-    let result: { simulated: boolean; message: string };
+    let result: Awaited<ReturnType<typeof dispatchInteractiveAction>>;
     try {
       result = await dispatchInteractiveAction({ action, x, y, ...extra });
     } catch (err) {
       toast.error(`${action} @ (${x}, ${y}) failed: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
-    const where = result.simulated ? "virtual only (no display on the bridge)" : "executed on device";
-    toast.success(`${action} @ (${x}, ${y}): ${where}`, { description: result.message });
+    if (result.preview) {
+      toast.info(result.message);
+      logActionExecution({ level: "action", message: result.message, targetCoords: { x, y } });
+    } else {
+      const where = result.simulated ? "virtual only (no display on the bridge)" : "executed on device";
+      toast.success(`${action} @ (${x}, ${y}): ${where}`, { description: result.message });
+    }
 
     // Step auto-recording during usage, only after the dispatch succeeded
     if (autoRecordDuringUsage) {
@@ -1052,6 +1068,10 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   // Auto-PC sync dispatcher for native PyAutoGUI execution
   const dispatchAutoPcAction = async (actionType: string, x: number, y: number, text?: string) => {
     if (!autoPcSyncEnabled) return;
+    if (isPreviewActive()) {
+      toast.info(simulateDeviceAction(`${actionType} at (${Math.round(x)}, ${Math.round(y)})`).message);
+      return;
+    }
     try {
       await fetch("/api/pyautogui/bridge", {
         method: "POST",
@@ -2211,7 +2231,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   };
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (draggingStepId) return;
+    if (draggingStepId || isFromHudControl(e.target, e.currentTarget)) return;
     const coords = getNativeCoordinates(e);
 
     // Visual ripple & audio feedback
@@ -2251,7 +2271,12 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           referenceScreenshotUrl: snap,
         });
 
-        // Register with backend PyAutoGUI AI Record Step logger
+        // Register with backend PyAutoGUI AI Record Step logger (skipped in Preview Mode)
+        const recordedLabel = `● Recorded Step #${stepNumber} at (${Math.round(coords.x)}, ${Math.round(coords.y)})`;
+        if (isPreviewActive()) {
+          toast.info(previewLabel(`${recordedLabel} — recorded locally, no device`));
+          return;
+        }
         try {
           fetch("/api/pyautogui/ai-record-step", {
             method: "POST",
@@ -2267,7 +2292,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
           }).catch(() => {});
         } catch {}
 
-        toast.success(`● Recorded Step #${stepNumber} at (${Math.round(coords.x)}, ${Math.round(coords.y)})`);
+        toast.success(recordedLabel);
       } else {
         // Popover configuration mode
         setPopoverName(`Step ${stepNumber}`);
@@ -2280,7 +2305,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   };
 
   const handleContainerDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (draggingStepId) return;
+    if (draggingStepId || isFromHudControl(e.target, e.currentTarget)) return;
     const coords = getNativeCoordinates(e);
 
     playClickPip();
@@ -2309,6 +2334,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   };
 
   const handleContainerContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isFromHudControl(e.target, e.currentTarget)) return;
     e.preventDefault();
     e.stopPropagation();
     if (draggingStepId) return;
@@ -2412,6 +2438,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
       }}
     >
       <PythonBridgeStatusChip className={cn("absolute top-2 left-1/2 -translate-x-1/2", HUD_LAYERS.floating)} />
+      <PreviewModeBadge className={cn("absolute top-9 left-1/2 -translate-x-1/2", HUD_LAYERS.floating)} />
       {/* Fullscreen Floating Controls */}
       {hudSizeMode === "fullscreen" && (
         <div onClick={(e) => e.stopPropagation()} className={cn("absolute top-14 right-4 flex items-center gap-2 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded-xl shadow-2xl backdrop-blur-md", HUD_LAYERS.floating)}>
@@ -3703,6 +3730,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         {frameSource === "none" && (
           <HudEmptyState
             shareError={screenShareError}
+            notice={emptyStateNotice}
             isRequestingShare={isRequestingScreenShare}
             onStartShare={handleToggleRealScreenStream}
           />
@@ -5316,7 +5344,11 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
                     s.text
                   );
                 });
-                toast.success(`Retried segment: ${targetSteps.length} step(s)`);
+                if (isPreviewActive()) {
+                  toast.info(previewLabel(`Retried segment: ${targetSteps.length} step(s) simulated`));
+                } else {
+                  toast.success(`Retried segment: ${targetSteps.length} step(s)`);
+                }
               }}
               liveScreenshotUrl={screenshotUrl || frozenSnapshotUrl || undefined}
             />

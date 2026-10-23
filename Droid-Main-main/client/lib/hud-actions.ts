@@ -7,6 +7,7 @@ import type {
   ScreenPerceptionReport,
 } from "@/components/dual-ai-copilot-panel";
 import { readApiJson } from "@/lib/backend-status";
+import { isPreviewActive, simulateDeviceAction } from "@/lib/preview-mode";
 import type { HudEntity, HudGuideResult, HudPack } from "@shared/api";
 import type { ReplayRun } from "@shared/replay";
 
@@ -72,6 +73,8 @@ export interface InteractiveActionRequest {
 
 export interface InteractiveActionResult {
   simulated: boolean;
+  /** Preview Mode: run on the simulated surface only, never sent to the bridge. */
+  preview?: boolean;
   message: string;
 }
 
@@ -80,6 +83,10 @@ export async function dispatchInteractiveAction(
   request: InteractiveActionRequest,
   post: HudPost = postHudJson,
 ): Promise<InteractiveActionResult> {
+  if (isPreviewActive()) {
+    const reply = simulateDeviceAction(`${request.action} @ (${request.x}, ${request.y})`);
+    return { simulated: true, preview: true, message: reply.message };
+  }
   const data = await post("/api/pyautogui/interactive-action", {
     ...request,
     deviceMode: "android_studio_mirror",
