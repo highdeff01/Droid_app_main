@@ -2,6 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { HudEmptyState } from "./hud-empty-state";
+import { NO_PHONE_CONNECTED_MESSAGE } from "@/lib/hud-frame-status";
 
 const render = (props: Partial<React.ComponentProps<typeof HudEmptyState>> = {}) =>
   renderToStaticMarkup(
@@ -29,5 +30,12 @@ describe("HudEmptyState", () => {
     const markup = render({ isRequestingShare: true });
     expect(markup).toContain("Connecting…");
     expect(markup).toMatch(/<button[^>]*disabled/);
+  });
+
+  it("names the missing phone instead of drawing a phone template", () => {
+    const markup = render({ notice: NO_PHONE_CONNECTED_MESSAGE });
+    expect(markup).toContain("No phone connected — pair a device or start phone screen share");
+    expect(markup).not.toContain("<img");
+    expect(markup).not.toContain("<canvas");
   });
 });

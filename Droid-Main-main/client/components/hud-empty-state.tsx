@@ -13,6 +13,8 @@ import {
 export interface HudEmptyStateProps {
   /** Screen-share request error, shown above the standby reason. */
   shareError?: { title: string; message: string } | null;
+  /** Source-specific headline, e.g. no phone connected when the phone was forwarded without a frame. */
+  notice?: string;
   isRequestingShare: boolean;
   onStartShare: () => void;
 }
@@ -60,7 +62,7 @@ function useCaptureDiagnostics(intervalMs = 5000) {
 }
 
 /** Actionable "no live screen" panel: real cause, bridge status and setup steps; never a drawn desktop. */
-export function HudEmptyState({ shareError, isRequestingShare, onStartShare }: HudEmptyStateProps) {
+export function HudEmptyState({ shareError, notice, isRequestingShare, onStartShare }: HudEmptyStateProps) {
   const { standby, bridge } = useCaptureDiagnostics();
   const inIframe = typeof window !== "undefined" && window.self !== window.top;
   const state = describeEmptyState(standby, bridge, inIframe);
@@ -75,6 +77,11 @@ export function HudEmptyState({ shareError, isRequestingShare, onStartShare }: H
           <Monitor className="w-5 h-5 text-cyan-400" />
           {state.title}
         </div>
+        {notice && (
+          <div role="status" className="rounded border border-purple-600/70 bg-purple-950/50 p-2 text-[11px] font-bold text-purple-200">
+            {notice}
+          </div>
+        )}
         {shareError && (
           <div role="alert" className="rounded border border-amber-600/70 bg-amber-950/50 p-2 text-[11px] text-amber-200">
             <div className="font-bold">{shareError.title}</div>
