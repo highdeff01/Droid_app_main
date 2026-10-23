@@ -2,8 +2,8 @@ import type {
   DetectedUIElement,
   ScreenPerceptionReport,
 } from "@/components/dual-ai-copilot-panel";
-import { BackendNotRunningError, readApiJson } from "@/lib/backend-status";
-import { type AiScope, getAiScope, scopeReport, scopeTarget } from "@/lib/ai-scope";
+import { BackendNotRunningError, readJsonReply } from "@/lib/backend-status";
+import { getAiScope, scopeReport, scopeTarget, type AiScope } from "@/lib/ai-scope";
 
 /** Slack around an element's bounding box when matching the action point. */
 export const TARGET_PADDING_PX = 12;
@@ -181,12 +181,9 @@ export const postGateJson: GatePost = async (url, body, { apiKey, signal }) => {
     body: JSON.stringify(body),
     signal,
   });
-  const data = await readApiJson(response, url).catch((error) => {
-    if (error instanceof BackendNotRunningError) {
-      throw new Error(`${backendNonJsonReason(response.status)}. ${error.message}`);
-    }
-    throw error;
-  });
+  const reply = await readJsonReply(response);
+  if (!reply.json) throw new Error(`${backendNonJsonReason(reply.status)}. ${new BackendNotRunningError(url, reply.status).message}`);
+  const data = reply.body;
   if (!response.ok || data?.success !== true) {
     throw new Error(data?.error || `${url} failed`);
   }
@@ -370,13 +367,13 @@ export async function runActionGate(
       inspection = await inspectOnce(scopedRequest, post);
     } catch (error) {
       if (signal.aborted) return CANCELLED;
-      if (transientRetries < MAX_TRANSIENT_RETRIES) {
-        transientRetries++;
-        await sleep(TRANSIENT_RETRY_BACKOFF_MS, signal);
-        if (signal.aborted) return CANCELLED;
-        continue;
+      if (transientRetries >= MAX_TRANSIENT_RETRIES) {
+        return blocked(scopedRequest, error as GateStageError, attempts);
       }
-      return blocked(scopedRequest, error as GateStageError, attempts);
+      transientRetries++;
+      await sleep(TRANSIENT_RETRY_BACKOFF_MS, signal);
+      if (signal.aborted) return CANCELLED;
+      continue;
     }
     if (signal.aborted) return CANCELLED;
     const { frame, report, point } = inspection;
