@@ -64,7 +64,22 @@ describe("session ↔ trail conversion", () => {
 describe("controlUnavailableReason", () => {
   it("names the reason when no desktop control backend is available", () => {
     const reason = controlUnavailableReason(describeBridgeStatus({ controlBackend: "unavailable", pythonAvailable: false }));
-    expect(reason).toMatch(/^Control: unavailable/);
+    expect(reason).toContain("start the python-service");
+    expect(reason).toContain("Control: unavailable");
+  });
+
+  it("tells the user to start the python-service when the bridge health endpoint is unreachable", () => {
+    expect(controlUnavailableReason(describeBridgeStatus(null))).toContain("start the python-service");
+  });
+
+  it("refuses the python fallback when pyautogui is missing instead of simulating", () => {
+    const view = describeBridgeStatus({ controlBackend: "python", pythonAvailable: true, pyautoguiAvailable: false });
+    expect(controlUnavailableReason(view)).toContain("start the python-service");
+  });
+
+  it("is null when the python bridge can act", () => {
+    const view = describeBridgeStatus({ controlBackend: "python", pythonAvailable: true, pyautoguiAvailable: true });
+    expect(controlUnavailableReason(view)).toBeNull();
   });
 
   it("is null when a control backend can act", () => {

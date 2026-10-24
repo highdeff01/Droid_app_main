@@ -9,6 +9,8 @@ import { captureScreenFrame } from "@/lib/automation-runner";
 import { analyzeFrame, type HudStepLike } from "@/lib/hud-actions";
 import { findTargetElement } from "@/lib/action-gate";
 import { loadGrayFrame } from "@/lib/frame-diff";
+import { rgbaToGray, type GrayImage } from "@/lib/template-match";
+import { bridgeDownError } from "@shared/device-execution";
 import type { LoadedFrame, StepwiseDeps, StepwiseStep } from "@/lib/stepwise-replay";
 import type { TurnLoopResult } from "@/lib/qwen-turn-loop";
 import type { MouseRecordingSession, SessionThumbnail } from "@/lib/mouse-trajectory-store";
@@ -17,26 +19,35 @@ import { parseProposedSteps, type GoalStep } from "@shared/goal-loop";
 
 const CLICK_TYPES = new Set(["click", "left_click", "right_click", "double_click"]);
 
-/** Why the desktop control backend cannot act, or null when it can. */
+/** Why the desktop input bridge cannot act (a "start the python-service" error), or null when it can. */
 export function controlUnavailableReason(view: BridgeStatusView): string | null {
-  if (!view.control.startsWith("Control: unavailable")) return null;
-  return [view.control, view.fix].filter(Boolean).join(" — ");
+  if (view.control === "Control: native") return null;
+  if (!view.control.startsWith("Control: unavailable") && view.pythonOk && view.pyautoguiOk) return null;
+  return bridgeDownError(`${view.control}; ${view.label}.`);
 }
 
-/** Browser-only: the pixel size of a data-URL image. */
-function imageSize(dataUrl: string): Promise<{ width: number; height: number }> {
+/** Browser-only: decodes a data-URL image into its full-resolution luminance. */
+function loadPixels(dataUrl: string): Promise<GrayImage> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("Canvas 2D is unavailable for template matching"));
+      ctx.drawImage(img, 0, 0);
+      resolve(rgbaToGray(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height));
+    };
     img.onerror = () => reject(new Error("Frame image could not be decoded"));
     img.src = dataUrl;
   });
 }
 
-/** Browser-only: a frame decoded for comparison, with the size of the screenshot it came from. */
+/** Browser-only: a frame decoded for comparison and template matching, with its pixel size. */
 export async function loadReplayFrame(dataUrl: string): Promise<LoadedFrame> {
-  const [size, gray] = await Promise.all([imageSize(dataUrl), loadGrayFrame(dataUrl)]);
-  return { gray, ...size };
+  const [pixels, gray] = await Promise.all([loadPixels(dataUrl), loadGrayFrame(dataUrl)]);
+  return { gray, width: pixels.width, height: pixels.height, pixels };
 }
 
 export interface HudStepwiseWiring {

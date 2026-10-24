@@ -25,6 +25,14 @@ const decisionSchema = z.object({
   verified: z.boolean().optional(),
 });
 export type ReplayDecision = z.infer<typeof decisionSchema>;
+
+/** One log line: how far the located target drifted from the recorded coordinates. */
+export function describeTargetDrift(recorded: Pick<ReplayStep, "x" | "y">, located: Pick<ReplayStep, "x" | "y">): string {
+  const dx = Math.round(located.x - recorded.x);
+  const dy = Math.round(located.y - recorded.y);
+  const sign = (value: number) => (value >= 0 ? `+${value}` : `${value}`);
+  return `Measured drift (${sign(dx)}, ${sign(dy)}) px = ${Math.hypot(dx, dy).toFixed(1)} px: recorded (${Math.round(recorded.x)}, ${Math.round(recorded.y)}) → acting at (${Math.round(located.x)}, ${Math.round(located.y)})`;
+}
 export type ReplayJudge = (
   phase: "planning" | "verification",
   step: ReplayStep,
@@ -388,7 +396,7 @@ export class ReplayEngine {
       );
     }
     await this.checkpoint(item);
-    this.event(item, "execution", `Executing ${step.name}`, {
+    this.event(item, "execution", `Executing ${step.name}. ${describeTargetDrift(step, planned)}`, {
       stepId: step.id,
       beforeHash: before.hash,
     });
