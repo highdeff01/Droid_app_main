@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { runUseCommand, type UseCommandDeps } from "./routes/assistant-control";
-import type { ScreenPerceptionReport } from "./ai-perception-engine";
+import { runUseCommand, type UseCommandDeps } from "./assistant-control";
+import type { ScreenPerceptionReport } from "../ai-perception-engine";
 
 const frame = {
   success: true as const,
