@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { spawnPython } from "./python-resolver";
 import { activeNativeControl, runNativeDesktopAction } from "./desktop-control";
-import { PYTHON_SETUP_FIX } from "../shared/device-execution";
+import { bridgeDownError } from "../shared/device-execution";
 import type { ReplayRequest, ReplayStep } from "../shared/replay";
 import type { PhoneFrame, PhoneAction } from "../shared/phone";
 import { PhoneBridge } from "./phone-bridge";
@@ -11,14 +11,12 @@ export interface ReplayAdapter {
   capture(): Promise<PhoneFrame>;
   execute(step: ReplayStep, frame: PhoneFrame): Promise<void>;
 }
-/** Appends the setup fix when an error says Python or its desktop packages are missing. */
+/** Turns an error saying Python or its desktop packages are missing into the "start the python-service" error. */
 export function withPythonFix(err: Error): Error {
   const missing =
     (err as NodeJS.ErrnoException).code === "ENOENT" ||
     /ENOENT|No module named '(pyautogui|mss|PIL)'/.test(err.message);
-  return missing
-    ? new Error(`${err.message} — Python or its desktop packages are missing. Fix: ${PYTHON_SETUP_FIX}`)
-    : err;
+  return missing ? new Error(bridgeDownError(`(${err.message})`)) : err;
 }
 export function desktopOperation(payload: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -54,7 +52,9 @@ export function desktopOperation(payload: unknown): Promise<any> {
     child.once("close", (code) => {
       try {
         const result = JSON.parse(output);
-        if (code !== 0 || result.success !== true || result.simulated)
+        if (result.simulated)
+          throw new Error(bridgeDownError("The bridge replied simulated; nothing was executed."));
+        if (code !== 0 || result.success !== true)
           throw new Error(result.error || error || "Desktop execution failed");
         finish(undefined, result);
       } catch (err) {

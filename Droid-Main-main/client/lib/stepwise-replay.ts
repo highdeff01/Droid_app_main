@@ -1,8 +1,10 @@
 /**
  * Runs recorded steps one at a time with honest per-step progress:
- *   backend check → (drift mode) pre-check the live frame against the step's SAVED frame →
- *   gated dispatch of the one step → (drift mode) post-check: classify the frame change and
- *   check the next step's target element landed.
+ *   backend check → (drift mode) pre-check the live frame against the step's SAVED frame and
+ *   locate the recorded target on the live frame (template matching) to measure and correct the
+ *   pixel drift → gated dispatch of the one step at the corrected point → (drift mode) post-check:
+ *   re-locate the target after acting, classify the frame change and check the next step's
+ *   target element landed. The measured drift of every step is logged.
  * A backtrack or unexpected page stops the run, is surfaced, and is handed to the replanner
  * (the Qwen turn loop) to recalculate a route toward the goal. Nothing is assumed: a failed
  * dispatch, capture or check is reported as such.
@@ -13,6 +15,7 @@ import {
   type FrameChange,
   type GrayFrame,
 } from "@/lib/frame-diff";
+import { measureDrift, unmeasuredDrift, type DriftMeasurement, type GrayImage } from "@/lib/template-match";
 
 export interface StepwiseStep {
   id: string;
@@ -29,6 +32,8 @@ export interface LoadedFrame {
   gray: GrayFrame;
   width: number;
   height: number;
+  /** Full-resolution luminance for template matching; drift is unmeasured without it. */
+  pixels?: GrayImage;
 }
 
 export interface StepwiseDeps {
@@ -55,6 +60,12 @@ export interface StepOutcome {
   preCheck?: FrameChange;
   postCheck?: FrameChange;
   elementCheck?: string;
+  /** Drift of the target on the live frame before acting (the correction applied). */
+  drift?: DriftMeasurement;
+  /** The target re-located on the frame after acting. */
+  postDrift?: DriftMeasurement;
+  /** Where the step was really dispatched (the drift-corrected point). */
+  actedAt?: { x: number; y: number };
 }
 
 export interface StepwiseProgress {
@@ -81,7 +92,12 @@ export interface StepwiseOptions {
   onProgress: (progress: StepwiseProgress) => void;
   /** Called once with a drift that stops the run, before the replanner runs. */
   onDrift?: (drift: FrameChange, step: StepwiseStep) => void;
+  /** Called with each drift measured (before acting and after), one log line per measurement. */
+  onDriftMeasured?: (step: StepwiseStep, phase: "before" | "after", drift: DriftMeasurement) => void;
 }
+
+/** Actions aimed at a screen point; only these are located and drift-corrected. */
+const POINTER_ACTIONS = new Set(["click", "left_click", "double_click", "right_click", "clear_and_type"]);
 
 const DRIFT_KINDS = new Set<FrameChange["kind"]>(["backtrack", "wrong_page"]);
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -119,9 +135,30 @@ async function captureLive(run: RunState): Promise<{ url: string; frame: LoadedF
   return { url, frame: await run.deps.loadFrame(url) };
 }
 
-async function savedFrame(run: RunState, step: StepwiseStep | undefined): Promise<GrayFrame | null> {
+async function referenceFrame(run: RunState, step: StepwiseStep | undefined): Promise<LoadedFrame | null> {
   if (!step?.referenceScreenshotUrl) return null;
-  return (await run.deps.loadFrame(step.referenceScreenshotUrl)).gray;
+  return run.deps.loadFrame(step.referenceScreenshotUrl);
+}
+
+async function savedFrame(run: RunState, step: StepwiseStep | undefined): Promise<GrayFrame | null> {
+  return (await referenceFrame(run, step))?.gray ?? null;
+}
+
+/**
+ * Template-matches the step's recorded target (cut from its saved frame) on the current live frame.
+ * `from` is the point the drift is measured from: the recorded point before acting, the acted point after.
+ */
+async function locateTarget(run: RunState, step: StepwiseStep, from: { x: number; y: number }): Promise<DriftMeasurement> {
+  if (!POINTER_ACTIONS.has(step.action)) return unmeasuredDrift(from.x, from.y, `${step.action} has no screen target; drift not measured`);
+  const reference = await referenceFrame(run, step);
+  if (!reference) return unmeasuredDrift(from.x, from.y, "No saved frame for this step; drift not measured");
+  const live = run.live?.frame.pixels;
+  if (!reference.pixels || !live) return unmeasuredDrift(from.x, from.y, "Frame pixels unavailable for template matching; drift not measured");
+  return measureDrift(reference.pixels, live, step.x, step.y, { from });
+}
+
+function logDrift(run: RunState, step: StepwiseStep, phase: "before" | "after", drift: DriftMeasurement) {
+  run.options.onDriftMeasured?.(step, phase, drift);
 }
 
 /** Pre-check: the live frame against this step's saved frame and the screen before it. */
@@ -141,14 +178,20 @@ async function preCheck(run: RunState, index: number): Promise<FrameChange | und
   });
 }
 
-/** Post-check: what the action changed, and whether the next target element landed. */
-async function postCheck(run: RunState, index: number): Promise<Pick<StepOutcome, "postCheck" | "elementCheck">> {
+/** Post-check: re-locate the target after acting, what the action changed, and whether the next target landed. */
+async function postCheck(
+  run: RunState,
+  index: number,
+  actedAt: { x: number; y: number },
+): Promise<Pick<StepOutcome, "postCheck" | "elementCheck" | "postDrift">> {
   const step = run.steps[index];
   const next = run.steps[index + 1];
   report(run, index, "post_check", `Verifying the outcome of "${step.name}"`);
   const before = run.live!;
   run.seen.push(before.frame.gray);
   run.live = await captureLive(run);
+  const postDrift = await locateTarget(run, step, actedAt);
+  logDrift(run, step, "after", postDrift);
   const postCheck = classifyFrameChange({
     previous: before.frame.gray,
     current: run.live.frame.gray,
@@ -156,10 +199,11 @@ async function postCheck(run: RunState, index: number): Promise<Pick<StepOutcome
     earlier: run.seen.slice(0, -1),
     options: { cursors: cursorsFor(run.live.frame, step, next) },
   });
-  if (!next) return { postCheck, elementCheck: "skipped: last step has no next target" };
+  if (!next) return { postCheck, postDrift, elementCheck: "skipped: last step has no next target" };
   const element = await run.deps.findElement(run.live.url, next, run.options.signal);
   return {
     postCheck,
+    postDrift,
     elementCheck: element ? `next target found: ${element}` : `next target "${next.targetOcrLabel || next.name}" not found`,
   };
 }
@@ -179,32 +223,54 @@ function fail(run: RunState, index: number, detail: string, extra: Partial<StepO
   return { status: "failed", reason: `Step ${index + 1} ("${step.name}") failed: ${detail}`, outcomes: run.outcomes };
 }
 
-/** One step: pre-check, dispatch, post-check. Returns a terminal result to stop the run, else null. */
+/** Drift mode before acting: frame pre-check, then locate the target and correct the step's point. */
+async function verifyBefore(
+  run: RunState,
+  index: number,
+): Promise<{ stop: StepwiseResult } | { pre?: FrameChange; drift: DriftMeasurement; target: StepwiseStep }> {
+  const step = run.steps[index];
+  const pre = await preCheck(run, index);
+  if (pre && DRIFT_KINDS.has(pre.kind)) {
+    run.outcomes.push({ stepId: step.id, name: step.name, status: "skipped", detail: `Not executed: ${pre.reason}`, preCheck: pre });
+    report(run, index, "skipped", pre.reason);
+    return { stop: await replanFrom(run, index, pre) };
+  }
+  const drift = await locateTarget(run, step, { x: step.x, y: step.y });
+  logDrift(run, step, "before", drift);
+  if (drift.status === "not_found") return { stop: fail(run, index, `Not executed: ${drift.detail}`, { preCheck: pre, drift }) };
+  const moved = drift.located && (drift.dx !== 0 || drift.dy !== 0);
+  return { pre, drift, target: moved ? { ...step, x: drift.located!.x, y: drift.located!.y } : step };
+}
+
+/** One step: pre-check and drift correction, dispatch, post-check. Returns a terminal result to stop the run, else null. */
 async function runOne(run: RunState, index: number): Promise<StepwiseResult | null> {
   const step = run.steps[index];
   const { verifyDrift, signal } = run.options;
   let pre: FrameChange | undefined;
+  let drift: DriftMeasurement | undefined;
+  let target = step;
   if (verifyDrift) {
-    pre = await preCheck(run, index);
-    if (pre && DRIFT_KINDS.has(pre.kind)) {
-      run.outcomes.push({ stepId: step.id, name: step.name, status: "skipped", detail: `Not executed: ${pre.reason}`, preCheck: pre });
-      report(run, index, "skipped", pre.reason);
-      return replanFrom(run, index, pre);
-    }
+    const checked = await verifyBefore(run, index);
+    if ("stop" in checked) return checked.stop;
+    ({ pre, drift, target } = checked);
   }
-  report(run, index, "executing", `Executing "${step.name}" (${step.action} at ${step.x}, ${step.y})`);
+  const actedAt = { x: target.x, y: target.y };
+  report(run, index, "executing", `Executing "${step.name}" (${step.action} at ${target.x}, ${target.y})`);
   try {
-    await run.deps.runStep(step, signal);
+    await run.deps.runStep(target, signal);
   } catch (error) {
-    return fail(run, index, errorText(error), { preCheck: pre });
+    return fail(run, index, errorText(error), { preCheck: pre, drift });
   }
-  const post = verifyDrift ? await postCheck(run, index) : {};
+  const post = verifyDrift ? await postCheck(run, index, actedAt) : {};
+  const checks = [pre ? `Saved-frame check: ${pre.reason}` : "No saved frame for this step; pixel pre-check skipped", drift?.detail];
   const outcome: StepOutcome = {
     stepId: step.id,
     name: step.name,
     status: "executed",
-    detail: pre ? `Saved-frame check: ${pre.reason}` : verifyDrift ? "No saved frame for this step; pixel pre-check skipped" : "Executed",
+    detail: verifyDrift ? checks.filter(Boolean).join("; ") : "Executed",
     preCheck: pre,
+    drift,
+    actedAt,
     ...post,
   };
   run.outcomes.push(outcome);
