@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import { centralLogHub } from "../log-hub";
 import { queueMobileAction } from "./mobile-stream";
 import { activeNativeControl, runNativeDesktopAction } from "../desktop-control";
+import { logInputActions } from "../input-action-log";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,16 +51,38 @@ function waypointsDesc(pts: any[], pos: { x: number; y: number }): string {
 }
 
 /**
- * Execute device task programmatic helper - supports both replay adapter and direct python/stream execution
+ * Execute device task programmatic helper - supports both replay adapter and direct python/stream execution.
+ * Every task is logged to the action history with a screenshot of the moment it ran.
  */
-export async function executeDeviceTask(body: any): Promise<{
+export async function executeDeviceTask(body: any): Promise<DeviceTaskResult> {
+  const result = await runDeviceTask(body);
+  const raw = body.task || body;
+  const position = raw.targetPosition || { x: raw.x, y: raw.y };
+  logInputActions(
+    [
+      {
+        action: String(raw.action || raw.actionType || "click").toLowerCase(),
+        x: position.x,
+        y: position.y,
+        text: raw.textPayload || raw.text,
+        key: raw.keyPayload || raw.key,
+      },
+    ],
+    { origin: body.origin || "execute_task", executed: result.executed ?? result.success, error: result.error },
+  );
+  return result;
+}
+
+type DeviceTaskResult = {
   success: boolean;
   explanation?: string;
   simulated?: boolean;
   durationMs?: number;
   error?: string;
   [key: string]: any;
-}> {
+};
+
+async function runDeviceTask(body: any): Promise<DeviceTaskResult> {
   const raw = body.task || body;
   const targetDevice = body.targetDevice || raw.targetDevice || "desktop";
   const action = String(raw.action || raw.actionType || "click").toLowerCase();

@@ -13,6 +13,7 @@ import type { PhoneFrame } from "../shared/phone";
 import { type ReplayAdapter, createReplayAdapter } from "./replay-adapter";
 import { sendQwenChatRequest } from "./ai-endpoint";
 import { aiMonitorStore } from "./ai-monitor-store";
+import { recordInputActions, type InputActionEntry } from "./input-action-log";
 import { companionEvents } from "./companion-events";
 import { operationBus } from "./overseer/operation-bus";
 import type { FinishedStatus } from "../shared/overseer";
@@ -65,6 +66,10 @@ export const judgeReplay: ReplayJudge = async (phase, step, before, after) => {
     throw new Error(response.error || "AI provider unavailable");
   return decisionSchema.parse(JSON.parse(response.content));
 };
+/** A replay step as an action-history input entry. */
+function replayInput(step: ReplayStep): InputActionEntry {
+  return { action: step.action, x: step.x, y: step.y, text: step.text, key: step.keyPayload };
+}
 interface InternalRun {
   run: ReplayRun;
   request: ReplayRequest;
@@ -222,6 +227,31 @@ export class ReplayEngine {
     if (item.stop) throw new Error("Replay cancelled");
     if (Date.now() - item.run.startedAt > 15 * 60000)
       throw new Error("Replay exceeded its 15 minute limit");
+  }
+  /** Executes the step; a failed execution is logged as not executed before the error propagates. */
+  private async executeLogged(item: InternalRun, step: ReplayStep, before: PhoneFrame) {
+    try {
+      await item.adapter.execute(step, before);
+    } catch (error) {
+      await recordInputActions([replayInput(step)], {
+        origin: `replay:${item.run.id}`,
+        executed: false,
+        error: error instanceof Error ? error.message : String(error),
+        screenshotId: aiMonitorStore.storeScreenshot(before.image, before.capturedAt).id,
+      });
+      throw error;
+    }
+  }
+  /** Attaches the post-action screenshot to the executed step and logs the input with it. */
+  private async attachStepScreenshot(item: InternalRun, step: ReplayStep, after: PhoneFrame) {
+    const shot = aiMonitorStore.storeScreenshot(after.image, after.capturedAt);
+    const runStep = item.run.steps[item.run.currentStep];
+    Object.assign(runStep, { screenshotId: shot.id, screenshotHash: after.hash, screenshotAt: after.capturedAt });
+    await recordInputActions([replayInput(step)], {
+      origin: `replay:${item.run.id}`,
+      executed: true,
+      screenshotId: shot.id,
+    });
   }
   private async capture(item: InternalRun) {
     const frame = await item.adapter.capture();
@@ -392,7 +422,7 @@ export class ReplayEngine {
       stepId: step.id,
       beforeHash: before.hash,
     });
-    await item.adapter.execute(planned, before);
+    await this.executeLogged(item, planned, before);
     const executedAt = Date.now();
     await this.checkpoint(item);
     await new Promise((r) => setTimeout(r, 500));
@@ -406,6 +436,7 @@ export class ReplayEngine {
       throw new Error(
         "Device has not supplied a new screenshot after execution",
       );
+    await this.attachStepScreenshot(item, planned, after);
     const review = decisionSchema.parse(
       await this.judge("verification", planned, before, after),
     );

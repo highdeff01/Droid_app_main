@@ -131,7 +131,14 @@ import {
   handleExportActionHistoryCsv,
   handleRecordAction,
   handleClearActionHistory,
+  handleGetActionScreenshot,
 } from "./routes/ai-monitor";
+import { createAssistantControlRouter } from "./routes/assistant-control";
+import { executeDeviceTask } from "./routes/execute-task";
+import { qwenVisionEngine } from "./ai-perception-engine";
+import { aiMonitorStore } from "./ai-monitor-store";
+import { readLiveFrame, setLiveFrameReader } from "./live-frame";
+import { screenMonitor } from "./screen-monitor";
 import {
   handleGetBrowserTabs,
   handleInspectBrowserTab,
@@ -276,6 +283,21 @@ export function createServer() {
     assistantConditionsRouter,
   );
   app.use("/api/assistant/live", requireApiAccess, assistantLiveRouter);
+  // /use command and the background (1 s) / advanced (0.25 s) screen monitor.
+  setLiveFrameReader(() => resolveCaptureFrame(screenCaptureSources));
+  app.use(
+    "/api/assistant/control",
+    requireApiAccess,
+    createAssistantControlRouter(
+      {
+        readFrame: readLiveFrame,
+        perceive: (imageData) =>
+          qwenVisionEngine.analyzeScreen(imageData, undefined, undefined, aiMonitorStore.getBrowserContext()),
+        execute: executeDeviceTask,
+      },
+      screenMonitor,
+    ),
+  );
   app.use("/api/assistant/reports", requireApiAccess, assistantReportsRouter);
   app.use("/api/assistant/verification", requireApiAccess, verificationReportsRouter);
   app.use("/api/assistant/scheduling", requireApiAccess, schedulingRouter);
@@ -473,6 +495,7 @@ export function createServer() {
   app.get("/api/ai/action-history.csv", handleExportActionHistoryCsv);
   app.post("/api/ai/action-history", handleRecordAction);
   app.delete("/api/ai/action-history", handleClearActionHistory);
+  app.get("/api/ai/action-history/screenshots/:id", handleGetActionScreenshot);
 
   // Browser Inspector: real tabs & page elements for accurate screen interpretation
   app.get("/api/browser/tabs", handleGetBrowserTabs);
