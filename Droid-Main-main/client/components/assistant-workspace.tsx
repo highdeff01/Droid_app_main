@@ -56,6 +56,11 @@ import { toast } from "sonner";
 import { CaptureSourcePanel } from "./capture-source-panel";
 import { ProgressFeed } from "./progress-feed";
 import { InstructionPlanningPanel } from "@/components/instruction-planning-panel";
+import {
+  ActionHistoryPanel,
+  AssistantCommandChat,
+  ScreenMonitorPanel,
+} from "./assistant-control-panels";
 import { WorkflowDebuggerPanel } from "./workflow-debugger-panel";
 import { DriftHeatmapOverlay } from "./drift-heatmap-overlay";
 import { WorkflowTimeline } from "./workflow-timeline";
@@ -1140,7 +1145,10 @@ export function AssistantWorkspace({
                   </div>
                 </div>
                 <InstructionPlanningPanel />
+                <AssistantCommandChat />
                 <div className="mt-6 space-y-5">
+                  <ScreenMonitorPanel />
+                  <ActionHistoryPanel />
                   <CaptureSourcePanel />
                   <ContextSourcesPanel />
                   <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">

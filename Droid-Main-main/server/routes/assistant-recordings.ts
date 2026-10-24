@@ -9,6 +9,7 @@ import { recordingRepository } from "../recording-state";
 import { assistantStateRepository } from "../assistant-state";
 import { allowlistedActionSchema } from "./assistant-execution";
 import { liveEvents } from "../live-events";
+import { logInputActions, type InputActionEntry } from "../input-action-log";
 
 const source = z.object({
   source: z.enum(["browser-panel", "manual", "imported", "assistant"]),
@@ -127,14 +128,33 @@ assistantRecordingsRouter.post("/:recordingId/events", (req, res) => {
     return res
       .status(409)
       .json({ success: false, error: "Recording is stopped" });
+  const events = parsed.data.events as RecordedAction[];
+  logInputActions(events.map(recordedEventToInput), {
+    origin: "user_recording",
+    executed: true,
+    skipScreenshot: true,
+  });
   res.json({
     success: true,
-    recording: recordingRepository.append(
-      req.params.recordingId,
-      parsed.data.events as RecordedAction[],
-    ),
+    recording: recordingRepository.append(req.params.recordingId, events),
   });
 });
+
+/** A recorded user event as an action-history entry; typed text stays redacted when it was. */
+function recordedEventToInput(event: RecordedAction): InputActionEntry {
+  const at = Date.parse(event.timestamp) || undefined;
+  switch (event.type) {
+    case "mouse-click":
+    case "mouse-move":
+      return { action: event.type, x: event.x, y: event.y, at };
+    case "keyboard-key":
+      return { action: event.type, key: [...event.modifiers, event.key].join("+"), at };
+    case "keyboard-text":
+      return { action: event.type, text: event.redacted ? "[redacted]" : event.text, at };
+    default:
+      return { action: event.type, at };
+  }
+}
 
 assistantRecordingsRouter.get("/", (req, res) =>
   res.json({

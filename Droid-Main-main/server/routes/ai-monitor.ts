@@ -39,3 +39,11 @@ export const handleClearActionHistory: RequestHandler = (_req, res) => {
   aiMonitorStore.clearActionHistory();
   res.json({ success: true, message: "Action history cleared" });
 };
+
+/** GET /api/ai/action-history/screenshots/:id — the screenshot taken at an action's moment. */
+export const handleGetActionScreenshot: RequestHandler = (req, res) => {
+  const shot = aiMonitorStore.getScreenshot(req.params.id);
+  if (!shot)
+    return res.status(404).json({ success: false, error: "Screenshot not found or evicted" });
+  res.json({ success: true, ...shot });
+};

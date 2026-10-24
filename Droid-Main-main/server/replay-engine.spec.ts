@@ -4,7 +4,15 @@ import type { ReplayAdapter } from "./replay-adapter";
 import { replayActionCount, replayRequestSchema } from "../shared/replay";
 
 vi.mock("./ai-monitor-store", () => ({
-  aiMonitorStore: { record: vi.fn(), setStatus: vi.fn() },
+  aiMonitorStore: {
+    record: vi.fn(),
+    setStatus: vi.fn(),
+    storeScreenshot: vi.fn((imageData: string, capturedAt: number) => ({
+      id: `shot-${capturedAt}`,
+      imageData,
+      capturedAt,
+    })),
+  },
 }));
 
 /** Fake device: every frame is fresh; the hash changes only after an action executes. */
@@ -115,5 +123,19 @@ describe("replay step repeatCount", () => {
     expect(executions()).toBe(2);
     expect(run.completed).toBe(1);
     expect(run.steps.map((s) => s.status)).toEqual(["failed", "pending"]);
+  }, 20000);
+
+  it("attaches the post-action screenshot to every executed step", async () => {
+    const { adapter } = fakeAdapter();
+    const engine = new ReplayEngine(undefined, certainJudge);
+    const started = engine.start(request([step("a"), step("b")]), adapter);
+    const run = await settle(engine, started.id);
+    expect(run.status).toBe("completed");
+    for (const s of run.steps) {
+      expect(s.screenshotId).toMatch(/^shot-/);
+      expect(s.screenshotHash).toMatch(/^frame-[1-9]/);
+      expect(typeof s.screenshotAt).toBe("number");
+    }
+    expect(run.steps[0].screenshotHash).not.toBe(run.steps[1].screenshotHash);
   }, 20000);
 });

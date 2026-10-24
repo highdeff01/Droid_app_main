@@ -102,6 +102,10 @@ export interface ReplayRun {
   steps: Array<{
     id: string;
     status: "pending" | "running" | "completed" | "failed";
+    /** Screenshot of the screen right after the step executed (action-history screenshot id). */
+    screenshotId?: string;
+    screenshotHash?: string;
+    screenshotAt?: number;
   }>;
   events: ReplayEvent[];
   error?: string;

@@ -21,6 +21,7 @@ import {
   unavailableOutcome,
 } from "../../shared/device-execution";
 import { trailToBridgeActions } from "../../shared/trail-replay";
+import { logInputActions } from "../input-action-log";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -193,9 +194,24 @@ export function executePythonPyAutoGUI(scriptCode: string): Promise<PythonRunRes
 
 /**
  * Runs bridge actions through the native control when it was selected at startup;
- * otherwise runs the Python script (the fallback path).
+ * otherwise runs the Python script (the fallback path). Every action is logged to the action history.
  */
 async function runBridgeActions(actions: any[], pythonScript: () => string): Promise<PythonRunResult> {
+  const result = await dispatchBridgeActions(actions, pythonScript);
+  logInputActions(
+    actions.map((act) => ({
+      action: String(act.type || act.action || "click"),
+      x: act.x,
+      y: act.y,
+      text: act.text,
+      key: act.key || act.keyPayload,
+    })),
+    { origin: "bridge", executed: result.executed, error: result.error },
+  );
+  return result;
+}
+
+async function dispatchBridgeActions(actions: any[], pythonScript: () => string): Promise<PythonRunResult> {
   const native = await activeNativeControl();
   if (!native) return executePythonPyAutoGUI(pythonScript());
   const requests = actions.map((act) => {
@@ -1303,6 +1319,7 @@ export const handleInteractiveDeviceAction: RequestHandler = async (req, res) =>
   if (native) {
     const outcome = await runNativeDesktopAction(native, { action, x, y, toX, toY, text, key });
     const durationMs = Date.now() - startTime;
+    logInputActions([{ action, x, y, text, key }], { origin: "interactive", executed: outcome.executed, error: outcome.error });
     addBridgeLog(
       "INTERACTIVE_DEVICE_MIRROR_ACTION",
       outcome.success ? "success" : "warning",
@@ -1387,6 +1404,7 @@ export const handleInteractiveDeviceAction: RequestHandler = async (req, res) =>
     py.on("close", (code) => {
       const durationMs = Date.now() - startTime;
       const outcome = outcomeFromExit(code, stderr);
+      logInputActions([{ action, x, y, text, key }], { origin: "interactive", executed: outcome.executed, error: outcome.error });
 
       addBridgeLog(
         "INTERACTIVE_DEVICE_MIRROR_ACTION",
@@ -1424,6 +1442,7 @@ export const handleInteractiveDeviceAction: RequestHandler = async (req, res) =>
 
     py.on("error", (err) => {
       const outcome = outcomeFromSpawnError(err);
+      logInputActions([{ action, x, y, text, key }], { origin: "interactive", executed: false, error: outcome.error });
       addBridgeLog(
         "INTERACTIVE_DEVICE_MIRROR_ACTION_UNAVAILABLE",
         "warning",

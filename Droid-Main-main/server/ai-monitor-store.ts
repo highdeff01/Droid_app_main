@@ -16,7 +16,25 @@ export interface AiActionRecord {
   target?: { name?: string; x?: number; y?: number };
   confidence?: number;
   source?: string;
+  /** Set on real mouse/keyboard actions only. */
+  inputKind?: "mouse" | "keyboard";
+  action?: string;
+  x?: number;
+  y?: number;
+  /** Typed text or key chord of a keyboard action. */
+  input?: string;
+  executed?: boolean;
+  origin?: string;
+  /** Id of the screenshot taken at the moment of the action (see getScreenshot). */
+  screenshotId?: string;
+  screenshotError?: string;
   [key: string]: any;
+}
+
+export interface StoredScreenshot {
+  id: string;
+  imageData: string;
+  capturedAt: number;
 }
 
 export interface AiMonitorStatus {
@@ -65,6 +83,8 @@ class AiMonitorStore {
   };
   private browserContext: AiMonitorBrowserContext | null = null;
   private readonly maxEntries = 1000;
+  private screenshots = new Map<string, StoredScreenshot>();
+  private readonly maxScreenshots = 200;
 
   setStatus(status: Partial<AiMonitorStatus>) {
     this.currentStatus = {
@@ -80,6 +100,7 @@ class AiMonitorStore {
 
   record(entry: Partial<AiActionRecord>): AiActionRecord {
     const record: AiActionRecord = {
+      ...entry,
       id: entry.id || `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       timestamp: entry.timestamp || Date.now(),
       timeStr: entry.timeStr || new Date().toLocaleTimeString(),
@@ -87,10 +108,7 @@ class AiMonitorStore {
       title: entry.title || "Action",
       detail: entry.detail || "",
       status: entry.status || "completed",
-      target: entry.target,
-      confidence: entry.confidence,
       source: entry.source || "ai_engine",
-      ...entry,
     };
 
     this.history.unshift(record);
@@ -106,6 +124,7 @@ class AiMonitorStore {
 
   clearActionHistory() {
     this.history = [];
+    this.screenshots.clear();
   }
 
   setBrowserContext(ctx: AiMonitorBrowserContext) {
@@ -116,32 +135,71 @@ class AiMonitorStore {
     return this.browserContext;
   }
 
+  /** Keeps a screenshot for an action record; the oldest is evicted past the cap. */
+  storeScreenshot(imageData: string, capturedAt = Date.now()): StoredScreenshot {
+    const shot = {
+      id: `shot_${capturedAt}_${Math.random().toString(36).substring(2, 7)}`,
+      imageData,
+      capturedAt,
+    };
+    this.screenshots.set(shot.id, shot);
+    if (this.screenshots.size > this.maxScreenshots)
+      this.screenshots.delete(this.screenshots.keys().next().value!);
+    return shot;
+  }
+
+  getScreenshot(id: string): StoredScreenshot | undefined {
+    return this.screenshots.get(id);
+  }
+
   exportCsv(): string {
     const headers = [
       "ID",
       "Timestamp",
       "Time",
+      "ISO Time",
       "Phase",
       "Title",
       "Status",
       "Detail",
       "Confidence",
       "Source",
+      "Input Kind",
+      "Action",
+      "X",
+      "Y",
+      "Input",
+      "Executed",
+      "Origin",
+      "Screenshot ID",
     ];
     const rows = this.history.map((r) => [
       r.id,
       r.timestamp,
-      `"${r.timeStr}"`,
+      csvText(r.timeStr),
+      new Date(r.timestamp).toISOString(),
       r.phase,
-      `"${(r.title || "").replace(/"/g, '""')}"`,
+      csvText(r.title),
       r.status,
-      `"${(r.detail || "").replace(/"/g, '""')}"`,
-      r.confidence !== undefined ? r.confidence : "",
-      r.source || "",
+      csvText(r.detail),
+      r.confidence ?? "",
+      csvText(r.source),
+      r.inputKind ?? "",
+      r.action ?? "",
+      r.x ?? "",
+      r.y ?? "",
+      csvText(r.input),
+      r.executed === undefined ? "" : String(r.executed),
+      r.origin ?? "",
+      r.screenshotId ?? "",
     ]);
 
     return [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
   }
+}
+
+function csvText(value: string | undefined): string {
+  return `"${(value ?? "").replace(/"/g, '""')}"`;
 }
 
 export const aiMonitorStore = new AiMonitorStore();
