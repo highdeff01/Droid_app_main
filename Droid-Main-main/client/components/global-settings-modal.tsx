@@ -32,9 +32,12 @@ import {
 import { toast } from "sonner";
 import { usePreviewMode } from "@/hooks/use-preview-mode";
 import { PREVIEW_BADGE, setPreviewOverride } from "@/lib/preview-mode";
+import { AiStatusBadge } from "@/components/ai-status-badge";
 
-export const DEFAULT_MODEL_URL = "http://192.168.1.100:11434/api/chat";
-export const QUANTUMCLAW_FALLBACK_URL = "https://quantumclaw.net/ollama/api/chat";
+/** Primary and default AI endpoint (quantumclaw, Ollama-compatible non-streaming /api/chat). */
+export const DEFAULT_MODEL_URL = "https://quantumclaw.net/ollama/api/chat";
+/** Optional LAN Ollama preset; never in front of the default. */
+export const LAN_OLLAMA_URL = "http://192.168.1.100:11434/api/chat";
 export const DEFAULT_MODEL_NAME = "qwen3.5:2b";
 
 export interface GlobalSettingsModalProps {
@@ -67,6 +70,7 @@ export function GlobalSettingsModal({
 
   // Testing status
   const [isTesting, setIsTesting] = useState<boolean>(false);
+  const [pingCount, setPingCount] = useState<number>(0);
   const [testResult, setTestResult] = useState<{
     success?: boolean;
     latencyMs?: number;
@@ -133,6 +137,7 @@ export function GlobalSettingsModal({
       toast.error("Failed to connect to model endpoint");
     } finally {
       setIsTesting(false);
+      setPingCount((n) => n + 1);
     }
   };
 
@@ -252,6 +257,7 @@ export function GlobalSettingsModal({
                   )}
                 </Button>
               </div>
+              <AiStatusBadge refreshSignal={pingCount} />
             </div>
 
             {/* Quick Presets */}
@@ -267,18 +273,18 @@ export function GlobalSettingsModal({
                       : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
                   }`}
                 >
-                  🏠 LAN Ollama 192.168.1.100 (Default)
+                  ⚡ QuantumClaw (Default)
                 </button>
                 <button
                   type="button"
-                  onClick={() => setModelUrl("https://quantumclaw.net/ollama/api/chat")}
+                  onClick={() => setModelUrl(LAN_OLLAMA_URL)}
                   className={`text-[11px] px-2.5 py-1 rounded-md border transition-all ${
-                    modelUrl === "https://quantumclaw.net/ollama/api/chat"
+                    modelUrl === LAN_OLLAMA_URL
                       ? "bg-cyan-950 text-cyan-300 border-cyan-500 shadow-sm"
                       : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
                   }`}
                 >
-                  ⚡ QuantumClaw Remote (Fallback)
+                  🏠 LAN Ollama 192.168.1.100 (Optional)
                 </button>
                 <button
                   type="button"

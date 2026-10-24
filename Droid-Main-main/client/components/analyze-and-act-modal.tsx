@@ -28,6 +28,9 @@ import { Dialog, HudDialogContent, DialogHeader, DialogTitle, DialogDescription 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { playClickPip } from "@/lib/audio-synthesizer";
 
+const ANALYZE_SESSION_ID = "analyze-and-act";
+const HELP_SESSION_ID = "ai-help";
+
 interface AnalyzeAndActModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -58,18 +61,30 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
   const [bridgeResultLog, setBridgeResultLog] = useState<string | null>(null);
 
   // Key Point Action Tools State
-  const [searchQuery, setSearchQuery] = useState("sightline workspace automation");
-  const [searchResults, setSearchResults] = useState<string[]>([]);
+  const [helpQuestion, setHelpQuestion] = useState("");
+  const [helpAnswer, setHelpAnswer] = useState<string | null>(null);
+  const [helpError, setHelpError] = useState<string | null>(null);
+  const [isAskingHelp, setIsAskingHelp] = useState(false);
   const [calcExpression, setCalcExpression] = useState("1920 * 1080 / 1000");
   const [calcResult, setCalcResult] = useState<string | null>("2073.6");
   const [liveWriteText, setLiveWriteText] = useState("operator.lead@enterprise.ai");
   const [isLiveWriting, setIsLiveWriting] = useState(false);
   const [watcherActive, setWatcherActive] = useState(true);
 
+  // What the operator wants; sent with the live frame so the model plans from the actual screen.
+  const [instructions, setInstructions] = useState("");
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [bridgeError, setBridgeError] = useState<string | null>(null);
+
+  const assembledTasks: any[] = analysisResult?.autoAssembledTasks ?? [];
+  const firstTarget: { x: number; y: number } | undefined = assembledTasks[0]?.targetPosition;
+  const liveFrame = liveScreenUrl?.startsWith("data:image/") ? liveScreenUrl : undefined;
+
   // Trigger Analyze and Act
   const handleRunAnalyzeAndAct = async () => {
     setIsAnalyzing(true);
     setBridgeResultLog(null);
+    setAnalysisError(null);
     try {
       const response = await fetch("/api/ai/analyze-and-act", {
         method: "POST",
@@ -78,28 +93,33 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
           liveScreenUrl,
           screenStreamUrl,
           previousTasks: storedSteps,
-          userInstructions: "Automate user login, verify navigation landmarks, and execute checkout dispatch",
-          currentGoals: [
-            { id: "g1", title: "Complete Form Navigation" },
-            { id: "g2", title: "Verify Euclidean Coordinate Stability" },
-          ],
+          userInstructions: instructions.trim() || undefined,
+          sessionId: ANALYZE_SESSION_ID,
         }),
       });
-
-      if (response.ok) {
-        const data = await response.json();
-        setAnalysisResult(data);
-        playClickPip(680);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        setAnalysisResult(null);
+        setAnalysisError(data.error || `Analyze & Act failed (HTTP ${response.status})`);
+        return;
       }
+      setAnalysisResult(data);
+      playClickPip(680);
     } catch (e: any) {
-      console.error("Analyze & Act error:", e);
+      setAnalysisError(`AI connection error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  // Dispatch Native Execution Bridge with companion command / app launch
+  // Dispatch Native Execution Bridge at the first model-assembled target
   const handleDispatchBridge = async (actionType = "click") => {
+    setBridgeResultLog(null);
+    setBridgeError(null);
+    if (actionType === "click" && !firstTarget) {
+      setBridgeError("No AI-assembled target yet: run Analyze & Act first.");
+      return;
+    }
     setIsExecutingBridge(true);
     try {
       const response = await fetch("/api/pyautogui/bridge", {
@@ -107,33 +127,51 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: actionType,
-          targetPosition: { x: 960, y: 540 },
+          targetPosition: firstTarget,
           companionCommand: companionCommand || undefined,
           launchApp: launchAppCommand || undefined,
           text: liveWriteText,
         }),
       });
 
-      const data = await response.json();
-      if (data.success) {
-        setBridgeResultLog(`PyAutoGUI Bridge executed action '${actionType}' + companion tasks successfully.`);
-        playClickPip(880);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        setBridgeError(data.error || data.message || `Bridge failed (HTTP ${response.status})`);
+        return;
       }
+      setBridgeResultLog(`PyAutoGUI Bridge executed action '${actionType}' + companion tasks successfully.`);
+      playClickPip(880);
     } catch (err: any) {
-      setBridgeResultLog(`Bridge notice: ${err.message}`);
+      setBridgeError(`Bridge error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setIsExecutingBridge(false);
     }
   };
 
-  // Perform Live Web Search tool
-  const handleExecuteSearch = () => {
+  // Ask AI Help about the live screen (model answer, with session history)
+  const handleAskAiHelp = async () => {
+    if (!helpQuestion.trim()) return;
     playClickPip(540);
-    setSearchResults([
-      `Documentation for '${searchQuery}': Coordinate stabilization protocols active.`,
-      `PyAutoGUI API Reference: moveTo(x, y, duration), typewrite(text, interval).`,
-      `Verified optimal landmark offsets: [ΔX: +14px, ΔY: -8px].`,
-    ]);
+    setIsAskingHelp(true);
+    setHelpAnswer(null);
+    setHelpError(null);
+    try {
+      const response = await fetch("/api/ai/help", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: helpQuestion.trim(), imageData: liveFrame, sessionId: HELP_SESSION_ID }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        setHelpError(data.error || `AI Help failed (HTTP ${response.status})`);
+        return;
+      }
+      setHelpAnswer(data.answer);
+    } catch (err: any) {
+      setHelpError(`AI connection error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsAskingHelp(false);
+    }
   };
 
   // Perform Calculator tool
@@ -213,6 +251,19 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
               );
             })}
           </div>
+          <input
+            type="text"
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+            placeholder="What should the AI do on this screen? (optional)"
+            className="mt-2 w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200"
+          />
+          {analysisError && (
+            <div className="mt-2 p-2 flex items-center gap-1.5 rounded border border-rose-500/50 bg-rose-950/40 text-rose-300 text-[11px]">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>{analysisError}</span>
+            </div>
+          )}
         </DialogHeader>
 
         <ScrollArea className="max-h-[70vh] p-4 space-y-4">
@@ -232,7 +283,7 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
                       {liveScreenUrl ? (
                         <img src={liveScreenUrl} alt="Live Screen" className="w-full h-full object-cover" />
                       ) : (
-                        <span>Simulated Desktop Mirror (1920x1080)</span>
+                        <span>No live frame captured</span>
                       )}
                     </div>
                   </div>
@@ -257,7 +308,7 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
                 </span>
                 <p className="text-slate-200 leading-relaxed">
                   {analysisResult?.visualSummary ||
-                    "Live viewport analyzed: High-resolution form structure active at 1920x1080. 5 primary interactive landmarks verified within Euclidean tolerance."}
+                    "No analysis yet. Run Analyze & Act to have the AI describe the live screen."}
                 </p>
               </div>
 
@@ -271,15 +322,13 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
                   <div className="p-2 bg-slate-950/80 rounded border border-slate-800 space-y-1">
                     <span className="text-slate-400 font-semibold">What Was Done Before:</span>
                     <p className="text-slate-300">
-                      {analysisResult?.crossReferenceAnalysis?.previousActionSummary ||
-                        "Previous session logged 10 steps across form navigation and vector routing."}
+                      {analysisResult?.crossReferenceAnalysis?.previousActionSummary || "—"}
                     </p>
                   </div>
                   <div className="p-2 bg-slate-950/80 rounded border border-slate-800 space-y-1">
                     <span className="text-slate-400 font-semibold">Current State & Shifts:</span>
                     <p className="text-cyan-300">
-                      {analysisResult?.crossReferenceAnalysis?.currentScreenState ||
-                        "Current canvas stabilized. Euclidean template drift monitored at 3.2px average."}
+                      {analysisResult?.crossReferenceAnalysis?.currentScreenState || "—"}
                     </p>
                   </div>
                 </div>
@@ -292,11 +341,12 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
             <div className="space-y-4 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-200">
-                  AI Auto-Assembled Workflow ({analysisResult?.autoAssembledTasks?.length || 4} Steps)
+                  AI Auto-Assembled Workflow ({assembledTasks.length} Steps)
                 </span>
                 <Button
                   size="sm"
-                  onClick={() => onAdoptAssembledWorkflow?.(analysisResult?.autoAssembledTasks || [])}
+                  onClick={() => onAdoptAssembledWorkflow?.(assembledTasks)}
+                  disabled={assembledTasks.length === 0}
                   className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white gap-1"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
@@ -305,14 +355,12 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
               </div>
 
               <div className="space-y-2">
-                {(
-                  analysisResult?.autoAssembledTasks || [
-                    { id: "1", stepNumber: 1, name: "Focus Customer Identifier Field", action: "click", targetPosition: { x: 960, y: 380 }, confidence: 0.98 },
-                    { id: "2", stepNumber: 2, name: "Live Write Operator Email Address", action: "live_write", targetPosition: { x: 960, y: 380 }, text: "operator.lead@enterprise.ai", confidence: 0.95 },
-                    { id: "3", stepNumber: 3, name: "Verify Session Checkbox with Euclidean Anchor", action: "click", targetPosition: { x: 885, y: 490 }, confidence: 0.93 },
-                    { id: "4", stepNumber: 4, name: "Execute Verification & Dispatch Order", action: "click", targetPosition: { x: 960, y: 560 }, confidence: 0.97 },
-                  ]
-                ).map((task: any, idx: number) => (
+                {assembledTasks.length === 0 && (
+                  <div className="p-3 bg-slate-900 border border-slate-800 rounded-lg text-slate-400 text-[11px]">
+                    No AI-assembled tasks yet. Run Analyze & Act with a live screen frame.
+                  </div>
+                )}
+                {assembledTasks.map((task: any, idx: number) => (
                   <div key={idx} className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="w-5 h-5 rounded-full bg-cyan-950 border border-cyan-500 flex items-center justify-center font-bold text-cyan-300 text-[10px]">
@@ -321,13 +369,13 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
                       <div>
                         <div className="font-bold text-slate-100">{task.name}</div>
                         <div className="text-[10px] text-slate-400">
-                          Action: <span className="text-cyan-300 font-semibold">{task.action}</span> | Target: ({task.targetPosition?.x || 960}, {task.targetPosition?.y || 540})
+                          Action: <span className="text-cyan-300 font-semibold">{task.action}</span> | Target: ({task.targetPosition?.x}, {task.targetPosition?.y})
                           {task.text && <span className="text-amber-300 ml-1">"{task.text}"</span>}
                         </div>
                       </div>
                     </div>
                     <Badge className="bg-slate-800 text-slate-300 text-[10px]">
-                      {Math.round((task.confidence || 0.95) * 100)}% Conf
+                      {typeof task.confidence === "number" ? `${Math.round(task.confidence * 100)}% Conf` : "No conf"}
                     </Badge>
                   </div>
                 ))}
@@ -382,28 +430,37 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
                   </Button>
                 </div>
 
-                {/* 3. Internet Search */}
+                {/* 3. AI Help */}
                 <div className="p-3 bg-slate-900/80 border border-slate-800 rounded-xl space-y-2 col-span-2">
                   <span className="font-bold text-slate-200 flex items-center gap-1.5">
                     <Search className="w-3.5 h-3.5 text-blue-400" />
-                    Internet Search & Documentation Agent
+                    AI Help (asks the model about the live screen)
                   </span>
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
+                      value={helpQuestion}
+                      onChange={(e) => setHelpQuestion(e.target.value)}
+                      placeholder="Ask about what is on screen…"
                       className="flex-1 bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200"
                     />
-                    <Button size="sm" onClick={handleExecuteSearch} className="h-7 bg-blue-600 hover:bg-blue-500 text-white">
-                      Search
+                    <Button
+                      size="sm"
+                      onClick={handleAskAiHelp}
+                      disabled={isAskingHelp || !helpQuestion.trim()}
+                      className="h-7 bg-blue-600 hover:bg-blue-500 text-white"
+                    >
+                      {isAskingHelp ? "Asking…" : "Ask AI"}
                     </Button>
                   </div>
-                  {searchResults.length > 0 && (
-                    <div className="p-2 bg-slate-950 rounded border border-slate-800 space-y-1 text-[11px] text-slate-300">
-                      {searchResults.map((r, i) => (
-                        <div key={i}>• {r}</div>
-                      ))}
+                  {helpAnswer && (
+                    <div className="p-2 bg-slate-950 rounded border border-slate-800 text-[11px] text-slate-300 whitespace-pre-wrap">
+                      {helpAnswer}
+                    </div>
+                  )}
+                  {helpError && (
+                    <div className="p-2 rounded border border-rose-500/50 bg-rose-950/40 text-rose-300 text-[11px]">
+                      {helpError}
                     </div>
                   )}
                 </div>
@@ -509,7 +566,8 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
                     <Button
                       size="sm"
                       onClick={() => handleDispatchBridge("click")}
-                      disabled={isExecutingBridge}
+                      disabled={isExecutingBridge || !firstTarget}
+                      title={firstTarget ? `Click AI target (${firstTarget.x}, ${firstTarget.y})` : "Run Analyze & Act to get an AI target"}
                       className="h-8 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white font-bold gap-1.5 flex-1"
                     >
                       <Zap className="w-3.5 h-3.5 text-yellow-300" />
@@ -519,7 +577,7 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
                     <Button
                       size="sm"
                       onClick={() => {
-                        onExecutePyAutoGUIOnPC?.(analysisResult?.autoAssembledTasks || storedSteps);
+                        onExecutePyAutoGUIOnPC?.(assembledTasks.length > 0 ? assembledTasks : storedSteps);
                         onClose();
                       }}
                       className="h-8 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold gap-1.5 flex-1"
@@ -532,6 +590,11 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
                   {bridgeResultLog && (
                     <div className="p-2 bg-slate-950 rounded border border-emerald-500/50 text-emerald-300 text-[11px] font-mono">
                       ✓ {bridgeResultLog}
+                    </div>
+                  )}
+                  {bridgeError && (
+                    <div className="p-2 bg-rose-950/40 rounded border border-rose-500/50 text-rose-300 text-[11px] font-mono">
+                      ✗ {bridgeError}
                     </div>
                   )}
                 </div>
