@@ -9,7 +9,7 @@ export const handleGetBrowserTabs: RequestHandler = async (_req, res) => {
     if (!response.ok) {
       throw new Error(`CDP responded with status ${response.status}`);
     }
-    const tabs = await response.json();
+    const tabs = (await response.json()) as any[];
     res.json({
       success: true,
       tabs: (tabs || []).map((t: any) => ({
@@ -32,7 +32,7 @@ export const handleInspectBrowserTab: RequestHandler = async (req, res) => {
   const { tabId } = req.body;
   try {
     const listRes = await fetch(`${CDP_URL}/json/list`, { signal: AbortSignal.timeout(1500) });
-    const tabs = await listRes.json();
+    const tabs = (await listRes.json()) as any[];
     const tab = tabs.find((t: any) => t.id === tabId) || tabs[0];
     if (!tab) {
       return res.status(404).json({ success: false, error: "Tab not found" });

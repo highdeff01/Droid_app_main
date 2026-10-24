@@ -1,11 +1,36 @@
 import react from '@vitejs/plugin-react-swc';
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, type Connect } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 // SECURITY.md: the API is a privileged control plane, so dev and preview bind to
 // loopback by default; DEV_HOST/HOST opt in to another interface explicitly.
 const bindHost = process.env.DEV_HOST || process.env.HOST || '127.0.0.1';
+
+/** Routes /api requests to the Express app from createServer(); everything else falls through. */
+async function createApiMiddleware(): Promise<Connect.NextHandleFunction> {
+  const { createServer } = await import('./server/index');
+  const apiApp = createServer();
+  return (req, res, next) => {
+    if (!req.url?.startsWith('/api')) {
+      next();
+      return;
+    }
+    apiApp(req as any, res as any, (err: any) => {
+      if (err) {
+        // Keep internals server-side; the client only gets a generic message.
+        console.error(`[api] Unhandled error on ${req.method} ${req.url}:`, err);
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Internal server error' }));
+      } else if (!res.writableEnded) {
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Not found', path: req.url }));
+      }
+    });
+  };
+}
 
 export default defineConfig(() => {
   return {
@@ -57,28 +82,12 @@ export default defineConfig(() => {
       }),
       {
         name: 'api-server-middleware',
+        // Registered directly (not as a post hook) so /api runs before Vite's static/SPA fallback.
         async configureServer(server) {
-          const { createServer } = await import('./server/index');
-          const apiApp = createServer();
-          server.middlewares.use((req, res, next) => {
-            if (req.url?.startsWith('/api')) {
-              apiApp(req as any, res as any, (err: any) => {
-                if (err) {
-                  // Keep internals server-side; the client only gets a generic message.
-                  console.error(`[api] Unhandled error on ${req.method} ${req.url}:`, err);
-                  res.statusCode = 500;
-                  res.setHeader('Content-Type', 'application/json');
-                  res.end(JSON.stringify({ error: 'Internal server error' }));
-                } else if (!res.writableEnded) {
-                  res.statusCode = 404;
-                  res.setHeader('Content-Type', 'application/json');
-                  res.end(JSON.stringify({ error: 'Not found', path: req.url }));
-                }
-              });
-            } else {
-              next();
-            }
-          });
+          server.middlewares.use(await createApiMiddleware());
+        },
+        async configurePreviewServer(server) {
+          server.middlewares.use(await createApiMiddleware());
         },
       },
     ],
