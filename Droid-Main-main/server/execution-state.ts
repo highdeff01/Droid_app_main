@@ -13,6 +13,21 @@ import { methodLearningSystem, type LearningContext } from "./method-learning";
 import { RealTimeElementTracker } from "./element-tracking";
 import { operationBus } from "./overseer/operation-bus";
 import type { OperationStepReport } from "../shared/overseer";
+import { recordInputActions, type InputActionEntry } from "./input-action-log";
+
+/** The input-log entry for an approved plan action, whatever its field naming. */
+function planInput(action: object): InputActionEntry {
+  const a = action as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" ? v : undefined);
+  const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+  return {
+    action: str(a.type) ?? str(a.action) ?? str(a.kind) ?? "action",
+    x: num(a.x),
+    y: num(a.y),
+    text: str(a.text),
+    key: str(a.key),
+  };
+}
 
 const now = () => new Date().toISOString();
 const id = (prefix: string) =>
@@ -22,7 +37,10 @@ export const ACTION_TIMEOUT_MS = 30_000;
 export const EXECUTION_TIMEOUT_MS = 30_000;
 
 /** What the overseer is told about a step the executor just completed. */
-function stepReport(step: PlannedStep, action: AllowlistedAction): OperationStepReport {
+function stepReport(
+  step: PlannedStep,
+  action: AllowlistedAction,
+): OperationStepReport {
   return {
     stepId: step.id,
     name: step.title,
@@ -57,13 +75,23 @@ const defaultExecutor: SafeActionExecutor = async (action, signal) => {
   if (action.type === "wait") {
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, action.durationMs);
-      signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+      signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
     });
   }
   return {
     actionType: action.type,
     success: action.type === "wait",
-    message: action.type === "wait" ? "Wait completed" : "No device adapter is configured for this assistant plan. Use Screen Hub replay.",
+    message:
+      action.type === "wait"
+        ? "Wait completed"
+        : "No device adapter is configured for this assistant plan. Use Screen Hub replay.",
   };
 };
 
@@ -136,10 +164,13 @@ export class ExecutionStateRepository {
     this.executions.set(execution.id, execution);
     this.persist();
     this.controls.set(execution.id, { paused: false, cancelled: false });
-    
+
     // Initialize element tracker for this execution
-    this.elementTrackers.set(execution.id, new RealTimeElementTracker(execution.id));
-    
+    this.elementTrackers.set(
+      execution.id,
+      new RealTimeElementTracker(execution.id),
+    );
+
     return execution;
   }
 
@@ -189,7 +220,9 @@ export class ExecutionStateRepository {
     const hooks = this.cancelHooks.get(executionId);
     if (hooks) {
       for (const h of hooks) {
-        try { h(); } catch {}
+        try {
+          h();
+        } catch {}
       }
       this.cancelHooks.delete(executionId);
     }
@@ -200,7 +233,7 @@ export class ExecutionStateRepository {
   async start(
     execution: AssistantExecution,
     plan: AssistantPlan,
-    customExecutor?: SafeActionExecutor
+    customExecutor?: SafeActionExecutor,
   ) {
     this.load();
     const storedExecution = this.executions.get(execution.id);
@@ -262,9 +295,26 @@ export class ExecutionStateRepository {
           : await this.runAction(action);
         execution.results.push(result);
         this.persist();
-        if (control.cancelled || (execution.status as string) === "cancelled") return execution;
+        if (control.cancelled || (execution.status as string) === "cancelled")
+          return execution;
         if (!result.success) return this.fail(execution, result.message);
         this.addEvent(execution, "completed", result.message, step.id, result);
+        const [logged] = await recordInputActions([planInput(action)], {
+          origin: `plan:${execution.id}`,
+          executed: true,
+        });
+        this.addEvent(
+          execution,
+          "completed",
+          logged?.screenshotId
+            ? `Step ${index + 1} screenshot ${logged.screenshotId}`
+            : `Step ${index + 1} screenshot unavailable: ${logged?.screenshotError ?? "no capture source"}`,
+          step.id,
+          {
+            screenshotId: logged?.screenshotId,
+            screenshotError: logged?.screenshotError,
+          },
+        );
         operationBus.step(execution.id, stepReport(step, action));
 
         const verification = step.adaptive?.verification;
@@ -303,12 +353,17 @@ export class ExecutionStateRepository {
               ? await customExecutor(action)
               : await this.runAction(action);
             execution.results.push(result);
-            if (control.cancelled || (execution.status as string) === "cancelled") return execution;
+            if (
+              control.cancelled ||
+              (execution.status as string) === "cancelled"
+            )
+              return execution;
             if (!result.success) return this.fail(execution, result.message);
           }
         }
       } catch (error) {
-        if (control.cancelled || (execution.status as string) === "cancelled") return execution;
+        if (control.cancelled || (execution.status as string) === "cancelled")
+          return execution;
         return this.fail(
           execution,
           error instanceof Error ? error.message : "Action failed",
@@ -321,16 +376,20 @@ export class ExecutionStateRepository {
     this.addEvent(execution, "completed", "Execution completed");
     this.persist();
     operationBus.finished(execution.id, "completed");
-    
+
     // Learn from this execution if context is provided
     if (this.learningContext) {
       try {
-        methodLearningSystem.learnFromExecution(execution, plan, this.learningContext);
+        methodLearningSystem.learnFromExecution(
+          execution,
+          plan,
+          this.learningContext,
+        );
       } catch (error) {
         console.error("Failed to learn from execution:", error);
       }
     }
-    
+
     return execution;
   }
 
@@ -370,7 +429,8 @@ export class ExecutionStateRepository {
   reject(executionId: string, reason?: string): AssistantExecution | undefined {
     this.load();
     const execution = this.executions.get(executionId);
-    if (!execution || execution.status !== "awaiting_approval") return undefined;
+    if (!execution || execution.status !== "awaiting_approval")
+      return undefined;
     const pending = execution.pendingApproval;
     execution.pendingApproval = undefined;
     this.addEvent(
@@ -444,15 +504,20 @@ export class ExecutionStateRepository {
       step.id,
     );
     const observation = await this.observe(step, attempt);
-    
+
     // Update element tracker with new analysis
     const elementTracker = this.elementTrackers.get(execution.id);
     if (elementTracker && observation.analysis) {
-      elementTracker.updateFromAnalysis(observation.analysis, observation.capture?.imageData);
-      
+      elementTracker.updateFromAnalysis(
+        observation.analysis,
+        observation.capture?.imageData,
+      );
+
       // Use element tracking for adaptive element location
       if (step.adaptive?.verification?.elementLabel) {
-        const trackedElement = elementTracker.findElementsByLabel(step.adaptive.verification.elementLabel)[0];
+        const trackedElement = elementTracker.findElementsByLabel(
+          step.adaptive.verification.elementLabel,
+        )[0];
         if (trackedElement && trackedElement.stability > 0.7) {
           // Adjust verification region based on tracked element position
           if (step.adaptive.verification.region) {
@@ -461,7 +526,7 @@ export class ExecutionStateRepository {
         }
       }
     }
-    
+
     this.addEvent(
       execution,
       "analysis",
@@ -563,7 +628,10 @@ export class ExecutionStateRepository {
         source: `assistant-execution / ${execution.sessionId}`,
         goal: plan.instruction?.text || `Plan ${plan.id}`,
       },
-      { pause: () => void this.pause(execution.id), cancel: () => void this.cancel(execution.id) },
+      {
+        pause: () => void this.pause(execution.id),
+        cancel: () => void this.cancel(execution.id),
+      },
     );
   }
 
