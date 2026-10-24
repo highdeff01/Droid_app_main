@@ -52,11 +52,11 @@ describe("ai-gemini-service honest fallbacks (GEMINI_API_KEY unset)", () => {
     expect(sendQwenChatRequest).not.toHaveBeenCalled();
   });
 
-  it("screen element detection without a screenshot is labelled simulated with zero confidence", async () => {
-    const result = await detectScreenElementsAndSteps({ imageData: "" });
-    expect(result.simulated).toBe(true);
-    expect(result.elements.length).toBeGreaterThan(0);
-    for (const el of result.elements) expect(el.confidence).toBe(0);
+  it("screen element detection without a screenshot rejects instead of returning placeholder elements", async () => {
+    await expect(detectScreenElementsAndSteps({ imageData: "" })).rejects.toThrow(
+      /No screen frame supplied/,
+    );
+    expect(sendQwenChatRequest).not.toHaveBeenCalled();
   });
 
   it("screen comparison with the model unreachable never claims a match", async () => {

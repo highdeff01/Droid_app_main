@@ -6,6 +6,7 @@ vi.mock("./ai-endpoint", async (importOriginal) => ({
   sendQwenChatRequest: (...args: unknown[]) => sendQwenChatRequest(...args),
 }));
 
+import { AiUnavailableError } from "./ai-endpoint";
 import { AIPlannerActorEngine, readPlannerConfidence } from "./ai-planner-engine";
 import type { ScreenPerceptionReport } from "./ai-perception-engine";
 
@@ -21,33 +22,34 @@ function modelReply(content: string) {
   sendQwenChatRequest.mockResolvedValueOnce({ success: true, content });
 }
 
-const FALLBACK = { confidence: null, source: "heuristic", verified: false };
-
-describe("AIPlannerActorEngine confidence honesty", () => {
+describe("AIPlannerActorEngine", () => {
   beforeEach(() => {
     sendQwenChatRequest.mockReset();
-    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("marks the fallback plan unverified with no confidence when the model is unavailable", async () => {
+  it("rejects with AiUnavailableError whose message starts 'AI endpoint unreachable' when the model is unavailable", async () => {
     sendQwenChatRequest.mockResolvedValueOnce({ success: false, error: "ECONNREFUSED" });
-    const decision = await new AIPlannerActorEngine().planAndFormulateAction(perception);
-    expect(decision.thinking.confidence).toBeNull();
-    expect(decision).toMatchObject({ source: "heuristic", verified: false });
-    expect(decision.nextAction).toMatchObject({ x: 410, y: 320 });
+    const promise = new AIPlannerActorEngine().planAndFormulateAction(perception);
+    await expect(promise).rejects.toBeInstanceOf(AiUnavailableError);
+    await expect(promise).rejects.toThrow(/^AI endpoint unreachable/);
   });
 
-  it("marks the fallback plan unverified when the model reply is not JSON", async () => {
+  it("rejects with AiUnavailableError when the model reply is not JSON", async () => {
     modelReply("I think you should click somewhere");
+    const promise = new AIPlannerActorEngine().planAndFormulateAction(perception);
+    await expect(promise).rejects.toBeInstanceOf(AiUnavailableError);
+  });
+
+  it("marks the decision source as 'model' on a successful reply", async () => {
+    modelReply(JSON.stringify({ nextAction: { title: "Click", x: 5, y: 6 } }));
     const decision = await new AIPlannerActorEngine().planAndFormulateAction(perception);
-    expect({ confidence: decision.thinking.confidence, source: decision.source, verified: decision.verified }).toEqual(FALLBACK);
+    expect(decision).toMatchObject({ source: "model", verified: true });
   });
 
   it("uses null, not a constant, when the model omits confidence", async () => {
     modelReply(JSON.stringify({ nextAction: { title: "Click", x: 5, y: 6 } }));
     const decision = await new AIPlannerActorEngine().planAndFormulateAction(perception);
     expect(decision.thinking.confidence).toBeNull();
-    expect(decision).toMatchObject({ source: "model", verified: true });
   });
 
   it("keeps the model's own confidence, including 0", async () => {
@@ -55,6 +57,22 @@ describe("AIPlannerActorEngine confidence honesty", () => {
     expect((await new AIPlannerActorEngine().planAndFormulateAction(perception)).thinking.confidence).toBe(0.37);
     modelReply(JSON.stringify({ thinking: { confidence: 0 } }));
     expect((await new AIPlannerActorEngine().planAndFormulateAction(perception)).thinking.confidence).toBe(0);
+  });
+
+  it("sends the live frame as images on the user message when imageData is given", async () => {
+    modelReply(JSON.stringify({ nextAction: { title: "Click", x: 5, y: 6 } }));
+
+    await new AIPlannerActorEngine().planAndFormulateAction(
+      perception,
+      undefined,
+      undefined,
+      undefined,
+      { imageData: "data:image/png;base64,iVBOR" },
+    );
+
+    const [messages] = sendQwenChatRequest.mock.calls[0];
+    const userMessage = messages[messages.length - 1];
+    expect(userMessage.images).toEqual(["iVBOR"]);
   });
 
   it("reads and clamps planner confidence, null for non-numbers", () => {

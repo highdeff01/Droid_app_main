@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  aiErrorStatus,
   buildVisionMessage,
   parseModelJson,
   resolveAiModel,
@@ -85,6 +86,8 @@ export const handlePlanAndAct: RequestHandler = async (req, res) => {
       userObjective,
       endpoint,
       model,
+      imageData,
+      sessionId,
       executeImmediately = false,
     } = req.body;
 
@@ -104,6 +107,7 @@ export const handlePlanAndAct: RequestHandler = async (req, res) => {
       userObjective,
       endpoint,
       model,
+      { imageData, sessionId },
     );
     aiMonitorStore.record({
       phase: "planning",
@@ -138,7 +142,8 @@ export const handlePlanAndAct: RequestHandler = async (req, res) => {
       stuckResolution,
     });
   } catch (err) {
-    res.status(500).json({
+    aiMonitorStore.setStatus({ status: "idle", currentAction: null });
+    res.status(aiErrorStatus(err)).json({
       success: false,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -315,7 +320,7 @@ export const handleAdaptiveRetry: RequestHandler = async (req, res) => {
 // 5. Unified Autonomous Co-Pilot Step (Perceive -> Plan -> Act -> Verify -> Recalibrate)
 export const handleAutonomousStep: RequestHandler = async (req, res) => {
   try {
-    const { imageData, userObjective, endpoint, model, browserContext } =
+    const { imageData, userObjective, endpoint, model, browserContext, sessionId } =
       req.body;
     if (!imageData) {
       return res
@@ -366,6 +371,7 @@ export const handleAutonomousStep: RequestHandler = async (req, res) => {
       userObjective,
       endpoint,
       model,
+      { imageData, sessionId: sessionId || "auto-act" },
     );
     aiMonitorStore.record({
       phase: "planning",
@@ -399,7 +405,8 @@ export const handleAutonomousStep: RequestHandler = async (req, res) => {
       stuckResolution,
     });
   } catch (err) {
-    res.status(500).json({
+    aiMonitorStore.setStatus({ status: "idle", currentAction: null });
+    res.status(aiErrorStatus(err)).json({
       success: false,
       error: err instanceof Error ? err.message : String(err),
     });

@@ -137,7 +137,8 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
 
       // Confidence comes only from the screen analysis; omitted when none ran.
       let confidence: number | undefined;
-      // Try to get richer reasoning from backend planner if available
+      // The model's plan for the live frame; when it fails the error is shown, not hidden.
+      let aiError: string | null = null;
       try {
         const liveImg = screenshotUrl || "";
         let report = perceptionReport;
@@ -149,6 +150,7 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
           });
           const j = await r.json();
           if (j.success && j.report) report = j.report;
+          else aiError = j.error || `describe-screen failed (HTTP ${r.status})`;
         }
         if (report) {
           confidence = report.confidence;
@@ -157,6 +159,8 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               perceptionReport: report,
+              imageData: liveImg || undefined,
+              sessionId: "plan",
               userObjective: `Decide whether to type text, perform sequence, or navigate. Current sequence has ${sequence.length} steps.`,
             }),
           });
@@ -169,9 +173,16 @@ export const AIDecideActionHUD: React.FC<AIDecideActionHUDProps> = ({
             else if (title.includes("sequence") || title.includes("step"))
               decidedMode = "sequence";
             else decidedMode = "navigate";
+          } else {
+            aiError = pj.error || `plan-and-act failed (HTTP ${pr.status})`;
           }
         }
-      } catch {}
+      } catch (err) {
+        aiError = err instanceof Error ? err.message : String(err);
+      }
+      if (aiError) {
+        reasoning = `AI unavailable (${aiError}). Local hint only: ${reasoning}`;
+      }
 
       setMode(decidedMode);
       setAiDecision({

@@ -39,10 +39,12 @@ See `SECURITY.md`. In `createServer()`, every `/api` route goes through `createA
 
 ## AI provider configuration
 - The AI vision/planner engines (`server/ai-perception-engine.ts`, `server/ai-planner-engine.ts`, `server/routes/analyze-screenshot.ts`) take their Ollama-compatible endpoint from the request body or the `OLLAMA_ENDPOINT` env var (see `server/ai-endpoint.ts`).
-  - Precedence: request body → runtime setting (`/api/ai/settings`) → `OLLAMA_ENDPOINT` → LAN default `http://192.168.1.100:11434/api/chat`.
-  - On connection failure/timeout, `sendQwenChatRequest` falls back to `https://quantumclaw.net/ollama/api/chat`.
+  - Precedence: request body → runtime setting (`/api/ai/settings`) → `OLLAMA_ENDPOINT` → default `https://quantumclaw.net/ollama/api/chat` (primary; non-streaming `/api/chat`, reply in `message.content`).
+  - A configured custom endpoint falls back to quantumclaw on connection failure/timeout. The LAN address `http://192.168.1.100:11434/api/chat` is only an optional preset in Settings.
   - The model defaults to `qwen3.5:2b` (`OLLAMA_MODEL` overrides it).
-- With `OLLAMA_ENDPOINT` unset, perception uses the app's Gemini provider (`detectScreenElementsAndSteps`) and the planner uses its deterministic fallback, so the AI pipeline works without any remote host.
+- Plan (`/api/ai/plan-and-act`), Auto Act (`/api/ai/auto-actor-trigger`), AI Help (`/api/ai/help`, `/api/hud/qwen/ask`) and Analyze & Act send the live frame and keep per-session `{role, content}` history (`server/ai-conversation.ts`, last 40 messages; `DELETE /api/ai/session/:id` clears one).
+- There is no template/heuristic fallback: an unreachable endpoint or unreadable model output is HTTP 502 `{ success: false, error }`; a missing screen frame is 400.
+- The server pings the endpoint at startup (`server/node-build.ts`, Vite dev middleware); `GET /api/ai/status` (`?refresh=1` re-pings) feeds the AI status badge in the Assistant Workspace and Settings.
 
 ## AI Monitor & action history
 - `server/ai-monitor-store.ts` keeps the live pipeline status plus a bounded (1000 entry) in-memory history of every action. The dual-AI pipeline (`server/routes/dual-ai-pipeline.ts`) records perception → planning → execution → verification, so the history comes from real runs, not fixtures.

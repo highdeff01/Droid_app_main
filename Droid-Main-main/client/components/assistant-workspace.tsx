@@ -1,3 +1,4 @@
+import { AiStatusBadge } from "@/components/ai-status-badge";
 import {
   Activity,
   Archive,
@@ -521,6 +522,7 @@ export function AssistantWorkspace({
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <AiStatusBadge />
               <Badge className="hidden border-emerald-400/20 bg-emerald-400/10 text-emerald-300 sm:inline-flex">
                 <Activity className="mr-1 h-3 w-3" /> Ready
               </Badge>

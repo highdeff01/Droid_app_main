@@ -84,10 +84,29 @@ export default defineConfig(() => {
         name: 'api-server-middleware',
         // Registered directly (not as a post hook) so /api runs before Vite's static/SPA fallback.
         async configureServer(server) {
-          server.middlewares.use(await createApiMiddleware());
-        },
-        async configurePreviewServer(server) {
-          server.middlewares.use(await createApiMiddleware());
+          const { createServer } = await import('./server/index');
+          const { pingAiEndpoint } = await import('./server/ai-status');
+          const apiApp = createServer();
+          void pingAiEndpoint();
+          server.middlewares.use((req, res, next) => {
+            if (req.url?.startsWith('/api')) {
+              apiApp(req as any, res as any, (err: any) => {
+                if (err) {
+                  // Keep internals server-side; the client only gets a generic message.
+                  console.error(`[api] Unhandled error on ${req.method} ${req.url}:`, err);
+                  res.statusCode = 500;
+                  res.setHeader('Content-Type', 'application/json');
+                  res.end(JSON.stringify({ error: 'Internal server error' }));
+                } else if (!res.writableEnded) {
+                  res.statusCode = 404;
+                  res.setHeader('Content-Type', 'application/json');
+                  res.end(JSON.stringify({ error: 'Not found', path: req.url }));
+                }
+              });
+            } else {
+              next();
+            }
+          });
         },
       },
     ],

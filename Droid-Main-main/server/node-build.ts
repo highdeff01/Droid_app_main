@@ -1,8 +1,10 @@
 import path from "path";
 import { createServer } from "./index";
+import { pingAiEndpoint } from "./ai-status";
 import * as express from "express";
 
 const app = createServer();
+void pingAiEndpoint();
 const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || "127.0.0.1";
 

@@ -4,13 +4,14 @@
  * OCR and review engines.
  *
  * Endpoint chain: the primary endpoint (runtime setting > OLLAMA_ENDPOINT >
- * local Ollama at DEFAULT_LOCAL_OLLAMA_ENDPOINT) is tried first; on a
- * connection failure or timeout the request is retried once against
- * DEFAULT_OLLAMA_ENDPOINT (quantumclaw).
+ * quantumclaw at DEFAULT_OLLAMA_ENDPOINT) is tried first; when a custom
+ * endpoint fails to connect or times out the request is retried once against
+ * quantumclaw. A failure is reported as a failure, never a template answer.
  */
 
 import { centralLogHub } from "./log-hub";
 
+/** Optional LAN Ollama preset; never used unless the user selects it. */
 export const DEFAULT_LOCAL_OLLAMA_ENDPOINT = "http://192.168.1.100:11434/api/chat";
 export const DEFAULT_OLLAMA_ENDPOINT = "https://quantumclaw.net/ollama/api/chat";
 export const DEFAULT_QWEN_MODEL = "qwen3.5:2b";
@@ -58,13 +59,13 @@ function normalizeChatUrl(endpoint: string): string {
   return endpoint.endsWith("/") ? `${endpoint}api/chat` : `${endpoint}/api/chat`;
 }
 
-/** Primary endpoint: request value > runtime setting > env > local Ollama. */
+/** Primary endpoint: request value > runtime setting > env > quantumclaw. */
 export function resolveAiEndpoint(provided?: string | null): string {
   const candidates = [
     provided,
     runtimeConfiguredEndpoint,
     process.env.OLLAMA_ENDPOINT,
-    DEFAULT_LOCAL_OLLAMA_ENDPOINT,
+    DEFAULT_OLLAMA_ENDPOINT,
   ];
   const endpoint = candidates.find((c) => c && c.trim().length > 0)!.trim();
   return normalizeChatUrl(endpoint);
@@ -129,6 +130,19 @@ function isConnectionFailure(err: unknown): boolean {
 }
 
 class HttpStatusError extends Error {}
+
+/** Thrown when the AI endpoint cannot produce a usable answer; routes map it to HTTP 502. */
+export class AiUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiUnavailableError";
+  }
+}
+
+/** 502 for an unreachable/unreadable AI endpoint, 500 for anything else. */
+export function aiErrorStatus(err: unknown): number {
+  return err instanceof AiUnavailableError ? 502 : 500;
+}
 
 export async function testAiEndpoint(
   endpoint?: string,

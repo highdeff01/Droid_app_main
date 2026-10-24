@@ -104,6 +104,9 @@ import {
   DEFAULT_LOCAL_OLLAMA_ENDPOINT,
   DEFAULT_QWEN_MODEL,
 } from "./ai-endpoint";
+import { recordAiPing } from "./ai-status";
+import { aiConversations } from "./ai-conversation";
+import { handleAiHelp, handleClearAiSession, handleGetAiStatus } from "./routes/ai-help";
 import {
   handlePyAutoGUIBridge,
   handleGetBridgeLogs,
@@ -414,6 +417,7 @@ export function createServer() {
     try {
       const { endpoint, model } = req.body;
       const result = await testAiEndpoint(endpoint, model);
+      recordAiPing(result);
       res.json(result);
     } catch (err) {
       res.status(500).json({
@@ -433,12 +437,17 @@ export function createServer() {
       settings: {
         modelUrl: getConfiguredAiEndpoint(),
         model: getConfiguredAiModel(),
-        defaultModelUrl: DEFAULT_LOCAL_OLLAMA_ENDPOINT,
-        fallbackModelUrl: DEFAULT_OLLAMA_ENDPOINT,
+        defaultModelUrl: DEFAULT_OLLAMA_ENDPOINT,
+        lanModelUrl: DEFAULT_LOCAL_OLLAMA_ENDPOINT,
         defaultModel: DEFAULT_QWEN_MODEL,
       },
     });
   });
+
+  // Live AI status (startup ping + Ping Endpoint) and AI Help with session history
+  app.get("/api/ai/status", handleGetAiStatus);
+  app.post("/api/ai/help", handleAiHelp);
+  app.delete("/api/ai/session/:sessionId", handleClearAiSession);
 
   app.post("/api/ai/settings", (req, res) => {
     const { modelUrl, model } = req.body;
@@ -542,7 +551,7 @@ export function createServer() {
   // Screen HUD tools: OCR at a point, persisted entity tags, Qwen ask/guide, reusable packs
   app.use(
     "/api/hud",
-    createHudToolsRouter({ store: new DurableStore(), recognize: recognizeWithProviders, chat: sendQwenChatRequest }),
+    createHudToolsRouter({ store: new DurableStore(), recognize: recognizeWithProviders, chat: sendQwenChatRequest, conversations: aiConversations }),
   );
 
   // Story mode & versatile presentations: Qwen-generated from premises, screens, runs, web pages and struggles

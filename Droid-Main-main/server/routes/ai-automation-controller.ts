@@ -53,6 +53,12 @@ export const handleStuckResolver: RequestHandler = async (req, res) => {
       targetSeconds,
       lastError,
     });
+    if ((resolution as { simulated?: boolean }).simulated) {
+      return res.status(502).json({
+        success: false,
+        error: "AI endpoint unreachable: stuck resolution needs a model answer; nothing was executed",
+      });
+    }
 
     let executedActions: any[] = [];
     if (autoExecuteFix && resolution.recommendedActions?.length > 0) {
@@ -66,8 +72,8 @@ export const handleStuckResolver: RequestHandler = async (req, res) => {
           const res = await dispatchActionToPython({
             title: `Unstuck: ${rec.reason}`,
             action: rec.action,
-            x: rec.x || 960,
-            y: rec.y || 540,
+            x: rec.x,
+            y: rec.y,
             textPayload: rec.text,
             keyPayload: rec.key || "escape",
             delayMs: rec.delayMs || 500,
@@ -212,31 +218,36 @@ export const handleAutoActorTrigger: RequestHandler = async (req, res) => {
       `Auto-Actor triggered via mode transition: "${modeTransition}". Auto-Act enabled: ${autoActEnabled}`
     );
 
-    let matchResult: ScreenMatchResult = {
-      matched: true,
-      similarityScore: 0.9,
-      reason: "Visual state verified.",
-      identifiedElements: ["Screen Interface"],
-      suggestedNextStep: step || {
-        action: "click",
-        x: 960,
-        y: 540,
-        name: "Auto-Act Next Step",
-      },
-    };
+    if (!currentScreen || !expectedScreen) {
+      return res.status(400).json({
+        success: false,
+        error: "Auto Act needs the live captured frame (currentScreen) and the step's reference frame (expectedScreen)",
+      });
+    }
 
-    if (currentScreen && expectedScreen) {
-      matchResult = await compareScreensForMatch({
-        currentScreen,
-        expectedScreen,
-        expectedStepLabel: step?.name || "Target Step",
-        threshold: Number(threshold),
+    const matchResult: ScreenMatchResult = await compareScreensForMatch({
+      currentScreen,
+      expectedScreen,
+      expectedStepLabel: step?.name || "Target Step",
+      threshold: Number(threshold),
+    });
+    if (matchResult.simulated) {
+      return res.status(502).json({
+        success: false,
+        error: matchResult.simulationReason || "AI endpoint unreachable",
       });
     }
 
     let executionResult: any = null;
     if (autoActEnabled && matchResult.matched) {
       const targetStep = step || matchResult.suggestedNextStep;
+      if (!Number.isFinite(targetStep?.x) || !Number.isFinite(targetStep?.y)) {
+        return res.status(422).json({
+          success: false,
+          matched: true,
+          error: "The model matched the screen but gave no target coordinates; nothing was dispatched",
+        });
+      }
       centralLogHub.addLog(
         "AI-AutoActor",
         "SUCCESS",
@@ -246,8 +257,8 @@ export const handleAutoActorTrigger: RequestHandler = async (req, res) => {
       executionResult = await dispatchActionToPython({
         title: `Auto-Act: ${targetStep.name || targetStep.action}`,
         action: targetStep.action || "click",
-        x: targetStep.x || 960,
-        y: targetStep.y || 540,
+        x: targetStep.x,
+        y: targetStep.y,
         textPayload: targetStep.text,
         keyPayload: targetStep.keyPayload,
         delayMs: targetStep.delayMs || 400,

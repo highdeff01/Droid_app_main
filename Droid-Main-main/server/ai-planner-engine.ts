@@ -8,18 +8,34 @@ import {
   ScreenPerceptionReport,
   DetectedUIElement,
 } from "./ai-perception-engine";
-import { parseModelJson, sendQwenChatRequest } from "./ai-endpoint";
+import {
+  AiUnavailableError,
+  buildVisionMessage,
+  parseModelJson,
+} from "./ai-endpoint";
+import { aiConversations } from "./ai-conversation";
+
+/** Default conversation for Plan when the caller names no session. */
+export const PLANNER_SESSION_ID = "plan";
+
+/** Live context sent with a planning turn. */
+export interface PlannerContext {
+  /** The live captured frame (data URL) so the model sees the actual screen. */
+  imageData?: string;
+  /** Conversation the turn belongs to; history is kept per session. */
+  sessionId?: string;
+}
 
 export interface AIThinkingChain {
   observation: string;
   reasoning: string;
   strategy: string;
-  /** The model's own confidence; null when the model gave none or the plan is a fallback. */
+  /** The model's own confidence; null when the model gave none. */
   confidence: number | null;
 }
 
-/** Where a decision came from: "model" output or the deterministic "heuristic" fallback. */
-export type PlannerDecisionSource = "model" | "heuristic";
+/** Where a decision came from: always model output; an unreachable model is an AiUnavailableError. */
+export type PlannerDecisionSource = "model";
 
 export interface SubTask {
   id: string;
@@ -130,6 +146,7 @@ export class AIPlannerActorEngine {
     userObjective?: string,
     endpoint?: string,
     model?: string,
+    context: PlannerContext = {},
   ): Promise<PlannerActDecision> {
     const systemPrompt = `You are an elite Autonomous AI Planner and Action Synthesizer.
 You receive a Vision Perception Report of the active user desktop/application screen.
@@ -205,84 +222,79 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
 - User High-Level Objective: ${userObjective || "Automatically navigate, interact, and solve any challenges on screen"}
 - Current Active Goals: ${JSON.stringify(this.activeGoals.map((g) => ({ title: g.title, status: g.status })))}`;
 
-    try {
-      const response = await sendQwenChatRequest(
-        [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        { endpoint, model, format: "json" },
+    const response = await aiConversations.send(
+      context.sessionId || PLANNER_SESSION_ID,
+      context.imageData
+        ? buildVisionMessage(userPrompt, context.imageData)
+        : { role: "user", content: userPrompt },
+      { system: systemPrompt, endpoint, model, format: "json" },
+    );
+    if (!response.success) {
+      throw new AiUnavailableError(
+        `AI endpoint unreachable: ${response.error || "no response"}`,
       );
-      if (!response.success) {
-        throw new Error(response.error || "Planner model unavailable");
-      }
-      const rawContent = response.content || "{}";
-
-      let parsed: any;
-      try {
-        parsed = parseModelJson(rawContent);
-      } catch {
-        return this.fallbackPlan(perception);
-      }
-
-      if (Array.isArray(parsed.goals) && parsed.goals.length > 0) {
-        this.activeGoals = parsed.goals;
-      }
-
-      const nextAction: SubTask | null = parsed.nextAction
-        ? {
-            id: parsed.nextAction.id || `act_${Date.now()}`,
-            title: parsed.nextAction.title || "Execute Next Step",
-            actionType: parsed.nextAction.actionType || "click",
-            targetName: parsed.nextAction.targetName || "Target Element",
-            x: parsed.nextAction.x ?? perception.feedbackPosition.x ?? 960,
-            y: parsed.nextAction.y ?? perception.feedbackPosition.y ?? 540,
-            textPayload: parsed.nextAction.textPayload,
-            delayMs: parsed.nextAction.delayMs || 500,
-            status: "in_progress",
-          }
-        : null;
-
-      const decision: PlannerActDecision = {
-        timestamp: Date.now(),
-        thinking: {
-          observation:
-            parsed.thinking?.observation || perception.screenDescription,
-          reasoning:
-            parsed.thinking?.reasoning ||
-            "Analyzing element geometry to ground coordinates.",
-          strategy:
-            parsed.thinking?.strategy ||
-            "Execute immediate target action, then verify UI response.",
-          confidence: readPlannerConfidence(parsed.thinking?.confidence),
-        },
-        goals: this.activeGoals,
-        nextAction,
-        verificationRule: parsed.verificationRule || {
-          expectedChange: "Visual update in target coordinate region",
-          targetRegion: {
-            x: (nextAction?.x || 960) - 40,
-            y: (nextAction?.y || 540) - 20,
-            width: 80,
-            height: 40,
-          },
-          successCondition: "State difference confirmed on subsequent frame",
-          retryStrategy: "Retry with adjusted delay (+200ms)",
-        },
-        statusSummary:
-          parsed.statusSummary || `Ready: ${nextAction?.title || "Monitoring"}`,
-        source: "model",
-        verified: true,
-      };
-
-      return decision;
-    } catch (err) {
-      console.error(
-        "AI Planner formulation error, using deterministic fallback:",
-        err,
-      );
-      return this.fallbackPlan(perception);
     }
+
+    let parsed: any;
+    try {
+      parsed = parseModelJson(response.content || "");
+    } catch (parseErr) {
+      throw new AiUnavailableError(
+        `AI model returned an unreadable plan: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+      );
+    }
+
+    if (Array.isArray(parsed.goals) && parsed.goals.length > 0) {
+      this.activeGoals = parsed.goals;
+    }
+
+    const nextAction: SubTask | null = parsed.nextAction
+      ? {
+          id: parsed.nextAction.id || `act_${Date.now()}`,
+          title: parsed.nextAction.title || "Execute Next Step",
+          actionType: parsed.nextAction.actionType || "click",
+          targetName: parsed.nextAction.targetName || "Target Element",
+          x: parsed.nextAction.x ?? perception.feedbackPosition.x,
+          y: parsed.nextAction.y ?? perception.feedbackPosition.y,
+          textPayload: parsed.nextAction.textPayload,
+          delayMs: parsed.nextAction.delayMs || 500,
+          status: "in_progress",
+        }
+      : null;
+
+    const decision: PlannerActDecision = {
+      timestamp: Date.now(),
+      thinking: {
+        observation:
+          parsed.thinking?.observation || perception.screenDescription,
+        reasoning:
+          parsed.thinking?.reasoning ||
+          "Analyzing element geometry to ground coordinates.",
+        strategy:
+          parsed.thinking?.strategy ||
+          "Execute immediate target action, then verify UI response.",
+        confidence: readPlannerConfidence(parsed.thinking?.confidence),
+      },
+      goals: this.activeGoals,
+      nextAction,
+      verificationRule: parsed.verificationRule || {
+        expectedChange: "Visual update in target coordinate region",
+        targetRegion: {
+          x: (nextAction?.x || 960) - 40,
+          y: (nextAction?.y || 540) - 20,
+          width: 80,
+          height: 40,
+        },
+        successCondition: "State difference confirmed on subsequent frame",
+        retryStrategy: "Retry with adjusted delay (+200ms)",
+      },
+      statusSummary:
+        parsed.statusSummary || `Ready: ${nextAction?.title || "Monitoring"}`,
+      source: "model",
+      verified: true,
+    };
+
+    return decision;
   }
 
   async verifyActionOutcome(
@@ -311,50 +323,6 @@ IMPORTANT: Output ONLY the raw JSON without code blocks or extra text.`;
     return {
       verified: false,
       feedback: `Unverified: no screen state change detected after dispatch (${currentPerception.visualStateChange}).`,
-    };
-  }
-
-  private fallbackPlan(perception: ScreenPerceptionReport): PlannerActDecision {
-    const topElem = perception.elements[0];
-    const targetX = topElem?.center.x || perception.feedbackPosition.x || 960;
-    const targetY = topElem?.center.y || perception.feedbackPosition.y || 540;
-
-    const action: SubTask = {
-      id: `fallback_${Date.now()}`,
-      title: `Interact with ${topElem?.name || "Target Area"}`,
-      actionType: "click",
-      targetName: topElem?.name || "Focus Point",
-      x: targetX,
-      y: targetY,
-      delayMs: 500,
-      status: "in_progress",
-    };
-
-    return {
-      timestamp: Date.now(),
-      thinking: {
-        observation: perception.screenDescription,
-        reasoning: `Unverified fallback (planner model unavailable): targeting first detected element "${topElem?.name || "center"}" at (${targetX}, ${targetY}).`,
-        strategy:
-          "Deterministic fallback plan; not derived from model reasoning.",
-        confidence: null,
-      },
-      goals: this.activeGoals,
-      nextAction: action,
-      verificationRule: {
-        expectedChange: "Element state change or visual feedback",
-        targetRegion: {
-          x: targetX - 40,
-          y: targetY - 20,
-          width: 80,
-          height: 40,
-        },
-        successCondition: "Confirmation of interactive response",
-        retryStrategy: "Retry with +10px offset",
-      },
-      statusSummary: `Fallback (unverified): ${action.title}`,
-      source: "heuristic",
-      verified: false,
     };
   }
 
