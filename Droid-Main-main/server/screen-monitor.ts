@@ -1,4 +1,7 @@
-import { MONITOR_INTERVAL_MS, type MonitorMode } from "../shared/assistant-control";
+import {
+  MONITOR_INTERVAL_MS,
+  type MonitorMode,
+} from "../shared/assistant-control";
 import type { CaptureResult } from "./capture-frame";
 import { readLiveFrame } from "./live-frame";
 
@@ -99,7 +102,10 @@ export class ScreenMonitor {
     if (generation !== this.generation || this.mode === "off") return;
     this.tick++;
     const due = this.startedAt! + this.tick * MONITOR_INTERVAL_MS[this.mode];
-    this.timer = this.clock.setTimeout(() => void this.run(generation), Math.max(0, due - this.clock.now()));
+    this.timer = this.clock.setTimeout(
+      () => void this.run(generation),
+      Math.max(0, due - this.clock.now()),
+    );
   }
 
   private async captureOnce() {
@@ -107,7 +113,11 @@ export class ScreenMonitor {
       const frame = await this.capture();
       if (frame.status === "standby") return this.fail(frame.message);
       this.captures++;
-      this.frames.unshift({ imageData: frame.imageData, capturedAt: frame.timestamp, source: frame.source });
+      this.frames.unshift({
+        imageData: frame.imageData,
+        capturedAt: frame.timestamp,
+        source: frame.source,
+      });
       if (this.frames.length > MAX_FRAMES) this.frames.length = MAX_FRAMES;
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err));

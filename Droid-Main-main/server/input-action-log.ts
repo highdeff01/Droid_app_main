@@ -31,15 +31,29 @@ async function captureEvidence(ctx: InputActionContext) {
   try {
     const frame = await readLiveFrame();
     if (frame.status === "standby") return { screenshotError: frame.message };
-    return { screenshotId: aiMonitorStore.storeScreenshot(frame.imageData, frame.timestamp).id };
+    return {
+      screenshotId: aiMonitorStore.storeScreenshot(
+        frame.imageData,
+        frame.timestamp,
+      ).id,
+    };
   } catch (err) {
-    return { screenshotError: err instanceof Error ? err.message : String(err) };
+    return {
+      screenshotError: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 function describe(entry: InputActionEntry): string {
-  const at = entry.x !== undefined && entry.y !== undefined ? ` at (${Math.round(entry.x)}, ${Math.round(entry.y)})` : "";
-  const input = entry.text ? ` "${entry.text}"` : entry.key ? ` [${entry.key}]` : "";
+  const at =
+    entry.x !== undefined && entry.y !== undefined
+      ? ` at (${Math.round(entry.x)}, ${Math.round(entry.y)})`
+      : "";
+  const input = entry.text
+    ? ` "${entry.text}"`
+    : entry.key
+      ? ` [${entry.key}]`
+      : "";
   return `${entry.action.toUpperCase()}${at}${input}`;
 }
 
@@ -61,7 +75,9 @@ export async function recordInputActions(
       timeStr: entry.at ? new Date(entry.at).toLocaleTimeString() : undefined,
       phase: "execution",
       title: `${inputKind === "mouse" ? "Mouse" : "Keyboard"} ${entry.action}`,
-      detail: ctx.executed ? describe(entry) : `${describe(entry)} not executed: ${ctx.error ?? "unknown error"}`,
+      detail: ctx.executed
+        ? describe(entry)
+        : `${describe(entry)} not executed: ${ctx.error ?? "unknown error"}`,
       status: ctx.executed ? "completed" : "failed",
       source: ctx.origin,
       inputKind,
@@ -77,6 +93,9 @@ export async function recordInputActions(
 }
 
 /** Fire-and-forget form for request handlers: logging never fails or delays the action reply. */
-export function logInputActions(entries: InputActionEntry[], ctx: InputActionContext): void {
+export function logInputActions(
+  entries: InputActionEntry[],
+  ctx: InputActionContext,
+): void {
   void recordInputActions(entries, ctx).catch(() => undefined);
 }

@@ -27,7 +27,10 @@ describe("ScreenMonitor", () => {
     vi.useFakeTimers();
     const capture = vi.fn(liveCapture());
     const monitor = new ScreenMonitor(capture);
-    expect(monitor.start("background")).toMatchObject({ mode: "background", intervalMs: 1000 });
+    expect(monitor.start("background")).toMatchObject({
+      mode: "background",
+      intervalMs: 1000,
+    });
     await advance(0);
     expect(capture).toHaveBeenCalledTimes(1);
     await advance(2999);
@@ -44,7 +47,12 @@ describe("ScreenMonitor", () => {
     monitor.start("advanced");
     await advance(1000);
     expect(capture).toHaveBeenCalledTimes(5);
-    expect(monitor.status()).toMatchObject({ mode: "advanced", intervalMs: 250, captures: 5, failures: 0 });
+    expect(monitor.status()).toMatchObject({
+      mode: "advanced",
+      intervalMs: 250,
+      captures: 5,
+      failures: 0,
+    });
     const frames = monitor.recentFrames(2);
     expect(frames[0].capturedAt).toBeGreaterThanOrEqual(frames[1].capturedAt);
     monitor.stop();
@@ -76,7 +84,12 @@ describe("ScreenMonitor", () => {
     }));
     monitor.start("background");
     await advance(0);
-    expect(monitor.status()).toMatchObject({ captures: 0, failures: 1, lastError: "No live frame", frameCount: 0 });
+    expect(monitor.status()).toMatchObject({
+      captures: 0,
+      failures: 1,
+      lastError: "No live frame",
+      frameCount: 0,
+    });
     monitor.stop();
   });
 });

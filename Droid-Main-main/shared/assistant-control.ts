@@ -39,7 +39,9 @@ export function parseAssistantCommand(input: string): AssistantCommand {
   const keyword = match[1].toLowerCase();
   const rest = stripQuotes((match[2] ?? "").trim());
   if (keyword === "use")
-    return rest ? { kind: "use", target: rest } : { kind: "usage_error", message: USE_USAGE };
+    return rest
+      ? { kind: "use", target: rest }
+      : { kind: "usage_error", message: USE_USAGE };
   if (keyword === "log") return { kind: "log" };
   if (keyword === "monitor") {
     const mode = rest.toLowerCase();
@@ -86,15 +88,22 @@ export interface MatchableElement {
   confidence: number | null;
 }
 
-const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
-const words = (value: string) => normalize(value).split(/[^a-z0-9]+/).filter(Boolean);
+const normalize = (value: string) =>
+  value.toLowerCase().replace(/\s+/g, " ").trim();
+const words = (value: string) =>
+  normalize(value)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
 
 /** 3 exact label, 2 label contains target (or the reverse), 1 shared words fraction; 0 no match. */
 function matchScore(target: string, element: MatchableElement): number {
   const wanted = normalize(target);
-  const labels = [element.name, element.textValue ?? ""].map(normalize).filter(Boolean);
+  const labels = [element.name, element.textValue ?? ""]
+    .map(normalize)
+    .filter(Boolean);
   if (labels.some((label) => label === wanted)) return 3;
-  if (labels.some((label) => label.includes(wanted) || wanted.includes(label))) return 2;
+  if (labels.some((label) => label.includes(wanted) || wanted.includes(label)))
+    return 2;
   const targetWords = words(target);
   const labelWords = new Set(labels.flatMap(words));
   const shared = targetWords.filter((w) => labelWords.has(w)).length;
@@ -102,13 +111,20 @@ function matchScore(target: string, element: MatchableElement): number {
 }
 
 /** The element whose label best matches the target; ties go to the higher confidence. */
-export function matchTargetElement<T extends MatchableElement>(target: string, elements: T[]): T | null {
+export function matchTargetElement<T extends MatchableElement>(
+  target: string,
+  elements: T[],
+): T | null {
   let best: { element: T; score: number; confidence: number } | null = null;
   for (const element of elements) {
     const score = matchScore(target, element);
     if (score <= 0) continue;
     const confidence = element.confidence ?? 0;
-    if (!best || score > best.score || (score === best.score && confidence > best.confidence))
+    if (
+      !best ||
+      score > best.score ||
+      (score === best.score && confidence > best.confidence)
+    )
       best = { element, score, confidence };
   }
   return best?.element ?? null;
