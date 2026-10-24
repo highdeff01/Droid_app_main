@@ -13,7 +13,11 @@ import { methodLearningSystem, type LearningContext } from "./method-learning";
 import { RealTimeElementTracker } from "./element-tracking";
 import { operationBus } from "./overseer/operation-bus";
 import type { OperationStepReport } from "../shared/overseer";
-import { recordInputActions, type InputActionEntry } from "./input-action-log";
+import {
+  captureEvidence,
+  recordInputActions,
+  type InputActionEntry,
+} from "./input-action-log";
 
 /** The input-log entry for an approved plan action, whatever its field naming. */
 function planInput(action: object): InputActionEntry {
@@ -299,21 +303,25 @@ export class ExecutionStateRepository {
           return execution;
         if (!result.success) return this.fail(execution, result.message);
         this.addEvent(execution, "completed", result.message, step.id, result);
-        const [logged] = await recordInputActions([planInput(action)], {
+        const shot: { screenshotId?: string; screenshotError?: string } =
+          await captureEvidence({
+            origin: `plan:${execution.id}`,
+            executed: true,
+          });
+        await recordInputActions([planInput(action)], {
           origin: `plan:${execution.id}`,
           executed: true,
+          screenshotId: shot.screenshotId,
+          skipScreenshot: !shot.screenshotId,
         });
         this.addEvent(
           execution,
           "completed",
-          logged?.screenshotId
-            ? `Step ${index + 1} screenshot ${logged.screenshotId}`
-            : `Step ${index + 1} screenshot unavailable: ${logged?.screenshotError ?? "no capture source"}`,
+          shot.screenshotId
+            ? `Step ${index + 1} screenshot ${shot.screenshotId}`
+            : `Step ${index + 1} screenshot unavailable: ${shot.screenshotError ?? "no capture source"}`,
           step.id,
-          {
-            screenshotId: logged?.screenshotId,
-            screenshotError: logged?.screenshotError,
-          },
+          shot,
         );
         operationBus.step(execution.id, stepReport(step, action));
 

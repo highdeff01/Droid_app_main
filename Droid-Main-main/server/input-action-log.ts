@@ -25,7 +25,7 @@ export interface InputActionContext {
 }
 
 /** The screenshot for this moment: the supplied one, else a fresh live capture. */
-async function captureEvidence(ctx: InputActionContext) {
+export async function captureEvidence(ctx: InputActionContext) {
   if (ctx.skipScreenshot) return {};
   if (ctx.screenshotId) return { screenshotId: ctx.screenshotId };
   try {
