@@ -483,64 +483,7 @@ export async function detectScreenElementsAndSteps(params: {
   const ai = getGenAIClient();
 
   if (!imageData) {
-    // Fallback heuristic detection only when no image was supplied
-    const fallbackElements: DetectedElement[] = [
-      {
-        id: `elem_${Date.now()}_1`,
-        name: "Primary Action Button",
-        type: "button",
-        x: Math.round(screenWidth * 0.5),
-        y: Math.round(screenHeight * 0.65),
-        width: 140,
-        height: 44,
-        suggestedAction: "click",
-        confidence: 0,
-        description: "Standard primary action target located near center-bottom canvas",
-      },
-      {
-        id: `elem_${Date.now()}_2`,
-        name: "Search or Input Field",
-        type: "input",
-        x: Math.round(screenWidth * 0.5),
-        y: Math.round(screenHeight * 0.2),
-        width: 320,
-        height: 40,
-        suggestedAction: "clear_and_type",
-        suggestedTextPayload: "search query",
-        confidence: 0,
-        description: "Text input bar located in the upper header region",
-      },
-      {
-        id: `elem_${Date.now()}_3`,
-        name: "Navigation Tab / Link",
-        type: "tab",
-        x: Math.round(screenWidth * 0.25),
-        y: Math.round(screenHeight * 0.15),
-        width: 100,
-        height: 36,
-        suggestedAction: "click",
-        confidence: 0,
-        description: "Navigation route switch tab",
-      },
-    ];
-
-    return {
-      elements: fallbackElements,
-      suggestedSteps: fallbackElements.map((el, idx) => ({
-        id: `auto_step_${Date.now()}_${idx + 1}`,
-        stepNumber: idx + 1,
-        name: `Auto: ${el.name}`,
-        action: el.suggestedAction,
-        x: el.x,
-        y: el.y,
-        text: el.suggestedTextPayload,
-        delayMs: 400,
-        description: el.description,
-      })),
-      summary: "Placeholder targets from fixed screen geometry; no screenshot was analyzed.",
-      primaryActionTarget: { x: fallbackElements[0].x, y: fallbackElements[0].y, label: fallbackElements[0].name },
-      ...simulatedMarker("No screenshot supplied; elements are geometric placeholders, not detections."),
-    };
+    throw new Error("No screen frame supplied; capture the live screen before detecting elements.");
   }
 
   try {

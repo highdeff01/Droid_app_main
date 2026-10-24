@@ -6,6 +6,7 @@ import {
   sendQwenChatRequest,
 } from "../ai-endpoint";
 import { recognizeWithProviders } from "../ocr-provider";
+import { ConversationStore } from "../ai-conversation";
 import type { OCRTextBlock } from "@shared/assistant";
 import type {
   HudEntity,
@@ -26,6 +27,8 @@ export interface HudToolsDeps {
   store: Pick<DurableStore, "readCollection" | "readCollectionForWrite" | "writeCollection">;
   recognize: typeof recognizeWithProviders;
   chat: typeof sendQwenChatRequest;
+  /** Session history shared with /api/ai/help; defaults to a store over `chat`. */
+  conversations?: ConversationStore;
 }
 
 const GUIDE_PROMPT = `You are the Qwen agent guide watching a live screen while a user records an automation.
@@ -60,6 +63,7 @@ export function blockAtPoint(
 }
 
 export function createHudToolsHandlers(deps: HudToolsDeps) {
+  const conversations = deps.conversations ?? new ConversationStore(deps.chat);
   const ocrInspect: RequestHandler = async (req, res) => {
     const { imageData, x, y, frameWidth, frameHeight } = req.body ?? {};
     if (!isScreenshot(imageData)) {
@@ -121,12 +125,12 @@ export function createHudToolsHandlers(deps: HudToolsDeps) {
   };
 
   const askQwen: RequestHandler = async (req, res) => {
-    const { imageData, question, endpoint, model } = req.body ?? {};
+    const { imageData, question, endpoint, model, sessionId = "ai-help" } = req.body ?? {};
     if (!isScreenshot(imageData) || typeof question !== "string" || !question.trim()) {
       return res.status(400).json({ success: false, error: "A PNG/JPEG screenshot and a question are required" });
     }
     try {
-      const reply = await deps.chat([buildVisionMessage(question.trim(), imageData)], { endpoint, model });
+      const reply = await conversations.send(String(sessionId), buildVisionMessage(question.trim(), imageData), { endpoint, model });
       if (!reply.success) {
         return res.status(502).json({ success: false, error: reply.error || "Qwen unavailable" });
       }

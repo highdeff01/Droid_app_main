@@ -1,243 +1,126 @@
 /**
- * Analyze & Act Master AI Pipeline
- * Allows AI to inspect the screen stream and live screen, cross-reference previous vs. current actions,
- * create goals and tasks, auto-fill workflows, and formulate next action schedules.
+ * Analyze & Act: sends the live captured frame, the previous steps and the
+ * operator's instructions to the Qwen endpoint (with the session's conversation
+ * history) and returns the model's summary, cross-reference and assembled
+ * tasks. No frame is a 400; an unreachable endpoint or unreadable reply is a
+ * 502. Nothing here is a template.
  */
 
 import { RequestHandler } from "express";
-import { GoogleGenAI } from "@google/genai";
-import { sendQwenChatRequest, buildVisionMessage, parseModelJson } from "../ai-endpoint";
+import { buildVisionMessage, parseModelJson } from "../ai-endpoint";
+import { aiConversations } from "../ai-conversation";
 
-let genAIClient: GoogleGenAI | null = null;
-function getGenAI(): GoogleGenAI | null {
-  if (!genAIClient && process.env.GEMINI_API_KEY) {
-    genAIClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
-  return genAIClient;
+export const ANALYZE_AND_ACT_SESSION_ID = "analyze-and-act";
+
+const SCREENSHOT_PATTERN = /^data:image\/(png|jpeg);base64,/;
+
+export interface AssembledTask {
+  id: string;
+  stepNumber: number;
+  name: string;
+  action: string;
+  targetPosition: { x: number; y: number };
+  text?: string;
+  confidence: number | null;
 }
 
 export interface AnalyzeAndActResponse {
-  success: boolean;
+  success: true;
   visualSummary: string;
-  /** True when no model produced `visualSummary`. */
-  simulated: boolean;
-  simulationReason?: string;
-  /** Goals, tasks, tools and preferences below are template suggestions, never model output. */
-  templateSuggestions: true;
   crossReferenceAnalysis: {
     previousActionSummary: string;
     currentScreenState: string;
     identifiedChanges: string[];
-    driftOrShiftDetected: boolean;
     recommendedAdjustments: string[];
   };
-  generatedGoals: Array<{
-    id: string;
-    title: string;
-    priority: "high" | "medium" | "low";
-    category: "automation" | "verification" | "recalibration" | "research";
-  }>;
-  autoAssembledTasks: Array<{
-    id: string;
-    stepNumber: number;
-    name: string;
-    action: "click" | "type" | "live_write" | "paste" | "watcher_agent" | "media_play" | "internet_search" | "calc" | "review_update";
-    targetPosition: { x: number; y: number };
-    selector?: string;
-    text?: string;
-    toolParams?: any;
-    confidence: number;
-  }>;
-  suggestedTools: {
-    watcherAgentAssigned: boolean;
-    mediaPlayTrigger: boolean;
-    internetSearchQuery?: string;
-    calcExpression?: string;
-    liveWriteText?: string;
-    reviewUpdateMode: boolean;
-  };
-  taskPreferences: {
-    aggressiveRetry: boolean;
-    autoCalibrationThresholdPx: number;
-    interceptOnDrift: boolean;
-    syncWithNativePC: boolean;
-  };
-  nextSchedule: {
-    scheduledTime: string;
-    recheckIntervalSeconds: number;
-    notes: string;
-  };
+  autoAssembledTasks: AssembledTask[];
+  endpoint?: string;
+}
+
+const SYSTEM_PROMPT = `You are the Analyze & Act vision engine of a desktop automation assistant.
+You receive a screenshot of the operator's live screen, the steps already executed and the operator's instructions.
+Describe ONLY what is actually visible. Propose next steps whose x/y are pixel centers of elements you can see.
+Respond with STRICT JSON only:
+{
+  "visualSummary": "2 sentences about the visible screen",
+  "crossReferenceAnalysis": {
+    "previousActionSummary": "what the previous steps did",
+    "currentScreenState": "what the screen shows now relative to those steps",
+    "identifiedChanges": ["..."],
+    "recommendedAdjustments": ["..."]
+  },
+  "autoAssembledTasks": [
+    { "name": "Click Sign In", "action": "click", "x": 412, "y": 318, "text": "", "confidence": 0.8 }
+  ]
+}`;
+
+function toStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+/** Keeps only tasks with numeric coordinates from the model. */
+export function readAssembledTasks(value: unknown): AssembledTask[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((t) => Number.isFinite(Number(t?.x)) && Number.isFinite(Number(t?.y)))
+    .map((t, idx) => ({
+      id: `task_${Date.now()}_${idx + 1}`,
+      stepNumber: idx + 1,
+      name: String(t.name || t.action || `Step ${idx + 1}`),
+      action: String(t.action || "click"),
+      targetPosition: { x: Number(t.x), y: Number(t.y) },
+      ...(t.text ? { text: String(t.text) } : {}),
+      confidence: typeof t.confidence === "number" ? Math.min(1, Math.max(0, t.confidence)) : null,
+    }));
+}
+
+function buildPrompt(body: any): string {
+  const previousTasks = Array.isArray(body.previousTasks) ? body.previousTasks : [];
+  return `Operator instructions: ${body.userInstructions || "Analyze the screen and propose the next steps"}
+Previous steps (${previousTasks.length}): ${JSON.stringify(previousTasks.slice(-5))}`;
 }
 
 export const handleAnalyzeAndAct: RequestHandler = async (req, res) => {
-  try {
-    const {
-      screenStreamUrl,
-      liveScreenUrl,
-      previousTasks = [],
-      userInstructions = "",
-      currentGoals = [],
-      activeWorkflow = [],
-    } = req.body;
-
-    const activeImage = liveScreenUrl || screenStreamUrl;
-
-    // Check if real Gemini is available
-    const ai = getGenAI();
-    let geminiSummary = "";
-
-    const visionPrompt = `Analyze this automation screen. Cross-reference with:
-User Instructions: "${userInstructions || "Automate navigation and form workflows"}"
-Previous Tasks: ${JSON.stringify(previousTasks.slice(0, 3))}
-Current Goals: ${JSON.stringify(currentGoals.slice(0, 3))}
-Give a 2-sentence visual summary of the active viewport, any visible drift or interactive fields, and what action to execute next.`;
-
-    if (ai && activeImage && activeImage.startsWith("data:image/")) {
-      try {
-        const base64Data = activeImage.split(",")[1];
-        const mimeType = activeImage.substring(activeImage.indexOf(":") + 1, activeImage.indexOf(";"));
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: mimeType || "image/png",
-                    data: base64Data,
-                  },
-                },
-                { text: visionPrompt },
-              ],
-            },
-          ],
-        });
-        geminiSummary = response.text || "";
-      } catch (geminiErr) {
-        console.warn("Gemini vision analysis fallback triggered:", geminiErr);
-      }
-    } else if (activeImage && activeImage.startsWith("data:image/")) {
-      try {
-        const qwenResult = await sendQwenChatRequest(
-          [buildVisionMessage(visionPrompt, activeImage)],
-        );
-        if (qwenResult.success) {
-          geminiSummary = qwenResult.content;
-        }
-      } catch (qwenErr) {
-        console.warn("Qwen vision analysis fallback triggered:", qwenErr);
-      }
-    }
-
-    const previousActionCount = previousTasks.length;
-    const lastAction = previousTasks[previousTasks.length - 1];
-
-    const responsePayload: AnalyzeAndActResponse = {
-      success: true,
-      visualSummary:
-        geminiSummary || "No AI analysis ran: no vision model was available or no screenshot was supplied.",
-      simulated: !geminiSummary,
-      ...(geminiSummary ? {} : { simulationReason: "No vision model response; screen was not analyzed." }),
-      templateSuggestions: true,
-      crossReferenceAnalysis: {
-        previousActionSummary: lastAction
-          ? `Last executed step #${lastAction.stepNumber || 1}: ${lastAction.name || lastAction.action || "User interaction"}`
-          : "Initial session state; no prior automation actions executed.",
-        currentScreenState: geminiSummary ? "See visualSummary (model output)." : "Unknown: screen was not analyzed.",
-        identifiedChanges: [
-          "Live canvas viewport updated with latest user cursor and form focus",
-          "Euclidean template drift monitored across primary form selectors",
-          "No blocking modal obstacles or unexpected dialogs detected",
-        ],
-        driftOrShiftDetected: false,
-        recommendedAdjustments: [
-          "Maintain current Euclidean offset vectors (+14px X, -8px Y on input fields)",
-          "Dispatch keyboard entries using live streaming write agent for natural pacing",
-          "Log verified screenshot result directly into workflow history ledger",
-        ],
-      },
-      generatedGoals: [
-        {
-          id: `goal_${Date.now()}_1`,
-          title: "Complete active account registration sequence with auto-calibrated coordinates",
-          priority: "high",
-          category: "automation",
-        },
-        {
-          id: `goal_${Date.now()}_2`,
-          title: "Verify Euclidean template alignment across all input landmarks",
-          priority: "high",
-          category: "verification",
-        },
-        {
-          id: `goal_${Date.now()}_3`,
-          title: "Schedule watcher agent to observe asynchronous submission confirmation",
-          priority: "medium",
-          category: "research",
-        },
-      ],
-      autoAssembledTasks: [
-        {
-          id: `task_${Date.now()}_1`,
-          stepNumber: 1,
-          name: "Focus Customer Identifier Field",
-          action: "click",
-          targetPosition: { x: 960, y: 380 },
-          selector: "input[type='email']#user-id-field",
-          confidence: 0,
-        },
-        {
-          id: `task_${Date.now()}_2`,
-          stepNumber: 2,
-          name: "Live Write Operator Email Address",
-          action: "live_write",
-          targetPosition: { x: 960, y: 380 },
-          text: "operator.lead@enterprise.ai",
-          confidence: 0,
-        },
-        {
-          id: `task_${Date.now()}_3`,
-          stepNumber: 3,
-          name: "Verify Session Checkbox with Euclidean Anchor",
-          action: "click",
-          targetPosition: { x: 885, y: 490 },
-          selector: ".auth-card label.checkbox-remember-session",
-          confidence: 0,
-        },
-        {
-          id: `task_${Date.now()}_4`,
-          stepNumber: 4,
-          name: "Execute Verification & Dispatch Order",
-          action: "click",
-          targetPosition: { x: 960, y: 560 },
-          selector: "#checkout-submit-btn",
-          confidence: 0,
-        },
-      ],
-      suggestedTools: {
-        watcherAgentAssigned: true,
-        mediaPlayTrigger: false,
-        internetSearchQuery: "sightline workspace automation protocols",
-        calcExpression: "1920 * 1080 / 1000",
-        liveWriteText: "operator.lead@enterprise.ai",
-        reviewUpdateMode: true,
-      },
-      taskPreferences: {
-        aggressiveRetry: true,
-        autoCalibrationThresholdPx: 8,
-        interceptOnDrift: true,
-        syncWithNativePC: true,
-      },
-      nextSchedule: {
-        scheduledTime: new Date(Date.now() + 15000).toISOString(),
-        recheckIntervalSeconds: 15,
-        notes: "Next autonomous re-check scheduled in 15 seconds to monitor UI state updates.",
-      },
-    };
-
-    res.json(responsePayload);
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+  const body = req.body ?? {};
+  const frame = body.liveScreenUrl || body.screenStreamUrl;
+  if (typeof frame !== "string" || !SCREENSHOT_PATTERN.test(frame)) {
+    return res.status(400).json({
+      success: false,
+      error: "No live screen frame: start screen capture so the AI can see the screen",
+    });
   }
+
+  const reply = await aiConversations.send(
+    String(body.sessionId || ANALYZE_AND_ACT_SESSION_ID),
+    buildVisionMessage(buildPrompt(body), frame),
+    { system: SYSTEM_PROMPT, endpoint: body.endpoint, model: body.model, format: "json" },
+  );
+  if (!reply.success) {
+    return res.status(502).json({ success: false, error: `AI endpoint unreachable: ${reply.error || "no response"}` });
+  }
+
+  let parsed: any;
+  try {
+    parsed = parseModelJson(reply.content);
+  } catch (err) {
+    return res.status(502).json({
+      success: false,
+      error: `AI model returned unreadable output: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
+  const cross = parsed.crossReferenceAnalysis ?? {};
+  const payload: AnalyzeAndActResponse = {
+    success: true,
+    visualSummary: String(parsed.visualSummary ?? ""),
+    crossReferenceAnalysis: {
+      previousActionSummary: String(cross.previousActionSummary ?? ""),
+      currentScreenState: String(cross.currentScreenState ?? ""),
+      identifiedChanges: toStringList(cross.identifiedChanges),
+      recommendedAdjustments: toStringList(cross.recommendedAdjustments),
+    },
+    autoAssembledTasks: readAssembledTasks(parsed.autoAssembledTasks),
+    endpoint: reply.endpoint,
+  };
+  res.json(payload);
 };

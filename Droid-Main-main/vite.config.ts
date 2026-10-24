@@ -59,7 +59,9 @@ export default defineConfig(() => {
         name: 'api-server-middleware',
         async configureServer(server) {
           const { createServer } = await import('./server/index');
+          const { pingAiEndpoint } = await import('./server/ai-status');
           const apiApp = createServer();
+          void pingAiEndpoint();
           server.middlewares.use((req, res, next) => {
             if (req.url?.startsWith('/api')) {
               apiApp(req as any, res as any, (err: any) => {

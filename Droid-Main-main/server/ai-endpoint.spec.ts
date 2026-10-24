@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { centralLogHub } from "./log-hub";
 import {
+  AiUnavailableError,
   DEFAULT_LOCAL_OLLAMA_ENDPOINT,
   DEFAULT_OLLAMA_ENDPOINT,
+  aiErrorStatus,
   buildVisionMessage,
   parseModelJson,
   resetAiConfiguration,
@@ -31,16 +33,28 @@ function jsonResponse(content: string, status = 200): Response {
 }
 
 describe("resolveAiEndpointChain", () => {
-  it("defaults to the local endpoint then quantumclaw when nothing is configured", () => {
+  it("defaults to quantumclaw only when nothing is configured", () => {
+    expect(resolveAiEndpointChain()).toEqual([DEFAULT_OLLAMA_ENDPOINT]);
+  });
+
+  it("never puts the LAN preset in front of quantumclaw by default", () => {
+    expect(resolveAiEndpointChain()).not.toContain(DEFAULT_LOCAL_OLLAMA_ENDPOINT);
+  });
+
+  it("tries a configured custom endpoint first, then quantumclaw", () => {
+    setConfiguredAiEndpoint("http://10.0.0.6:11434");
     expect(resolveAiEndpointChain()).toEqual([
-      DEFAULT_LOCAL_OLLAMA_ENDPOINT,
+      "http://10.0.0.6:11434/api/chat",
       DEFAULT_OLLAMA_ENDPOINT,
     ]);
   });
 
-  it("uses OLLAMA_ENDPOINT as the primary endpoint", () => {
+  it("uses OLLAMA_ENDPOINT as the primary endpoint ahead of quantumclaw", () => {
     process.env.OLLAMA_ENDPOINT = "http://10.0.0.5:11434";
-    expect(resolveAiEndpointChain()[0]).toBe("http://10.0.0.5:11434/api/chat");
+    expect(resolveAiEndpointChain()).toEqual([
+      "http://10.0.0.5:11434/api/chat",
+      DEFAULT_OLLAMA_ENDPOINT,
+    ]);
   });
 
   it("prefers the runtime-configured endpoint over the env var", () => {
@@ -56,7 +70,8 @@ describe("resolveAiEndpointChain", () => {
 });
 
 describe("sendQwenChatRequest", () => {
-  it("falls back to quantumclaw when the local endpoint rejects with a connection failure", async () => {
+  it("falls back to quantumclaw when a configured custom endpoint rejects with a connection failure", async () => {
+    setConfiguredAiEndpoint("http://10.0.0.6:11434");
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("fetch failed"))
@@ -71,7 +86,7 @@ describe("sendQwenChatRequest", () => {
     expect(result.success).toBe(true);
     expect(result.endpoint).toBe(DEFAULT_OLLAMA_ENDPOINT);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0][0]).toBe(DEFAULT_LOCAL_OLLAMA_ENDPOINT);
+    expect(fetchMock.mock.calls[0][0]).toBe("http://10.0.0.6:11434/api/chat");
     expect(fetchMock.mock.calls[1][0]).toBe(DEFAULT_OLLAMA_ENDPOINT);
     expect(addLogSpy).toHaveBeenCalledWith(
       "Qwen Vision",
@@ -81,7 +96,8 @@ describe("sendQwenChatRequest", () => {
     );
   });
 
-  it("falls back to quantumclaw when the local endpoint times out", async () => {
+  it("falls back to quantumclaw when a configured custom endpoint times out", async () => {
+    setConfiguredAiEndpoint("http://10.0.0.6:11434");
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"))
@@ -97,7 +113,8 @@ describe("sendQwenChatRequest", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("does not fall back when the local endpoint answers with an HTTP error", async () => {
+  it("does not fall back when a configured custom endpoint answers with an HTTP error", async () => {
+    setConfiguredAiEndpoint("http://10.0.0.6:11434");
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 500 }));
@@ -112,6 +129,7 @@ describe("sendQwenChatRequest", () => {
   });
 
   it("reports failure with an error string when every endpoint fails", async () => {
+    setConfiguredAiEndpoint("http://10.0.0.6:11434");
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("fetch failed"))
@@ -125,6 +143,17 @@ describe("sendQwenChatRequest", () => {
     expect(result.success).toBe(false);
     expect(typeof result.error).toBe("string");
     expect(result.error!.length).toBeGreaterThan(0);
+  });
+
+  it("calls only quantumclaw, once, with the default chain", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("fetch failed"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await sendQwenChatRequest([{ role: "user", content: "hi" }]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(DEFAULT_OLLAMA_ENDPOINT);
+    expect(result.success).toBe(false);
   });
 
   it("builds the default request body with model, stream and a signal", async () => {
@@ -219,5 +248,16 @@ describe("parseModelJson", () => {
 
   it("throws when there is no JSON object", () => {
     expect(() => parseModelJson("not json at all")).toThrow();
+  });
+});
+
+describe("aiErrorStatus", () => {
+  it("maps AiUnavailableError to 502", () => {
+    expect(aiErrorStatus(new AiUnavailableError("AI endpoint unreachable: down"))).toBe(502);
+  });
+
+  it("maps any other error to 500", () => {
+    expect(aiErrorStatus(new Error("boom"))).toBe(500);
+    expect(aiErrorStatus("not an error")).toBe(500);
   });
 });
