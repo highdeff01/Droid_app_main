@@ -53,6 +53,12 @@ export const handleStuckResolver: RequestHandler = async (req, res) => {
       targetSeconds,
       lastError,
     });
+    if ((resolution as { simulated?: boolean }).simulated) {
+      return res.status(502).json({
+        success: false,
+        error: "AI endpoint unreachable: stuck resolution needs a model answer; nothing was executed",
+      });
+    }
 
     let executedActions: any[] = [];
     if (autoExecuteFix && resolution.recommendedActions?.length > 0) {
@@ -66,8 +72,8 @@ export const handleStuckResolver: RequestHandler = async (req, res) => {
           const res = await dispatchActionToPython({
             title: `Unstuck: ${rec.reason}`,
             action: rec.action,
-            x: rec.x || 960,
-            y: rec.y || 540,
+            x: rec.x,
+            y: rec.y,
             textPayload: rec.text,
             keyPayload: rec.key || "escape",
             delayMs: rec.delayMs || 500,

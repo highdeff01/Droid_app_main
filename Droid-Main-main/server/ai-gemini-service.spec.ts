@@ -42,7 +42,7 @@ describe("stuck resolver without a screen capture", () => {
     }
   });
 
-  it("never dispatches a click with autoExecuteFix and no capture", async () => {
+  it("returns 502 and dispatches nothing when the resolution is simulated", async () => {
     const res = makeRes();
     await handleStuckResolver(
       { body: { autoExecuteFix: true, lastError: "timeout" } } as any,
@@ -50,9 +50,8 @@ describe("stuck resolver without a screen capture", () => {
       vi.fn(),
     );
 
-    expect(res.body.success).toBe(true);
-    const dispatched = dispatchActionToPython.mock.calls.map(([payload]) => payload.action);
-    expect(dispatched).not.toContain("click");
-    expect(dispatched.every((action: string) => !POSITIONAL.has(action))).toBe(true);
+    expect(res.statusCode).toBe(502);
+    expect(res.body.success).toBe(false);
+    expect(dispatchActionToPython).not.toHaveBeenCalled();
   });
 });
