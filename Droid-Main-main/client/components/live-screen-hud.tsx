@@ -2091,6 +2091,12 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
         setExecutingStepProgress({ ...progress, coords: { x: step.x, y: step.y } });
       },
       onDrift: (drift, step) => toast.warning(`Replay drift at "${step.name}": ${drift.kind.replace("_", " ")}`, { description: drift.reason }),
+      onDriftMeasured: (step, phase, drift) =>
+        logActionExecution({
+          level: drift.status === "not_found" ? "error" : "drift",
+          message: `[Drift ${phase === "before" ? "before acting" : "after acting"}] "${step.name}": ${drift.detail}`,
+          targetCoords: drift.located ?? drift.expected,
+        }),
     }, deps);
     setIsExecutingStepByStep(false);
     setExecutingStepIndex(null);
@@ -2104,7 +2110,8 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
   // VERIFIED DRIFT REPLAY ON PC: saved-frame pre-check, outcome post-check, drift → Qwen replan.
   const handleVerifiedDriftReplayOnPC = () => runStepwise(true);
 
-  // Replay Drift (HUD preview): animates the route with human drift on the overlay only; nothing is sent to the device.
+  // Replay Drift (OVERLAY ONLY): animates the route with random human drift on the HUD; nothing is sent
+  // to the device and no drift is measured. Real drift execution is handleVerifiedDriftReplayOnPC.
   const handleReplayUserMovementWithDrift = () => {
     const selection = selectReplayWaypoints(
       selectedReplaySteps(sequence, selectedStepIds),
@@ -2118,6 +2125,7 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
 
     setIsReplayingMovement(true);
     setSplineMotionTrail([]);
+    toast.info(`Replay Drift is overlay-only: ±${humanDriftPx}px random drift animated on the HUD; nothing is sent to the device.`);
 
     // Sequence steps (selected ones first) win over a possibly stale live trail.
     const { waypoints } = selection;
@@ -3658,9 +3666,9 @@ export const LiveScreenHUD: React.FC<LiveScreenHUDProps> = ({
             onClick={handleReplayUserMovementWithDrift}
             disabled={isReplayingMovement}
             className="h-8 text-xs font-mono font-bold bg-cyan-600 hover:bg-cyan-500 text-white gap-1"
-            title="HUD-only preview: animates the route with human drift on the overlay; nothing is sent to the device"
+            title="OVERLAY ONLY: animates the route with random human drift on the HUD; nothing is sent to the device and no drift is measured. Use VERIFIED DRIFT REPLAY ON PC for real execution."
           >
-            <Play className="w-3.5 h-3.5" /> Preview Drift on HUD (±{humanDriftPx}px)
+            <Play className="w-3.5 h-3.5" /> Replay Drift — Overlay Only, Not Sent to Device (±{humanDriftPx}px)
           </Button>
 
           <Button

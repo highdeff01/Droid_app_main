@@ -203,6 +203,67 @@ describe("runStepwiseReplay", () => {
   });
 });
 
+/** A frame whose full-resolution pixels hold a textured 20x20 button at top-left (bx, by); null = no button. */
+function pixelFrame(button: { x: number; y: number } | null): LoadedFrame {
+  const data = new Float32Array(200 * 120).fill(30);
+  if (button) {
+    for (let y = 0; y < 20; y++) {
+      for (let x = 0; x < 20; x++) data[(button.y + y) * 200 + button.x + x] = 100 + ((x * 7 + y * 13) % 120);
+    }
+  }
+  return { gray: makeFrame(0).gray, width: 200, height: 120, pixels: { width: 200, height: 120, data } };
+}
+
+describe("runStepwiseReplay drift measurement (template matching)", () => {
+  const signal = new AbortController().signal;
+  const PIXEL_FRAMES: Record<string, LoadedFrame> = {
+    saved: pixelFrame({ x: 60, y: 40 }),
+    moved: pixelFrame({ x: 73, y: 31 }),
+    gone: pixelFrame(null),
+  };
+
+  it("locates the target on the live frame, acts at the corrected point, re-verifies and logs drift", async () => {
+    const step = makeStep("s1", "Press OK", { x: 70, y: 50, referenceScreenshotUrl: "saved" });
+    const deps = makeDeps({ capture: captureSequence(["moved", "moved"]), loadFrame: vi.fn(async (url: string) => PIXEL_FRAMES[url]) });
+    const onDriftMeasured = vi.fn();
+
+    const result = await runStepwiseReplay([step], { signal, verifyDrift: true, onProgress: vi.fn(), onDriftMeasured }, deps);
+
+    expect(result.status).toBe("completed");
+    expect(deps.runStep).toHaveBeenCalledWith(expect.objectContaining({ id: "s1", x: 83, y: 41 }), signal);
+    const [outcome] = result.outcomes;
+    expect(outcome.actedAt).toEqual({ x: 83, y: 41 });
+    expect(outcome.drift).toMatchObject({ status: "located", dx: 13, dy: -9 });
+    expect(outcome.postDrift).toMatchObject({ status: "located", dx: 0, dy: 0 });
+    expect(onDriftMeasured.mock.calls.map(([, phase, drift]) => [phase, drift.dx, drift.dy])).toEqual([
+      ["before", 13, -9],
+      ["after", 0, 0],
+    ]);
+  });
+
+  it("fails without acting when the recorded target is not on the live frame", async () => {
+    const step = makeStep("s1", "Press OK", { x: 70, y: 50, referenceScreenshotUrl: "saved" });
+    const deps = makeDeps({ capture: captureSequence(["gone"]), loadFrame: vi.fn(async (url: string) => PIXEL_FRAMES[url]) });
+
+    const result = await runStepwiseReplay([step], { signal, verifyDrift: true, onProgress: vi.fn() }, deps);
+
+    expect(result.status).toBe("failed");
+    expect(result.outcomes[0].drift?.status).toBe("not_found");
+    expect(deps.runStep).not.toHaveBeenCalled();
+  });
+
+  it("acts at the recorded point with drift unmeasured when the step has no saved frame", async () => {
+    const step = makeStep("s1", "Press OK", { x: 70, y: 50 });
+    const deps = makeDeps({ capture: captureSequence(["moved", "moved"]), loadFrame: vi.fn(async (url: string) => PIXEL_FRAMES[url]) });
+
+    const result = await runStepwiseReplay([step], { signal, verifyDrift: true, onProgress: vi.fn() }, deps);
+
+    expect(result.status).toBe("completed");
+    expect(deps.runStep).toHaveBeenCalledWith(step, signal);
+    expect(result.outcomes[0].drift?.status).toBe("unmeasured");
+  });
+});
+
 describe("summarizeOutcomes", () => {
   it("counts executed, failed and skipped outcomes against the total", () => {
     const outcomes: StepOutcome[] = [

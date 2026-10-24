@@ -22,7 +22,7 @@ true for this project.
 ```bash
 npm install      # or npm ci; legacy-peer-deps comes from .npmrc
 npm run dev      # Vite dev server + Express API middleware on http://127.0.0.1:3000
-npm run lint     # tsc --noEmit (what CI runs)
+npm run lint     # tsc --noEmit + tsc -p tsconfig.node.json (vite configs, Node types) — what CI runs
 npm run test     # vitest --run (what CI runs)
 npm run build    # client (dist/spa) + Node server (dist/server)
 npm start        # node dist/server/node-build.mjs

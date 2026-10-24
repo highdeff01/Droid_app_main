@@ -22,6 +22,15 @@ export const PYTHON_SETUP_FIX =
 /** Desktop control backend chosen at server startup: native Node module, Python fallback, or none. */
 export type DesktopControlBackend = "native" | "python" | "unavailable";
 
+/** Replay refuses to run (never simulates) when the input bridge cannot drive the mouse/keyboard. */
+export const BRIDGE_DOWN_MESSAGE =
+  "Replay needs the PyAutoGUI input bridge, which is not reachable: start the python-service (python-service/) so clicks and keystrokes can really execute";
+
+/** The bridge-down error with the reason and the setup fix. */
+export function bridgeDownError(reason: string): string {
+  return `${BRIDGE_DOWN_MESSAGE}. ${reason} Fix: ${PYTHON_SETUP_FIX}`;
+}
+
 /** What to install when no desktop control backend is available. */
 export const DESKTOP_CONTROL_INSTALL_HINT =
   "@nut-tree-fork/nut-js via npm install, or Python: pip install pyautogui mss pillow";

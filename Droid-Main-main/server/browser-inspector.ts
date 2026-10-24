@@ -36,7 +36,7 @@ export async function listBrowserTabs(
   if (!response.ok) {
     throw new Error(`CDP endpoint returned ${response.status}`);
   }
-  const targets: any[] = await response.json();
+  const targets = (await response.json()) as any[];
   return (Array.isArray(targets) ? targets : [])
     .filter((t) => t.type === "page" && !String(t.url || "").startsWith("devtools://"))
     .map((t, idx) => ({
