@@ -207,7 +207,7 @@ export const AnalyzeAndActModal: React.FC<AnalyzeAndActModalProps> = ({
               <div>
                 <DialogTitle className="text-base font-bold text-slate-100 flex items-center gap-2">
                   <span>Analyze & Act Master Vision Engine</span>
-                  <Badge className="bg-cyan-600 text-white text-[10px]">Gemini 3.8 + Qwen Multimodal</Badge>
+                  <Badge className="bg-cyan-600 text-white text-[10px]">Qwen 3.5 Multimodal</Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-400">
                   Inspects live stream, cross-references historical actions, auto-assembles tasks, and bridges to native PC.

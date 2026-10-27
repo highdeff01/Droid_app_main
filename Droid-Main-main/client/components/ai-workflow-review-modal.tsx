@@ -172,7 +172,7 @@ export const AIWorkflowReviewModal: React.FC<AIWorkflowReviewModalProps> = ({
                 <DialogTitle className="text-sm font-bold flex items-center gap-2 text-white">
                   <span>AI Conscious Operator: Workflow & Screen Review</span>
                   <Badge className="bg-purple-950 text-purple-300 border-purple-600 text-[10px] font-mono">
-                    QWEN & GEMINI DUAL-AI
+                    QWEN DUAL-AI
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-400">

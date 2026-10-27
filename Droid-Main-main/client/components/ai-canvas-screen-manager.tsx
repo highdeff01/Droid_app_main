@@ -122,7 +122,7 @@ export const AICanvasScreenManager: React.FC<AICanvasScreenManagerProps> = ({
     }
 
     setIsDetecting(true);
-    setDetectionSummary("Scanning screen canvas with AI Vision (Gemini 3.8 Flash)...");
+    setDetectionSummary("Scanning screen canvas with AI Vision (Qwen 3.5 2B)...");
 
     try {
       const resp = await fetch("/api/ai/detect-elements-steps", {
