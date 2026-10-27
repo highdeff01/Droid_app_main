@@ -86,8 +86,10 @@ export default defineConfig(() => {
         async configureServer(server) {
           const { createServer } = await import('./server/index');
           const { pingAiEndpoint } = await import('./server/ai-status');
+          const { startAssistBridge } = await import('./server/assist-bridge');
           const apiApp = createServer();
           void pingAiEndpoint();
+          void startAssistBridge();
           server.middlewares.use((req, res, next) => {
             if (req.url?.startsWith('/api')) {
               apiApp(req as any, res as any, (err: any) => {

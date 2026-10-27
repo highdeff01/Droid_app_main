@@ -182,6 +182,7 @@ import { MainAIOmniExecutive } from "@/components/main-ai-omni-executive";
 import { InteractiveDeviceControlDeck } from "@/components/interactive-device-control-deck";
 import { GlobalSettingsModal, DEFAULT_MODEL_URL, LAN_OLLAMA_URL } from "@/components/global-settings-modal";
 import { AiStatusBadge } from "@/components/ai-status-badge";
+import { AssistBridgeBadge } from "@/components/assist-bridge-status";
 import { CoordinateCalibrationModal } from "@/components/coordinate-calibration-modal";
 import { ThreeAiAgentsSquad } from "@/components/three-ai-agents-squad";
 import { captureDelayMs, nextFailureStreak, type CaptureOutcome } from "@/lib/capture-backoff";
@@ -3122,6 +3123,7 @@ export default function Dashboard({
                       Ping Endpoint
                     </Button>
                     <AiStatusBadge refreshSignal={aiPingCount} />
+                    <AssistBridgeBadge />
                   </div>
                   <div className="flex flex-wrap gap-2 pt-1">
                     <span className="text-[11px] text-slate-400 self-center">Presets:</span>

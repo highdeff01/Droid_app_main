@@ -141,6 +141,8 @@ import { executeDeviceTask } from "./routes/execute-task";
 import { qwenVisionEngine } from "./ai-perception-engine";
 import { aiMonitorStore } from "./ai-monitor-store";
 import { readLiveFrame, setLiveFrameReader } from "./live-frame";
+import { assistBridge } from "./assist-bridge";
+import { createAssistBridgeRouter } from "./routes/assist-bridge";
 import { screenMonitor } from "./screen-monitor";
 import {
   handleGetBrowserTabs,
@@ -258,6 +260,9 @@ export function createServer() {
   app.use("/api", createApiRateLimiter(), requireApiAccess);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+  // === Assist bridge status/settings/kill switch (protected) ===
+  app.use("/api/assist-bridge", createAssistBridgeRouter(assistBridge));
 
   // === Master assistant routes (protected) ===
   app.use("/api/assistant", requireApiAccess, assistantRouter);
