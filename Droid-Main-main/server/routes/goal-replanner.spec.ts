@@ -42,17 +42,14 @@ async function replan() {
   return res;
 }
 
-describe("handleGoalReplan AI insight fallback", () => {
+describe("handleGoalReplan AI insights (Qwen only)", () => {
   const originalKey = process.env.GEMINI_API_KEY;
 
   beforeEach(() => {
     process.env.GEMINI_API_KEY = "test-gemini-key";
     sendQwenChatRequest.mockReset();
     generateContent.mockReset();
-    sendQwenChatRequest.mockResolvedValue({
-      success: true,
-      content: JSON.stringify({ summary: "Qwen: modal shifted the submit button" }),
-    });
+    generateContent.mockResolvedValue({ text: "Gemini insight" });
   });
 
   afterEach(() => {
@@ -60,41 +57,36 @@ describe("handleGoalReplan AI insight fallback", () => {
     else process.env.GEMINI_API_KEY = originalKey;
   });
 
-  it("falls back to Qwen when the configured Gemini request throws", async () => {
-    generateContent.mockRejectedValue(new Error("Gemini 503"));
+  it("uses Qwen and never calls Gemini even when GEMINI_API_KEY is set", async () => {
+    sendQwenChatRequest.mockResolvedValue({
+      success: true,
+      content: JSON.stringify({ summary: "Qwen: modal shifted the submit button", confidence: 0.7 }),
+    });
 
     const res = await replan();
 
     expect(res.body.success).toBe(true);
-    expect(generateContent).toHaveBeenCalledTimes(1);
     expect(sendQwenChatRequest).toHaveBeenCalledTimes(1);
+    expect(generateContent).not.toHaveBeenCalled();
     expect(res.body.aiInsights).toBe("Qwen: modal shifted the submit button");
   });
 
-  it("falls back to Qwen when Gemini returns no text", async () => {
-    generateContent.mockResolvedValue({ text: "" });
+  it("reports no AI insight instead of falling back to Gemini when Qwen fails", async () => {
+    sendQwenChatRequest.mockResolvedValue({ success: false, content: "", error: "connect ECONNREFUSED" });
 
     const res = await replan();
 
-    expect(sendQwenChatRequest).toHaveBeenCalledTimes(1);
-    expect(res.body.aiInsights).toBe("Qwen: modal shifted the submit button");
+    expect(res.body.success).toBe(true);
+    expect(generateContent).not.toHaveBeenCalled();
+    expect(res.body.aiInsights).toBeNull();
   });
 
-  it("uses Gemini and skips Qwen when Gemini succeeds", async () => {
-    generateContent.mockResolvedValue({ text: "Gemini insight" });
-
-    const res = await replan();
-
-    expect(res.body.aiInsights).toBe("Gemini insight");
-    expect(sendQwenChatRequest).not.toHaveBeenCalled();
-  });
-
-  it("uses Qwen directly when Gemini is not configured", async () => {
-    delete process.env.GEMINI_API_KEY;
+  it("reports no AI insight when Qwen throws", async () => {
+    sendQwenChatRequest.mockRejectedValue(new Error("timeout"));
 
     const res = await replan();
 
     expect(generateContent).not.toHaveBeenCalled();
-    expect(res.body.aiInsights).toBe("Qwen: modal shifted the submit button");
+    expect(res.body.aiInsights).toBeNull();
   });
 });

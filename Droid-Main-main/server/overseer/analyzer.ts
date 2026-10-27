@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import type { DriftMeasure, OperationStepReport } from "../../shared/overseer";
 import { buildVisionMessage, parseModelJson, sendQwenChatRequest } from "../ai-endpoint";
-import { generateVisionJson } from "../ai-gemini-service";
 import { assessmentFromModel, type StepAssessment } from "./verdict";
 import { checkupFromModel, type CheckupAssessment } from "./checkup";
 
-export type AnalyzerProvider = "qwen" | "gemini";
+/** The overseer runs on Qwen (qwen3.5:2b via the quantumclaw/Ollama chain) only. */
+export type AnalyzerProvider = "qwen";
 
 /** An answer from the vision model (value + provider), or the honest reason there is none. */
 export interface AnalyzerResult<T> {
@@ -18,11 +18,6 @@ export interface AnalyzerResult<T> {
 export interface OverseerAnalyzer {
   assessStep(image: string, step: OperationStepReport, goal: string): Promise<AnalyzerResult<StepAssessment>>;
   checkup(image: string, goal: string, elapsedSeconds: number): Promise<AnalyzerResult<CheckupAssessment>>;
-}
-
-/** Qwen (qwen3.5:2b via the Ollama chain) by default; Gemini only when explicitly selected. */
-export function selectedProvider(env: NodeJS.ProcessEnv = process.env): AnalyzerProvider {
-  return env.OVERSEER_VISION_PROVIDER === "gemini" && env.GEMINI_API_KEY ? "gemini" : "qwen";
 }
 
 function stepPrompt(step: OperationStepReport, goal: string): string {
@@ -56,20 +51,19 @@ async function askModel<T>(
   prompt: string,
   image: string,
   map: (parsed: any) => T,
-  provider: AnalyzerProvider,
 ): Promise<AnalyzerResult<T>> {
   try {
-    const parsed = provider === "gemini" ? await generateVisionJson(prompt, [image]) : await qwenJson(prompt, image);
-    return { ok: true, value: map(parsed), provider };
+    const parsed = await qwenJson(prompt, image);
+    return { ok: true, value: map(parsed), provider: "qwen" };
   } catch (err) {
     return { ok: false, reason: `Overseer vision check unavailable: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
-export function createVisionAnalyzer(provider: () => AnalyzerProvider = selectedProvider): OverseerAnalyzer {
+export function createVisionAnalyzer(): OverseerAnalyzer {
   return {
-    assessStep: (image, step, goal) => askModel(stepPrompt(step, goal), image, assessmentFromModel, provider()),
-    checkup: (image, goal, elapsed) => askModel(checkupPrompt(goal, elapsed), image, checkupFromModel, provider()),
+    assessStep: (image, step, goal) => askModel(stepPrompt(step, goal), image, assessmentFromModel),
+    checkup: (image, goal, elapsed) => askModel(checkupPrompt(goal, elapsed), image, checkupFromModel),
   };
 }
 

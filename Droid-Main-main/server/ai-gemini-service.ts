@@ -1,4 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
 import { centralLogHub } from "./log-hub";
 import {
   sendQwenChatRequest,
@@ -6,17 +5,6 @@ import {
   toBase64Image,
   parseModelJson,
 } from "./ai-endpoint";
-
-let genAIClient: GoogleGenAI | null = null;
-
-export function getGenAIClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  if (!genAIClient) {
-    genAIClient = new GoogleGenAI({ apiKey });
-  }
-  return genAIClient;
-}
 
 export interface StepVerificationResult {
   verified: boolean;
@@ -122,16 +110,6 @@ export interface ScreenMatchResult {
   simulationReason?: string;
 }
 
-function cleanBase64(imageData: string): { data: string; mimeType: string } {
-  if (imageData.startsWith("data:")) {
-    const match = imageData.match(/^data:([^;]+);base64,(.+)$/);
-    if (match) {
-      return { mimeType: match[1], data: match[2] };
-    }
-  }
-  return { mimeType: "image/jpeg", data: imageData };
-}
-
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -169,36 +147,13 @@ function unverifiedVisualDiff(targetCoords: { x: number; y: number }, reason: st
 }
 
 /**
- * Runs a vision+JSON prompt through Gemini when GEMINI_API_KEY is configured,
- * otherwise through the Qwen vision-language model, and returns the parsed
- * JSON reply.
+ * Runs a vision+JSON prompt through the Qwen vision-language model
+ * (quantumclaw by default) and returns the parsed JSON reply.
  */
 export async function generateVisionJson(
   prompt: string,
   images: string[],
 ): Promise<any> {
-  const ai = getGenAIClient();
-
-  if (ai) {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            ...images.map((imageData) => {
-              const { data, mimeType } = cleanBase64(imageData);
-              return { inlineData: { data, mimeType } };
-            }),
-            { text: prompt },
-          ],
-        },
-      ],
-    });
-
-    return parseModelJson(response.text || "");
-  }
-
   const message =
     images.length === 1
       ? buildVisionMessage(prompt, images[0])
@@ -384,9 +339,9 @@ Return a STRICT JSON response only:
       reason: `Automated recovery: ${err instanceof Error ? err.message : String(err)}`,
       obstacleType: "unresponsive",
       recommendedActions: [
-        { action: "click", x: 960, y: 540, reason: "Click center to restore active focus" },
+        { action: "wait", delayMs: 1000, reason: "Allow UI to stabilize" },
       ],
-      aiExplanation: "Generic fallback unstick sequence (AI model unavailable).",
+      aiExplanation: `AI model unavailable (${errorText(err)}); only a non-positional wait is recommended.`,
       ...simulatedMarker(`AI model unavailable: ${errorText(err)}`),
     };
   }
@@ -403,7 +358,6 @@ export async function evaluateCheckupAndCompletion(params: {
   maxSeconds?: number;
   remainingStepCount?: number;
 }): Promise<CheckupEvaluationResult> {
-  const ai = getGenAIClient();
   const {
     imageData,
     userObjective,
@@ -425,7 +379,6 @@ export async function evaluateCheckupAndCompletion(params: {
   }
 
   try {
-    const imgPart = cleanBase64(imageData);
     const prompt = `You are a Scheduled Checkup & Watchdog AI for desktop workflow automation.
 Scheduled checkup trigger:
 - User Objective: "${userObjective}"
@@ -480,14 +433,12 @@ export async function detectScreenElementsAndSteps(params: {
   objective?: string;
 }): Promise<ScreenAnalysisAndStepsResult> {
   const { imageData, screenWidth = 1920, screenHeight = 1080, objective = "Detect interactive elements and auto-generate sequence steps" } = params;
-  const ai = getGenAIClient();
 
   if (!imageData) {
     throw new Error("No screen frame supplied; capture the live screen before detecting elements.");
   }
 
   try {
-    const imgPart = cleanBase64(imageData);
     const prompt = `You are a High-Precision Computer Vision & Desktop Automation AI.
 Inspect this screen capture image carefully (${screenWidth}x${screenHeight} native viewport).
 Objective: "${objective}"
@@ -568,7 +519,6 @@ export async function compareScreensForMatch(params: {
   threshold?: number;
 }): Promise<ScreenMatchResult> {
   const { currentScreen, expectedScreen, expectedStepLabel = "Next automation step", threshold = 0.75 } = params;
-  const ai = getGenAIClient();
 
   if (!currentScreen || !expectedScreen) {
     // If either image is missing or AI is unavailable, use heuristic comparison
@@ -576,8 +526,6 @@ export async function compareScreensForMatch(params: {
   }
 
   try {
-    const curImg = cleanBase64(currentScreen);
-    const expImg = cleanBase64(expectedScreen);
 
     const prompt = `You are an Autonomous Desktop Actor & Screen State Verifier.
 Compare Image 1 (Current Live Screen) with Image 2 (Expected / Reference Screen for: "${expectedStepLabel}").
@@ -684,15 +632,12 @@ export async function detectVisualErrorsAndDifferenceMapping(params: {
     autoRepositionEnabled = true,
   } = params;
 
-  const ai = getGenAIClient();
 
   if (!expectedImage || !responseImage) {
     return unverifiedVisualDiff(targetCoords, "Both images are required; no visual diff ran.");
   }
 
   try {
-    const expClean = cleanBase64(expectedImage);
-    const respClean = cleanBase64(responseImage);
 
     const prompt = `You are an Autonomous Visual Error Detection & Difference Mapping Engine.
 Compare Image 1 (Target Reference Keyframe) with Image 2 (Post-Action Response Image captured after AI executed: "${stepName}", action: "${stepAction}" at coordinates X=${targetCoords.x}, Y=${targetCoords.y}).
@@ -768,7 +713,7 @@ export interface FileSummaryResult {
   summary: string;
   wordCount: number;
   sentenceCount: number;
-  source: "gemini" | "heuristic";
+  source: "qwen" | "heuristic";
 }
 
 /**
@@ -784,7 +729,7 @@ export async function generateFileSummary(params: {
   const nameClean = fileName.trim() || "Untitled";
 
   // Helper to ensure text meets strict constraint: 1 sentence, < 10 words (max 9 words)
-  const sanitizeSummary = (raw: string, fallbackSource: "gemini" | "heuristic"): FileSummaryResult => {
+  const sanitizeSummary = (raw: string, fallbackSource: "qwen" | "heuristic"): FileSummaryResult => {
     let text = raw
       .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "")
       .replace(/^(summary|description|file summary|file description):\s*/i, "")
@@ -817,11 +762,9 @@ export async function generateFileSummary(params: {
     };
   };
 
-  const ai = getGenAIClient();
 
-  if (ai) {
-    try {
-      const prompt = `You are an AI assistant that writes ultra-concise file descriptions.
+  try {
+    const prompt = `You are an AI assistant that writes ultra-concise file descriptions.
 Based on the file name and/or MIME type / metadata provided, generate a 1-sentence summary of the likely contents or purpose of this file:
 - File Name: "${nameClean}"
 - MIME Type: "${mimeType || "unknown"}"
@@ -833,29 +776,26 @@ CRITICAL STRICT CONSTRAINTS:
 3. Do NOT include quotation marks, formatting, prefixes like "Summary:", or bullet points.
 4. Output ONLY the single sentence.`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: prompt,
-      });
+    const response = await sendQwenChatRequest([{ role: "user", content: prompt }]);
+    if (!response.success) throw new Error(response.error || "AI model unavailable");
 
-      const outputText = response.text?.trim();
-      if (outputText) {
-        const result = sanitizeSummary(outputText, "gemini");
-        centralLogHub.addLog(
-          "AI-FileSummary",
-          "SUCCESS",
-          `Generated summary for "${nameClean}": "${result.summary}" (${result.wordCount} words)`,
-          { fileName: nameClean, wordCount: result.wordCount }
-        );
-        return result;
-      }
-    } catch (err) {
+    const outputText = response.content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    if (outputText) {
+      const result = sanitizeSummary(outputText, "qwen");
       centralLogHub.addLog(
         "AI-FileSummary",
-        "WARN",
-        `Gemini file summary fallback: ${err instanceof Error ? err.message : String(err)}`
+        "SUCCESS",
+        `Generated summary for "${nameClean}": "${result.summary}" (${result.wordCount} words)`,
+        { fileName: nameClean, wordCount: result.wordCount }
       );
+      return result;
     }
+  } catch (err) {
+    centralLogHub.addLog(
+      "AI-FileSummary",
+      "WARN",
+      `File summary model fallback: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 
   // Heuristic rule-based summary fallback (guaranteed 1 sentence, strictly < 10 words)
