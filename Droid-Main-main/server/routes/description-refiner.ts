@@ -1,17 +1,10 @@
 import { Request, Response } from "express";
-import { GoogleGenAI } from "@google/genai";
 import { sendQwenChatRequest, parseModelJson } from "../ai-endpoint";
 
-let genAiClient: GoogleGenAI | null = null;
-
-function getGenAiClient(): GoogleGenAI | null {
-  if (!process.env.GEMINI_API_KEY) {
-    return null;
-  }
-  if (!genAiClient) {
-    genAiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
-  return genAiClient;
+/** Sends one prompt to Qwen (quantumclaw by default); returns the reply text, or null when the model is unavailable. */
+async function requestQwenText(prompt: string, json: boolean): Promise<string | null> {
+  const result = await sendQwenChatRequest([{ role: "user", content: prompt }], json ? { format: "json" } : {});
+  return result.success ? result.content.trim() : null;
 }
 
 export function countWords(text: string): number {
@@ -30,7 +23,7 @@ export function ensureUnderWordLimit(text: string, limit: number = 20): { text: 
   return { text: cleaned, wordCount: countWords(cleaned) };
 }
 
-/** Shared post-processing for a parsed refine-description model reply (Gemini or Qwen). */
+/** Shared post-processing for a parsed refine-description model reply (Qwen). */
 function finalizeRefinedDescription(
   parsed: any,
   rawText: string,
@@ -38,7 +31,7 @@ function finalizeRefinedDescription(
   constraintMode: string,
   originalWordCount: number,
   originalCharCount: number,
-  source: "gemini" | "qwen",
+  source: "qwen",
 ) {
   const safeRefined = ensureUnderWordLimit(parsed.refinedDescription || rawText, wordLimit);
   const safeVariations = (Array.isArray(parsed.variations) ? parsed.variations : []).map((v: any) => {
@@ -78,11 +71,11 @@ export interface RefinedResult {
   variations: Array<{ text: string; wordCount: number; charCount: number; style: string }>;
   originalWordCount: number;
   originalCharCount: number;
-  source: "gemini" | "qwen" | "heuristic-engine";
+  source: "qwen" | "heuristic-engine";
 }
 
 /**
- * Heuristic NLP fallback to refine rough descriptions when Gemini API is offline or key is absent.
+ * Heuristic NLP fallback to refine rough descriptions when the Qwen model is unavailable.
  */
 export function heuristicRefineDescription(
   rawText: string,
@@ -193,8 +186,6 @@ export async function handleRefineDescription(req: Request, res: Response) {
     const originalWordCount = countWords(rawText);
     const originalCharCount = rawText.length;
 
-    const client = getGenAiClient();
-
     let constraintDescription = `STRICTLY UNDER ${wordLimit} WORDS`;
     if (constraintMode === "twitter_brevity" || wordLimit <= 12) {
       constraintDescription = `STRICTLY UNDER ${wordLimit} WORDS (Twitter/X-style extreme brevity, punchy and shareable, ideally under 100 characters)`;
@@ -204,9 +195,8 @@ export async function handleRefineDescription(req: Request, res: Response) {
       constraintDescription = `STRICTLY UNDER ${wordLimit} WORDS (Hero Tagline & Subtitle, ultra-concise hook)`;
     }
 
-    if (client) {
-      try {
-        const prompt = `You are an elite product copywriter, App Store copy strategist, and social media copy editor.
+    try {
+      const reply = await requestQwenText(`You are an elite product copywriter, App Store copy strategist, and social media copy editor.
 Rewrite the following rough app description into a punchy, crystal-clear description that is ${constraintDescription}.
 It MUST maintain the application's core value propositions, target audience, and primary functionality without marketing fluff.
 
@@ -231,79 +221,15 @@ Respond ONLY with a valid JSON object matching this exact TypeScript structure:
     { "text": "string (strictly <= ${wordLimit} words)", "style": "Action-Driven" },
     { "text": "string (strictly <= ${wordLimit} words)", "style": "Minimalist" }
   ]
-}`;
-
-        const response = await client.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.3,
-          },
-        });
-
-        const responseText = response.text?.trim();
-        if (responseText) {
-          const parsed = JSON.parse(responseText);
-          const safeRefined = ensureUnderWordLimit(parsed.refinedDescription || rawText, wordLimit);
-          const safeVariations = (Array.isArray(parsed.variations) ? parsed.variations : []).map((v: any) => {
-            const safe = ensureUnderWordLimit(v.text || "", wordLimit);
-            return {
-              text: safe.text,
-              wordCount: safe.wordCount,
-              charCount: safe.text.length,
-              style: v.style || "Alternative",
-            };
-          });
-
-          return res.json(
-            finalizeRefinedDescription(parsed, rawText, wordLimit, constraintMode, originalWordCount, originalCharCount, "gemini"),
-          );
-        }
-      } catch (geminiError) {
-        console.warn("[Description Refiner] Gemini API error, falling back to heuristic engine:", geminiError);
-      }
-    } else {
-      try {
-        const qwenPrompt = `You are an elite product copywriter, App Store copy strategist, and social media copy editor.
-Rewrite the following rough app description into a punchy, crystal-clear description that is ${constraintDescription}.
-It MUST maintain the application's core value propositions, target audience, and primary functionality without marketing fluff.
-
-Rough app description:
-"${rawText}"
-
-Tone: ${tone}
-Constraint Mode: ${constraintMode}
-Max Word Limit: ${wordLimit}
-
-Strict constraints:
-1. Output MUST be strictly under ${wordLimit} words. NEVER exceed ${wordLimit} words.
-2. Maintain core value propositions accurately.
-3. Eliminate fillers like "this app allows you to" or "a tool that helps".
-
-Respond ONLY with a valid JSON object matching this exact TypeScript structure:
-{
-  "refinedDescription": "string (strictly <= ${wordLimit} words)",
-  "keyPropositions": ["string", "string"],
-  "rationale": "string (brief note on how constraint and value were balanced)",
-  "variations": [
-    { "text": "string (strictly <= ${wordLimit} words)", "style": "Action-Driven" },
-    { "text": "string (strictly <= ${wordLimit} words)", "style": "Minimalist" }
-  ]
-}`;
-        const qwenResult = await sendQwenChatRequest(
-          [{ role: "user", content: qwenPrompt }],
-          { format: "json" },
+}`, true);
+      if (reply) {
+        const parsed = parseModelJson<any>(reply);
+        return res.json(
+          finalizeRefinedDescription(parsed, rawText, wordLimit, constraintMode, originalWordCount, originalCharCount, "qwen"),
         );
-        if (qwenResult.success) {
-          const parsed = parseModelJson<any>(qwenResult.content);
-          return res.json(
-            finalizeRefinedDescription(parsed, rawText, wordLimit, constraintMode, originalWordCount, originalCharCount, "qwen"),
-          );
-        }
-      } catch (qwenError) {
-        console.warn("[Description Refiner] Qwen error, falling back to heuristic engine:", qwenError);
       }
+    } catch (qwenError) {
+      console.warn("[Description Refiner] Qwen error, falling back to heuristic engine:", qwenError);
     }
 
     // Heuristic fallback
@@ -400,10 +326,8 @@ export async function handleBulkGenerateNamesDescriptions(req: Request, res: Res
     const activeKeywords = keywordList.slice(0, 25);
     const wordLimit = Math.min(Math.max(Number(targetWords) || 18, 4), 80);
 
-    const client = getGenAiClient();
-    if (client) {
-      try {
-        const prompt = `You are a world-class product strategist, creative naming director, and App Store copywriter.
+    try {
+      const prompt = `You are a world-class product strategist, creative naming director, and App Store copywriter.
 Generate high-converting, professional Product Name and Description pairs for each of the following ${activeKeywords.length} topics/keywords:
 
 ${activeKeywords.map((k, idx) => `${idx + 1}. "${k}"`).join("\n")}
@@ -431,48 +355,38 @@ Respond ONLY with a valid JSON array of objects matching this exact structure:
   }
 ]`;
 
-        const aiResponse = await client.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.4,
-          },
-        });
-
-        const text = aiResponse.text?.trim();
-        if (text) {
-          const parsed = JSON.parse(text);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const results: BulkItemResult[] = parsed.map((item: any, idx: number) => {
-              const bounded = ensureUnderWordLimit(item.description || item.keyword, wordLimit);
-              return {
-                id: `bulk_${Date.now()}_${idx}`,
-                keyword: item.keyword || activeKeywords[idx] || `Item #${idx + 1}`,
-                name: item.name || `Smart ${activeKeywords[idx]}`,
-                description: bounded.text,
-                wordCount: bounded.wordCount,
-                charCount: bounded.text.length,
-                keyPropositions: Array.isArray(item.keyPropositions) ? item.keyPropositions : ["Core Automation", "Fast Integration"],
-                constraintMode,
-                targetWords: wordLimit,
-                category: item.category || "General Utility",
-              };
-            });
-
-            return res.json({
-              success: true,
-              total: results.length,
-              source: "gemini-2.5-flash",
+      const text = await requestQwenText(prompt, true);
+      if (text) {
+        const parsed = parseModelJson<any>(text);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const results: BulkItemResult[] = parsed.map((item: any, idx: number) => {
+            const bounded = ensureUnderWordLimit(item.description || item.keyword, wordLimit);
+            return {
+              id: `bulk_${Date.now()}_${idx}`,
+              keyword: item.keyword || activeKeywords[idx] || `Item #${idx + 1}`,
+              name: item.name || `Smart ${activeKeywords[idx]}`,
+              description: bounded.text,
+              wordCount: bounded.wordCount,
+              charCount: bounded.text.length,
+              keyPropositions: Array.isArray(item.keyPropositions) ? item.keyPropositions : ["Core Automation", "Fast Integration"],
               constraintMode,
               targetWords: wordLimit,
-              items: results,
-            });
-          }
+              category: item.category || "General Utility",
+            };
+          });
+
+          return res.json({
+            success: true,
+            total: results.length,
+            source: "qwen",
+            constraintMode,
+            targetWords: wordLimit,
+            items: results,
+          });
         }
-      } catch (geminiError) {
-        console.warn("[Bulk Generator] Gemini API error, falling back to heuristic engine:", geminiError);
       }
+    } catch (qwenError) {
+      console.warn("[Bulk Generator] Qwen error, falling back to heuristic engine:", qwenError);
     }
 
     // Heuristic Bulk Generation Fallback
@@ -538,10 +452,8 @@ export async function handleGenerateFileSummary(req: Request, res: Response) {
     const safeName = String(fileName || "Unnamed file").trim();
     const safeMime = String(mimeType || "application/octet-stream").trim();
 
-    const client = getGenAiClient();
-    if (client) {
-      try {
-        const prompt = `You are a concise file summary generator.
+    try {
+      const prompt = `You are a concise file summary generator.
 Write a 1-sentence summary of what this file is or contains based on its file name and type.
 
 File Name: "${safeName}"
@@ -554,27 +466,18 @@ STRICT CONSTRAINTS:
 3. Do NOT include phrases like "This file is" or quotes.
 4. Output ONLY the plain text sentence.`;
 
-        const response = await client.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: prompt,
-          config: {
-            temperature: 0.2,
-          },
+      const rawText = (await requestQwenText(prompt, false))?.replace(/^["']|["']$/g, "") || "";
+      if (rawText) {
+        const bounded = ensureUnderWordLimit(rawText, 9);
+        return res.json({
+          success: true,
+          summary: bounded.text,
+          wordCount: bounded.wordCount,
+          source: "qwen",
         });
-
-        const rawText = response.text?.trim()?.replace(/^["']|["']$/g, "") || "";
-        if (rawText) {
-          const bounded = ensureUnderWordLimit(rawText, 9);
-          return res.json({
-            success: true,
-            summary: bounded.text,
-            wordCount: bounded.wordCount,
-            source: "gemini",
-          });
-        }
-      } catch (geminiError) {
-        console.warn("[File Summary] Gemini error, falling back to heuristic:", geminiError);
       }
+    } catch (qwenError) {
+      console.warn("[File Summary] Qwen error, falling back to heuristic:", qwenError);
     }
 
     // Heuristic fallback

@@ -1,5 +1,4 @@
 import { RequestHandler } from "express";
-import { GoogleGenAI } from "@google/genai";
 import { sendQwenChatRequest, parseModelJson } from "../ai-endpoint";
 
 interface WorkflowAction {
@@ -61,9 +60,6 @@ const learnedWorkflowsStore: LearnedWorkflow[] = [
     executionCount: 12
   }
 ];
-
-const apiKey = process.env.GEMINI_API_KEY || "";
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 function buildLearnWorkflowPrompt(historySteps: any[], liveContext: string): string {
   return `You are an Autonomous AI Workflow Learning Engine.
@@ -133,39 +129,21 @@ export const handleLearnWorkflows: RequestHandler = async (req, res) => {
 
     let synthesizedWorkflow: LearnedWorkflow | null = null;
 
-    if (ai) {
-      try {
-        const prompt = buildLearnWorkflowPrompt(historySteps, liveContext);
-        const model = "gemini-2.5-flash";
-        const response = await ai.models.generateContent({
-          model,
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          config: { responseMimeType: "application/json" }
-        });
-
-        const raw = response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-        synthesizedWorkflow = buildSynthesizedWorkflow(JSON.parse(raw));
+    try {
+      const prompt = buildLearnWorkflowPrompt(historySteps, liveContext);
+      const qwenResult = await sendQwenChatRequest(
+        [{ role: "user", content: prompt }],
+        { format: "json" },
+      );
+      if (qwenResult.success) {
+        synthesizedWorkflow = buildSynthesizedWorkflow(parseModelJson(qwenResult.content));
         if (synthesizedWorkflow) learnedWorkflowsStore.unshift(synthesizedWorkflow);
-      } catch (geminiErr) {
-        console.warn("Gemini pattern learning error, falling back to heuristic clustering:", geminiErr);
       }
-    } else {
-      try {
-        const prompt = buildLearnWorkflowPrompt(historySteps, liveContext);
-        const qwenResult = await sendQwenChatRequest(
-          [{ role: "user", content: prompt }],
-          { format: "json" },
-        );
-        if (qwenResult.success) {
-          synthesizedWorkflow = buildSynthesizedWorkflow(parseModelJson(qwenResult.content));
-          if (synthesizedWorkflow) learnedWorkflowsStore.unshift(synthesizedWorkflow);
-        }
-      } catch (qwenErr) {
-        console.warn("Qwen pattern learning error, falling back to heuristic clustering:", qwenErr);
-      }
+    } catch (qwenErr) {
+      console.warn("Qwen pattern learning error, falling back to heuristic clustering:", qwenErr);
     }
 
-    // Heuristic fallback if Gemini not available or failed
+    // Heuristic fallback when Qwen is unavailable or failed
     if (!synthesizedWorkflow && historySteps.length >= 2) {
       synthesizedWorkflow = {
         id: `lw_heur_${Date.now()}`,
