@@ -333,7 +333,7 @@ export function AutoActorEngineStudio({
                   <h4 className="text-xs font-bold text-slate-100 font-mono flex items-center gap-2">
                     <span>
                       {comparisonResult.matched
-                        ? "Screen Match Confirmed by Gemini Vision"
+                        ? "Screen Match Confirmed by Qwen Vision"
                         : "Visual Discrepancy / Below Match Threshold"}
                     </span>
                     <Badge

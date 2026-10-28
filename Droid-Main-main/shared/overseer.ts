@@ -90,7 +90,7 @@ export interface OverseerVerdict {
   evidenceImage?: string;
   beforeImage?: string;
   drift?: DriftMeasure;
-  provider: "qwen" | "gemini" | "none";
+  provider: "qwen" | "none";
   at: number;
 }
 

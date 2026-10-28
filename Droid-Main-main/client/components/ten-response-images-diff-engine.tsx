@@ -720,7 +720,7 @@ export function TenResponseImagesDiffEngine({
               </div>
             ) : (
               <div className="p-4 text-center text-xs font-mono text-slate-500 bg-slate-900/50 rounded-lg border border-dashed border-slate-800">
-                Click "Re-Analyze Diff & Drift" to run Gemini vision difference mapping and automatic coordinate auto-positioning.
+                Click "Re-Analyze Diff & Drift" to run Qwen vision difference mapping and automatic coordinate auto-positioning.
               </div>
             )}
           </div>

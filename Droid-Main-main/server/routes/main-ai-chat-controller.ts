@@ -1,7 +1,6 @@
 import { RequestHandler, Router } from "express";
-import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { centralLogHub } from "../log-hub";
-import { sendQwenChatRequest } from "../ai-endpoint";
+import { sendQwenChatRequest, parseModelJson, type QwenChatMessage } from "../ai-endpoint";
 import { aiMonitorStore } from "../ai-monitor-store";
 import { dispatchActionToPython } from "./dual-ai-pipeline";
 import { queueMobileAction, executeAdbCommand, getRecentMobileFrames } from "./mobile-stream";
@@ -87,137 +86,144 @@ chatSessions.set(DEFAULT_SESSION_ID, {
 
 export const mainAiChatRouter = Router();
 
-// Function calling tool definitions for Gemini 3.8 Flash
-const clickTool: FunctionDeclaration = {
+/** A JSON-schema tool declaration; the catalog is given to Qwen, which answers with tool calls by name. */
+interface ToolDeclaration {
+  name: string;
+  description: string;
+  parameters: { type: "object"; properties: Record<string, any>; required?: string[] };
+}
+
+// Tool catalog the Qwen copilot may call
+const clickTool: ToolDeclaration = {
   name: "execute_click",
   description: "Clicks or taps a coordinate on the desktop or mobile screen.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      x: { type: Type.NUMBER, description: "X coordinate (0-1920 on desktop, or normalized 0-1)" },
-      y: { type: Type.NUMBER, description: "Y coordinate (0-1080 on desktop, or normalized 0-1)" },
-      description: { type: Type.STRING, description: "Human description of what is being clicked" },
-      device: { type: Type.STRING, description: "Target device: 'desktop' or 'android'" },
+      x: { type: "number", description: "X coordinate (0-1920 on desktop, or normalized 0-1)" },
+      y: { type: "number", description: "Y coordinate (0-1080 on desktop, or normalized 0-1)" },
+      description: { type: "string", description: "Human description of what is being clicked" },
+      device: { type: "string", description: "Target device: 'desktop' or 'android'" },
     },
     required: ["x", "y"],
   },
 };
 
-const doubleClickTool: FunctionDeclaration = {
+const doubleClickTool: ToolDeclaration = {
   name: "execute_double_click",
   description: "Double clicks at a coordinate on the screen.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      x: { type: Type.NUMBER, description: "X coordinate" },
-      y: { type: Type.NUMBER, description: "Y coordinate" },
-      description: { type: Type.STRING, description: "Description of the double click action" },
+      x: { type: "number", description: "X coordinate" },
+      y: { type: "number", description: "Y coordinate" },
+      description: { type: "string", description: "Description of the double click action" },
     },
     required: ["x", "y"],
   },
 };
 
-const typeTool: FunctionDeclaration = {
+const typeTool: ToolDeclaration = {
   name: "execute_type",
   description: "Types text into the active screen or focuses a coordinate first.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      text: { type: Type.STRING, description: "The text string to type" },
-      x: { type: Type.NUMBER, description: "Optional X coordinate to click first to focus" },
-      y: { type: Type.NUMBER, description: "Optional Y coordinate to click first to focus" },
-      description: { type: Type.STRING, description: "Description of the typing task" },
+      text: { type: "string", description: "The text string to type" },
+      x: { type: "number", description: "Optional X coordinate to click first to focus" },
+      y: { type: "number", description: "Optional Y coordinate to click first to focus" },
+      description: { type: "string", description: "Description of the typing task" },
     },
     required: ["text"],
   },
 };
 
-const keyTool: FunctionDeclaration = {
+const keyTool: ToolDeclaration = {
   name: "execute_key",
   description: "Dispatches a keyboard or mobile hardware key event (HOME, BACK, APPS, ENTER, ESCAPE, TAB, etc.).",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
       key: {
-        type: Type.STRING,
+        type: "string",
         description: "Key name: 'HOME' (minimizes phone app), 'BACK', 'APPS' (recent apps), 'ENTER', 'ESCAPE', 'TAB', 'SPACE', 'VOLUME_UP', 'VOLUME_DOWN'",
       },
-      description: { type: Type.STRING, description: "Purpose of the key press" },
+      description: { type: "string", description: "Purpose of the key press" },
     },
     required: ["key"],
   },
 };
 
-const swipeTool: FunctionDeclaration = {
+const swipeTool: ToolDeclaration = {
   name: "execute_swipe",
   description: "Performs a swipe or drag gesture between coordinates on mobile or desktop.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      direction: { type: Type.STRING, description: "'up', 'down', 'left', or 'right'" },
-      x1: { type: Type.NUMBER, description: "Starting X coordinate" },
-      y1: { type: Type.NUMBER, description: "Starting Y coordinate" },
-      x2: { type: Type.NUMBER, description: "Ending X coordinate" },
-      y2: { type: Type.NUMBER, description: "Ending Y coordinate" },
-      durationMs: { type: Type.NUMBER, description: "Duration in milliseconds (default 300)" },
-      description: { type: Type.STRING, description: "Purpose of swipe" },
+      direction: { type: "string", description: "'up', 'down', 'left', or 'right'" },
+      x1: { type: "number", description: "Starting X coordinate" },
+      y1: { type: "number", description: "Starting Y coordinate" },
+      x2: { type: "number", description: "Ending X coordinate" },
+      y2: { type: "number", description: "Ending Y coordinate" },
+      durationMs: { type: "number", description: "Duration in milliseconds (default 300)" },
+      description: { type: "string", description: "Purpose of swipe" },
     },
   },
 };
 
-const openAppTool: FunctionDeclaration = {
+const openAppTool: ToolDeclaration = {
   name: "open_app",
   description: "Opens an application on the connected mobile or desktop system.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      package: { type: Type.STRING, description: "Android package name (e.g. 'com.android.chrome', 'com.android.settings')" },
-      appName: { type: Type.STRING, description: "Friendly application name (e.g. 'Google Chrome', 'Settings')" },
-      appUrl: { type: Type.STRING, description: "Optional deep link or URL" },
+      package: { type: "string", description: "Android package name (e.g. 'com.android.chrome', 'com.android.settings')" },
+      appName: { type: "string", description: "Friendly application name (e.g. 'Google Chrome', 'Settings')" },
+      appUrl: { type: "string", description: "Optional deep link or URL" },
     },
     required: ["appName"],
   },
 };
 
-const switchTabTool: FunctionDeclaration = {
+const switchTabTool: ToolDeclaration = {
   name: "switch_tab",
   description: "Switches the dashboard view to any specified tab.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
       tabId: {
-        type: Type.STRING,
+        type: "string",
         description:
           "Target tab ID: 'screen' (Live Screen HUD), 'movement' (Movement Mode), 'typing-calc' (Typing), 'dual-ai' (Dual-AI Pipeline), 'ai-monitor' (AI Monitor), 'scenarios' (Scenarios), 'code-editor' (Code Editor), 'drag-drop' (Drag-Drop), 'settings' (Settings), 'logs' (Logs)",
       },
-      reason: { type: Type.STRING, description: "Why the tab is being switched" },
+      reason: { type: "string", description: "Why the tab is being switched" },
     },
     required: ["tabId"],
   },
 };
 
-const createWorkflowTool: FunctionDeclaration = {
+const createWorkflowTool: ToolDeclaration = {
   name: "create_workflow",
   description: "Creates and saves an executable multi-step automation workflow or macro.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      name: { type: Type.STRING, description: "Name of the workflow" },
-      description: { type: Type.STRING, description: "Workflow goal description" },
-      category: { type: Type.STRING, description: "Category (e.g. 'Productivity', 'Navigation', 'Testing', 'Social')" },
+      name: { type: "string", description: "Name of the workflow" },
+      description: { type: "string", description: "Workflow goal description" },
+      category: { type: "string", description: "Category (e.g. 'Productivity', 'Navigation', 'Testing', 'Social')" },
       steps: {
-        type: Type.ARRAY,
+        type: "array",
         description: "List of sequential action steps",
         items: {
-          type: Type.OBJECT,
+          type: "object",
           properties: {
-            name: { type: Type.STRING, description: "Step name" },
-            action: { type: Type.STRING, description: "Action type: 'click', 'double_click', 'type', 'key', 'swipe', 'wait'" },
-            x: { type: Type.NUMBER, description: "X coordinate (1-1920)" },
-            y: { type: Type.NUMBER, description: "Y coordinate (1-1080)" },
-            text: { type: Type.STRING, description: "Text to type if action is type" },
-            key: { type: Type.STRING, description: "Key name if action is key" },
-            delayMs: { type: Type.NUMBER, description: "Delay before next step in ms (default 400)" },
+            name: { type: "string", description: "Step name" },
+            action: { type: "string", description: "Action type: 'click', 'double_click', 'type', 'key', 'swipe', 'wait'" },
+            x: { type: "number", description: "X coordinate (1-1920)" },
+            y: { type: "number", description: "Y coordinate (1-1080)" },
+            text: { type: "string", description: "Text to type if action is type" },
+            key: { type: "string", description: "Key name if action is key" },
+            delayMs: { type: "number", description: "Delay before next step in ms (default 400)" },
           },
           required: ["name", "action"],
         },
@@ -227,123 +233,123 @@ const createWorkflowTool: FunctionDeclaration = {
   },
 };
 
-const adjustSettingsTool: FunctionDeclaration = {
+const adjustSettingsTool: ToolDeclaration = {
   name: "adjust_system_settings",
   description: "Adjusts automation engine preferences, drift, execution speed, or active target device.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      targetDevice: { type: Type.STRING, description: "'desktop' or 'android'" },
-      executionSpeedMs: { type: Type.NUMBER, description: "Speed in milliseconds (100-2000)" },
-      driftPx: { type: Type.NUMBER, description: "Humanized mouse drift in pixels (0-50)" },
-      movementMode: { type: Type.STRING, description: "'exact', 'variation', or 'live'" },
-      antiLoopEnabled: { type: Type.BOOLEAN, description: "Anti-screen loop tunnel detection" },
+      targetDevice: { type: "string", description: "'desktop' or 'android'" },
+      executionSpeedMs: { type: "number", description: "Speed in milliseconds (100-2000)" },
+      driftPx: { type: "number", description: "Humanized mouse drift in pixels (0-50)" },
+      movementMode: { type: "string", description: "'exact', 'variation', or 'live'" },
+      antiLoopEnabled: { type: "boolean", description: "Anti-screen loop tunnel detection" },
     },
   },
 };
 
-const analyzeScreenTool: FunctionDeclaration = {
+const analyzeScreenTool: ToolDeclaration = {
   name: "analyze_screen",
   description: "Inspects and grounds current screen visual elements, finding buttons, inputs, icons, and text.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      objective: { type: Type.STRING, description: "What to look for or detect on the screen" },
+      objective: { type: "string", description: "What to look for or detect on the screen" },
     },
   },
 };
 
-const createWorkflowFromHistoryTool: FunctionDeclaration = {
+const createWorkflowFromHistoryTool: ToolDeclaration = {
   name: "create_workflow_from_history",
   description: "Assembles and creates a robust workflow from the user's recent screenshot history and action logs, attaching AI-chosen keyframe screenshots to each step, with coordinates, typing text, OCR anchors, and strategy.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      name: { type: Type.STRING, description: "Name of the workflow" },
-      description: { type: Type.STRING, description: "Strategy and objective description" },
-      lookbackMinutes: { type: Type.NUMBER, description: "How many minutes of screenshot and action history to review (default 15)" },
-      repeatCount: { type: Type.NUMBER, description: "How many times this workflow is intended to repeat (default 1)" },
-      adTolerance: { type: Type.BOOLEAN, description: "Whether to auto-dismiss unexpected ads, modals, or banners" },
+      name: { type: "string", description: "Name of the workflow" },
+      description: { type: "string", description: "Strategy and objective description" },
+      lookbackMinutes: { type: "number", description: "How many minutes of screenshot and action history to review (default 15)" },
+      repeatCount: { type: "number", description: "How many times this workflow is intended to repeat (default 1)" },
+      adTolerance: { type: "boolean", description: "Whether to auto-dismiss unexpected ads, modals, or banners" },
     },
     required: ["name"],
   },
 };
 
-const repeatWorkflowTool: FunctionDeclaration = {
+const repeatWorkflowTool: ToolDeclaration = {
   name: "repeat_workflow",
   description: "Executes a workflow repeating X times, with intelligent adaptation for slight changes in screenshots like ads, changing dates/times, or element repositioning.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      workflowName: { type: Type.STRING, description: "Name or identifier of workflow to run" },
-      repeatCount: { type: Type.NUMBER, description: "Number of cycles to repeat (1-50)" },
-      adTolerance: { type: Type.BOOLEAN, description: "Auto-detect and close ads/popups during execution" },
-      allowDriftRecalibration: { type: Type.BOOLEAN, description: "Auto-recalibrate coordinates if elements shifted" },
+      workflowName: { type: "string", description: "Name or identifier of workflow to run" },
+      repeatCount: { type: "number", description: "Number of cycles to repeat (1-50)" },
+      adTolerance: { type: "boolean", description: "Auto-detect and close ads/popups during execution" },
+      allowDriftRecalibration: { type: "boolean", description: "Auto-recalibrate coordinates if elements shifted" },
     },
     required: ["repeatCount"],
   },
 };
 
-const scheduleFollowupTool: FunctionDeclaration = {
+const scheduleFollowupTool: ToolDeclaration = {
   name: "schedule_followup_and_wait",
   description: "Schedules a continuation, followup action, or wait condition after a specified duration or event.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      delaySeconds: { type: Type.NUMBER, description: "Wait duration in seconds before followup" },
-      actionDescription: { type: Type.STRING, description: "What action or goal to execute on followup" },
-      note: { type: Type.STRING, description: "Note or context to preserve for followup" },
+      delaySeconds: { type: "number", description: "Wait duration in seconds before followup" },
+      actionDescription: { type: "string", description: "What action or goal to execute on followup" },
+      note: { type: "string", description: "Note or context to preserve for followup" },
     },
     required: ["delaySeconds", "actionDescription"],
   },
 };
 
-const takeNoteTool: FunctionDeclaration = {
+const takeNoteTool: ToolDeclaration = {
   name: "take_note",
   description: "Takes and saves persistent notes, observations, strategies, or reminders for user workflows.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      title: { type: Type.STRING, description: "Title of the note" },
-      content: { type: Type.STRING, description: "Detailed note content" },
-      category: { type: Type.STRING, description: "'observation', 'habit', 'strategy', 'followup', or 'error_recovery'" },
+      title: { type: "string", description: "Title of the note" },
+      content: { type: "string", description: "Detailed note content" },
+      category: { type: "string", description: "'observation', 'habit', 'strategy', 'followup', or 'error_recovery'" },
     },
     required: ["title", "content"],
   },
 };
 
-const readNotesTool: FunctionDeclaration = {
+const readNotesTool: ToolDeclaration = {
   name: "read_notes",
   description: "Retrieves stored notes, observations, and strategy logs.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      category: { type: Type.STRING, description: "Optional category filter" },
+      category: { type: "string", description: "Optional category filter" },
     },
   },
 };
 
-const dismissAdTool: FunctionDeclaration = {
+const dismissAdTool: ToolDeclaration = {
   name: "dismiss_ad_or_popup",
   description: "Detects and dismisses intrusive ads, cookie banners, promo dialogs, or unexpected overlay scrims.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {
-      reason: { type: Type.STRING, description: "Reason for dismissal" },
+      reason: { type: "string", description: "Reason for dismissal" },
     },
   },
 };
 
-const getUserHabitsAndMethodsTool: FunctionDeclaration = {
+const getUserHabitsAndMethodsTool: ToolDeclaration = {
   name: "get_user_habits_and_methods",
   description: "Retrieves the user's profiled app usage habits, repetitive action patterns, and best working methods.",
   parameters: {
-    type: Type.OBJECT,
+    type: "object",
     properties: {},
   },
 };
 
-const allTools = [
+const allTools: ToolDeclaration[] = [
   clickTool,
   doubleClickTool,
   typeTool,
@@ -362,6 +368,37 @@ const allTools = [
   adjustSettingsTool,
   analyzeScreenTool,
 ];
+
+/** Qwen's answer to a chat turn: the reply text plus the tools it chose to call. */
+interface QwenToolPlan {
+  reply: string;
+  toolCalls: Array<{ name: string; args: Record<string, any> }>;
+}
+
+const TOOL_NAMES = new Set(allTools.map((t) => t.name));
+
+/** Asks Qwen (quantumclaw by default) to pick tools from the catalog as JSON; null when the model is unavailable or its reply is unusable. */
+async function requestQwenToolPlan(systemInstruction: string, history: ChatMessage[]): Promise<QwenToolPlan | null> {
+  const catalog = `Available tools (JSON schema):\n${JSON.stringify(allTools)}\n\nRespond ONLY with JSON: {"reply":"Markdown answer for the user","toolCalls":[{"name":"tool_name","args":{}}]}. Use an empty toolCalls array when no action is needed.`;
+  const messages: QwenChatMessage[] = [
+    { role: "system", content: `${systemInstruction}\n\n${catalog}` },
+    ...history.map((m) => ({ role: m.role === "assistant" ? ("assistant" as const) : ("user" as const), content: m.content })),
+  ];
+  try {
+    const result = await sendQwenChatRequest(messages, { format: "json" });
+    if (!result.success) return null;
+    const parsed = parseModelJson<any>(result.content);
+    const toolCalls = (Array.isArray(parsed?.toolCalls) ? parsed.toolCalls : [])
+      .filter((c: any) => c && TOOL_NAMES.has(c.name))
+      .map((c: any) => ({ name: String(c.name), args: c.args && typeof c.args === "object" ? c.args : {} }));
+    const reply = typeof parsed?.reply === "string" ? parsed.reply.trim() : "";
+    if (!reply && toolCalls.length === 0) return null;
+    return { reply, toolCalls };
+  } catch (err) {
+    console.warn("[MainAiChat] Qwen tool planning failed, using intent parser:", err);
+    return null;
+  }
+}
 
 // Helper to execute tools
 async function executeToolCall(name: string, args: any, currentScreenSnapshot?: string): Promise<{ result: any; extra?: any }> {
@@ -990,23 +1027,12 @@ mainAiChatRouter.post("/api/ai/main-chat/message", async (req, res) => {
     session.messages.push(userMsg);
     session.updatedAt = Date.now();
 
-    const apiKey = process.env.GEMINI_API_KEY;
     const executedInvocations: any[] = [];
     let createdWorkflowData: any = null;
     let navTarget: string | undefined = undefined;
     let assistantReply = "";
 
-    if (apiKey) {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build",
-          },
-        },
-      });
-
-      const systemInstruction = `You are the executive Main AI Copilot & Autonomous Automation Specialist for a Unified Screen, Mobile Device & Vision Platform.
+    const systemInstruction = `You are the executive Main AI Copilot & Autonomous Automation Specialist for a Unified Screen, Mobile Device & Vision Platform.
 You have direct control over:
 1. Live Desktop & Mobile streams (with real user click, mouse navigation, and keystroke typing)
 2. Hardware input drivers (PyAutoGUI, Android ADB, Mouse Drift & Humanized Splines)
@@ -1023,7 +1049,7 @@ Current Context:
 - Has Screen Snapshot: ${currentScreenSnapshot ? "YES" : "NO"}
 
 Operational Principles & Instructions:
-- Always call the appropriate tool to execute actions immediately.
+- Always list the appropriate tool in toolCalls to execute actions immediately.
 - When asked to create a workflow from user actions, screenshot history, or recent tasks, ALWAYS call 'create_workflow_from_history'. It looks up the user's recent screenshot history, matches clicks/typing/navigation, and attaches the AI-selected screenshots directly to each step so the user has visual proof of each step!
 - When asked to repeat a workflow X times, call 'repeat_workflow'. Ensure adTolerance is enabled to auto-dismiss ads/popups, and handle slight screenshot changes (date/time changes, repositioned buttons) via fuzzy OCR anchors.
 - When waiting or scheduling followups, call 'schedule_followup_and_wait' and save context with 'take_note'.
@@ -1031,70 +1057,22 @@ Operational Principles & Instructions:
 - If asked to minimize the phone app or go home on mobile, call 'execute_key' with key="HOME".
 - Format your response with clean Markdown, bold highlights, bullet points, and execution summaries.`;
 
-      // Build recent conversation turns for context
-      const historyContents: any[] = session.messages.slice(-8).map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      }));
-
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: historyContents,
-          config: {
-            systemInstruction,
-            tools: [{ functionDeclarations: allTools }],
-          },
+    const plan = await requestQwenToolPlan(systemInstruction, session.messages.slice(-8));
+    if (plan) {
+      for (const call of plan.toolCalls) {
+        const toolExec = await executeToolCall(call.name, call.args, currentScreenSnapshot);
+        executedInvocations.push({
+          name: call.name,
+          args: call.args,
+          result: toolExec.result,
+          status: toolExec.result.success ? "success" : "error",
         });
-
-        const functionCalls = response.functionCalls;
-
-        if (functionCalls && functionCalls.length > 0) {
-          for (const call of functionCalls) {
-            const toolExec = await executeToolCall(call.name, call.args, currentScreenSnapshot);
-            executedInvocations.push({
-              name: call.name,
-              args: call.args,
-              result: toolExec.result,
-              status: toolExec.result.success ? "success" : "error",
-            });
-
-            if (toolExec.extra?.createdWorkflow) {
-              createdWorkflowData = toolExec.extra.createdWorkflow;
-            }
-            if (toolExec.extra?.navigationTarget) {
-              navTarget = toolExec.extra.navigationTarget;
-            }
-          }
-
-          // Follow-up generation with tool execution summary
-          const toolSummaryText = executedInvocations
-            .map((inv) => `Tool [${inv.name}]: ${JSON.stringify(inv.result)}`)
-            .join("\n");
-
-          const secondPass = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: [
-              ...historyContents,
-              {
-                role: "user",
-                parts: [{ text: `The tools executed with the following results:\n${toolSummaryText}\nPlease summarize the results and provide next steps to the user.` }],
-              },
-            ],
-            config: { systemInstruction },
-          });
-
-          assistantReply = secondPass.text || `Executed ${executedInvocations.length} action(s) successfully.`;
-        } else {
-          assistantReply = response.text || "Command processed.";
-        }
-      } catch (geminiError: any) {
-        console.error("Gemini live execution error:", geminiError);
-        // Fallback to intelligent deterministic parser
-        assistantReply = await fallbackIntentExecution(message, executedInvocations, (wf) => (createdWorkflowData = wf), (nav) => (navTarget = nav), currentScreenSnapshot);
+        if (toolExec.extra?.createdWorkflow) createdWorkflowData = toolExec.extra.createdWorkflow;
+        if (toolExec.extra?.navigationTarget) navTarget = toolExec.extra.navigationTarget;
       }
+      assistantReply = plan.reply || (executedInvocations.length > 0 ? `Executed ${executedInvocations.length} action(s).` : "Command processed.");
     } else {
-      // Deterministic fallback when API key is not present
+      // Deterministic intent parser when Qwen is unreachable or answers with no usable JSON
       assistantReply = await fallbackIntentExecution(message, executedInvocations, (wf) => (createdWorkflowData = wf), (nav) => (navTarget = nav), currentScreenSnapshot);
     }
 

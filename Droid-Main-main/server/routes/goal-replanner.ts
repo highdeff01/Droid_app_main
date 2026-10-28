@@ -1,5 +1,4 @@
 import { Request, Response } from "express";
-import { GoogleGenAI } from "@google/genai";
 import { sendQwenChatRequest, buildVisionMessage, parseModelJson } from "../ai-endpoint";
 import type { ReplanResult, ReplanStepItem } from "../../shared/goal-replan";
 
@@ -93,30 +92,6 @@ interface ReplanInsight {
   confidence: number | null;
 }
 
-/** Gemini vision analysis; returns null when unconfigured, failed, or empty. */
-async function requestGeminiAnalysis(prompt: string, screenshotUrl: string): Promise<ReplanInsight | null> {
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (!geminiApiKey || geminiApiKey.length <= 5) return null;
-  try {
-    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-    const base64Data = screenshotUrl.split(",")[1] || screenshotUrl;
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Data } }],
-        },
-      ],
-    });
-    const text = response.text;
-    return text ? { analysis: text, confidence: readModelConfidence(text) } : null;
-  } catch (aiErr) {
-    console.warn("[GoalReplan] Gemini vision call failed, falling back to Qwen:", aiErr);
-    return null;
-  }
-}
-
 /** Qwen/Ollama vision analysis; returns null on failure. */
 async function requestQwenAnalysis(prompt: string, screenshotUrl: string): Promise<ReplanInsight | null> {
   try {
@@ -130,9 +105,9 @@ async function requestQwenAnalysis(prompt: string, screenshotUrl: string): Promi
   }
 }
 
-/** Gemini first when configured; any Gemini failure falls through to Qwen. */
+/** Qwen (quantumclaw) is the only AI path; a failure yields null so the re-plan is labelled unverified. */
 async function requestReplanInsights(prompt: string, screenshotUrl: string): Promise<ReplanInsight | null> {
-  return (await requestGeminiAnalysis(prompt, screenshotUrl)) ?? (await requestQwenAnalysis(prompt, screenshotUrl));
+  return requestQwenAnalysis(prompt, screenshotUrl);
 }
 
 export async function handleGoalReplan(req: Request, res: Response) {
@@ -158,7 +133,7 @@ export async function handleGoalReplan(req: Request, res: Response) {
             screenshotUrl,
           )
         : null;
-    const geminiAnalysis = insight?.analysis ?? null;
+    const modelAnalysis = insight?.analysis ?? null;
     const modelConfidence = insight?.confidence ?? null;
 
     // Heuristic & rule-based adaptive re-planner engine
@@ -250,7 +225,7 @@ export async function handleGoalReplan(req: Request, res: Response) {
       simulated: !verified,
       source: replanResult.source,
       replan: replanResult,
-      aiInsights: geminiAnalysis,
+      aiInsights: modelAnalysis,
     });
   } catch (error: any) {
     console.error("[GoalReplan] Error:", error);

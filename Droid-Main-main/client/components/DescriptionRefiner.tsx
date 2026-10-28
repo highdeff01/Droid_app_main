@@ -98,7 +98,7 @@ interface RefineResponse {
   variations: Variation[];
   originalWordCount: number;
   originalCharCount?: number;
-  source: "gemini" | "heuristic-engine";
+  source: "qwen" | "heuristic-engine";
   error?: string;
 }
 
@@ -228,7 +228,7 @@ export function DescriptionRefiner({
         style: "High-Impact",
         savedAt: "Saved Baseline",
         keyPropositions: ["Autonomous Screen Perception", "PyAutoGUI Mouse Control", "Workflow Orchestrator"],
-        source: "Gemini 3.8 Flash",
+        source: "Qwen 3.5 2B",
         isApplied: true,
       },
       {
@@ -242,7 +242,7 @@ export function DescriptionRefiner({
         style: "App Store Short",
         savedAt: "Saved Baseline",
         keyPropositions: ["Deep Screen Perception", "Human Drift Execution", "Multi-Task Orchestration"],
-        source: "Gemini 3.8 Flash",
+        source: "Qwen 3.5 2B",
         isApplied: false,
       },
       {
@@ -256,7 +256,7 @@ export function DescriptionRefiner({
         style: "Punchy Tagline",
         savedAt: "Saved Baseline",
         keyPropositions: ["Autonomous Vision", "Game Automation"],
-        source: "Gemini 3.8 Flash",
+        source: "Qwen 3.5 2B",
         isApplied: false,
       },
     ];
@@ -972,7 +972,7 @@ export function DescriptionRefiner({
                       {result.wordCount} / {effectiveWordLimit} WORDS
                     </span>
                     <span className="px-2 py-1 rounded text-[10px] font-mono uppercase bg-slate-950 text-slate-400 border border-slate-800">
-                      {result.source === "gemini" ? "Gemini 3.8 Flash" : "NLP Heuristic"}
+                      {result.source === "qwen" ? "Qwen 3.5 2B" : "NLP Heuristic"}
                     </span>
 
                     {/* Quick Regenerate Button in Header */}
@@ -1110,7 +1110,7 @@ export function DescriptionRefiner({
                         result.refinedDescription,
                         activePreset.label,
                         result.keyPropositions,
-                        result.source === "gemini" ? "Gemini 3.8 Flash" : "NLP Heuristic",
+                        result.source === "qwen" ? "Qwen 3.5 2B" : "NLP Heuristic",
                         undefined,
                         constraintMode,
                         effectiveWordLimit

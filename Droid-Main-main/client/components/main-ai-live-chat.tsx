@@ -265,7 +265,7 @@ export function MainAiLiveChat({
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-bold font-mono text-slate-100">Main AI Copilot & Tool Executive</span>
               <Badge variant="outline" className="bg-cyan-950/60 text-cyan-300 border-cyan-700/50 text-[9px] py-0 px-1.5 font-mono">
-                Gemini 2.5 Flash + Tools
+                Qwen 3.5 2B + Tools
               </Badge>
             </div>
             <p className="text-[10px] text-slate-400 font-mono truncate">

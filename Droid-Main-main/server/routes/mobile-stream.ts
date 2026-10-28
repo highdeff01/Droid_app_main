@@ -3,12 +3,22 @@ import net from "net";
 import os from "os";
 import { spawn } from "child_process";
 import { setLatestSyncedRealFrame, getLatestSyncedRealFrame } from "./screen-capture";
-import { detectScreenElementsAndSteps, getGenAIClient } from "../ai-gemini-service";
-import { sendQwenChatRequest, parseModelJson, toBase64Image } from "../ai-endpoint";
+import { detectScreenElementsAndSteps } from "../ai-gemini-service";
+import { sendQwenChatRequest, parseModelJson, toBase64Image, DEFAULT_QWEN_MODEL } from "../ai-endpoint";
 import { centralLogHub } from "../log-hub";
 import { aiMonitorStore } from "../ai-monitor-store";
 
 export const mobileStreamRouter = Router();
+
+/** Asks Qwen (quantumclaw by default) for a JSON reply, optionally with screenshots; throws on failure. */
+async function requestQwenJson(prompt: string, images: string[] = []): Promise<any> {
+  const message = images.length > 0
+    ? { role: "user" as const, content: prompt, images: images.map(toBase64Image) }
+    : { role: "user" as const, content: prompt };
+  const result = await sendQwenChatRequest([message], { model: workspaceSettings.activeModel, format: "json" });
+  if (!result.success) throw new Error(result.error || "AI model unavailable");
+  return parseModelJson(result.content);
+}
 
 /**
  * Auto-detect primary non-internal IPv4 LAN address (e.g. 192.168.x.x, 10.x.x.x)
@@ -248,7 +258,7 @@ let workspaceSettings: WorkspaceSettings = {
   enableBackgroundAudio: true,
   enableMultiWindowHomeSync: true,
   audioFeedbackAlerts: true,
-  activeModel: "gemini-2.5-flash",
+  activeModel: DEFAULT_QWEN_MODEL,
 };
 
 let latestMobileFrame: {
@@ -1324,7 +1334,7 @@ mobileStreamRouter.post("/api/mobile-stream/workflows/:id/extract", (req, res) =
   }
 });
 
-// POST AI Customization of a saved workflow (Prompt Gemini to transform, optimize, customize)
+// POST AI Customization of a saved workflow (prompt the AI model to transform, optimize, customize)
 mobileStreamRouter.post("/api/mobile-stream/workflows/:id/ai-customize", async (req, res) => {
   const { id } = req.params;
   const { prompt, saveAsNew = false } = req.body || {};
@@ -1339,13 +1349,11 @@ mobileStreamRouter.post("/api/mobile-stream/workflows/:id/ai-customize", async (
   }
 
   try {
-    const ai = getGenAIClient();
     let customizedActions: MobileActionItem[] = [];
     let aiExplanation = "";
     let updatedNotes = wf.notes || "";
 
-    if (ai) {
-      const systemInstruction = `You are a mobile device automation specialist.
+    const systemInstruction = `You are a mobile device automation specialist.
 Given a device automation workflow and a user customization request, modify or enhance the sequence of steps.
 Return ONLY valid JSON matching this schema:
 {
@@ -1370,7 +1378,7 @@ Return ONLY valid JSON matching this schema:
   ]
 }`;
 
-      const userContent = `Existing Workflow:
+    const userContent = `Existing Workflow:
 Name: ${wf.name}
 Description: ${wf.description}
 Current Notes: ${wf.notes || "None"}
@@ -1379,52 +1387,29 @@ Current Steps: ${JSON.stringify(wf.actions, null, 2)}
 User Customization Request:
 "${prompt}"`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          { role: "user", parts: [{ text: `${systemInstruction}\n\n${userContent}` }] },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.2,
-        },
-      });
+    const parsed = await requestQwenJson(`${systemInstruction}\n\n${userContent}`);
 
-      const responseText = response.text || "{}";
-      const parsed = JSON.parse(responseText);
+    aiExplanation = parsed.aiExplanation || "AI successfully adapted workflow steps.";
+    updatedNotes = `${wf.notes ? wf.notes + "\n\n" : ""}[AI Customization (${new Date().toLocaleDateString()}]: ${aiExplanation}`;
+    
+    customizedActions = (parsed.actions || []).map((a: any, i: number) => ({
+      id: `ai_act_${Date.now()}_${i}`,
+      type: a.type || "tap",
+      x: typeof a.x === "number" ? Math.max(0, Math.min(1, a.x)) : 0.5,
+      y: typeof a.y === "number" ? Math.max(0, Math.min(1, a.y)) : 0.5,
+      toX: typeof a.toX === "number" ? Math.max(0, Math.min(1, a.toX)) : undefined,
+      toY: typeof a.toY === "number" ? Math.max(0, Math.min(1, a.toY)) : undefined,
+      direction: a.direction,
+      text: a.text,
+      key: a.key,
+      durationMs: a.durationMs || 150,
+      description: a.description || `Step ${i + 1}`,
+      note: a.note,
+      createdAt: Date.now(),
+    }));
 
-      aiExplanation = parsed.aiExplanation || "AI successfully adapted workflow steps.";
-      updatedNotes = `${wf.notes ? wf.notes + "\n\n" : ""}[AI Customization (${new Date().toLocaleDateString()}]: ${aiExplanation}`;
-      
-      customizedActions = (parsed.actions || []).map((a: any, i: number) => ({
-        id: `ai_act_${Date.now()}_${i}`,
-        type: a.type || "tap",
-        x: typeof a.x === "number" ? Math.max(0, Math.min(1, a.x)) : 0.5,
-        y: typeof a.y === "number" ? Math.max(0, Math.min(1, a.y)) : 0.5,
-        toX: typeof a.toX === "number" ? Math.max(0, Math.min(1, a.toX)) : undefined,
-        toY: typeof a.toY === "number" ? Math.max(0, Math.min(1, a.toY)) : undefined,
-        direction: a.direction,
-        text: a.text,
-        key: a.key,
-        durationMs: a.durationMs || 150,
-        description: a.description || `Step ${i + 1}`,
-        note: a.note,
-        createdAt: Date.now(),
-      }));
-
-      if (parsed.name && !saveAsNew) wf.name = parsed.name;
-      if (parsed.description && !saveAsNew) wf.description = parsed.description;
-    } else {
-      // Deterministic fallback if API key not present
-      aiExplanation = `Customized based on: "${prompt}". Steps adapted with adjusted timings and parameters.`;
-      updatedNotes = `${wf.notes ? wf.notes + "\n\n" : ""}[Customization]: ${prompt}`;
-      customizedActions = wf.actions.map((act, i) => ({
-        ...act,
-        id: `cust_act_${Date.now()}_${i}`,
-        description: `${act.description} (Adapted: ${prompt.slice(0, 30)})`,
-        createdAt: Date.now(),
-      }));
-    }
+    if (parsed.name && !saveAsNew) wf.name = parsed.name;
+    if (parsed.description && !saveAsNew) wf.description = parsed.description;
 
     if (customizedActions.length === 0) {
       customizedActions = wf.actions;
@@ -1800,7 +1785,7 @@ mobileStreamRouter.post("/api/mobile-stream/ai-plan-and-act", async (req, res) =
   try {
     centralLogHub.addLog("Planner AI", "INFO", `AI analyzing mobile phone screen for goal: "${userGoal}"`);
 
-    // Detect elements using Gemini Vision
+    // Detect elements using the Qwen vision model
     const analysis = await detectScreenElementsAndSteps({
       imageData: currentFrame,
       objective: userGoal,
@@ -1857,7 +1842,7 @@ mobileStreamRouter.post("/api/mobile-stream/ai-plan-and-act", async (req, res) =
         name: workflowName || `AI Plan: ${userGoal.slice(0, 32)}`,
         description: analysis.summary || `AI Generated workflow for "${userGoal}"`,
         notes: `AI Elements Found: ${analysis.elements?.length || 0}. Goal: ${userGoal}`,
-        tags: ["ai-generated", "gemini-vision"],
+        tags: ["ai-generated", "qwen-vision"],
         actions: plannedActions,
         autoSave: false,
         sourceSnapshot: currentFrame,
@@ -2608,9 +2593,7 @@ mobileStreamRouter.post("/api/mobile-stream/worktree/ai-analyze-route", async (r
   const { currentScreenTitle, targetGoal } = req.body || {};
 
   try {
-    const aiClient = getGenAIClient();
-    if (aiClient) {
-      const prompt = `You are an AI Navigation Optimization Architect.
+    const prompt = `You are an AI Navigation Optimization Architect.
 Analyze the following active device UI navigation graph:
 Nodes: ${JSON.stringify(worktreeNodes.map((n) => ({ id: n.id, title: n.title, visits: n.visitCount, isDeadEnd: n.isDeadEnd })))}
 Edges: ${JSON.stringify(worktreeEdges.map((e) => ({ from: e.fromId, to: e.toId, action: e.actionDescription, status: e.status, latencyMs: e.latencyMs })))}
@@ -2627,15 +2610,8 @@ Provide a JSON response with:
   "aiGuidance": "Detailed AI guidance for auto-execution"
 }`;
 
-      const response = await aiClient.models.generateContent({
-        model: workspaceSettings.activeModel || "gemini-2.5-flash",
-        contents: prompt,
-        config: { responseMimeType: "application/json" },
-      });
-
-      const parsed = JSON.parse(response.text || "{}");
-      return res.json({ success: true, analysis: parsed });
-    }
+    const parsed = await requestQwenJson(prompt);
+    return res.json({ success: true, analysis: parsed });
   } catch (err) {
     console.error("AI route analysis error:", err);
   }
@@ -2731,8 +2707,7 @@ mobileStreamRouter.post("/api/mobile-stream/reference-check", async (req, res) =
   }
 
   try {
-    const aiClient = getGenAIClient();
-    if (aiClient && referenceImage) {
+    if (referenceImage) {
       const prompt = `Compare this current live screen frame against the expected reference image for step: "${targetStepDescription || "Verify UI alignment"}".
 Evaluate:
 1. Similarity Score (0 to 100%)
@@ -2750,17 +2725,7 @@ Output JSON:
   "aiNotes": "Screen matches expected checkout layout with slight font scaling difference."
 }`;
 
-      const response = await aiClient.models.generateContent({
-        model: workspaceSettings.activeModel || "gemini-2.5-flash",
-        contents: [
-          prompt,
-          { inlineData: { mimeType: "image/jpeg", data: currentFrame.replace(/^data:image\/\w+;base64,/, "") } },
-          { inlineData: { mimeType: "image/jpeg", data: referenceImage.replace(/^data:image\/\w+;base64,/, "") } },
-        ],
-        config: { responseMimeType: "application/json" },
-      });
-
-      const parsed = JSON.parse(response.text || "{}");
+      const parsed = await requestQwenJson(prompt, [currentFrame, referenceImage]);
       return res.json({ success: true, referenceResult: parsed });
     }
   } catch (err) {
