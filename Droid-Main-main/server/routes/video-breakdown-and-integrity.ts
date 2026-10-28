@@ -3,17 +3,8 @@
  */
 
 import { RequestHandler } from "express";
-import { GoogleGenAI } from "@google/genai";
 import { addBridgeLog } from "./pyautogui-bridge";
 import { sendQwenChatRequest, buildVisionMessage, parseModelJson } from "../ai-endpoint";
-
-let genAIClient: GoogleGenAI | null = null;
-function getGenAI(): GoogleGenAI | null {
-  if (!genAIClient && process.env.GEMINI_API_KEY) {
-    genAIClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
-  return genAIClient;
-}
 
 export interface ExtractedVideoStep {
   id: string;
@@ -87,7 +78,7 @@ export const handleBreakdownVideoSteps: RequestHandler = async (req, res) => {
       `[AI Video Engine] Initiating frame-by-frame workflow step breakdown across ${frameCount > 0 ? frameCount : "synthetic keyframes"} and ${mouseEventCount} tracked mouse motion points (${videoDurationSec}s recorded duration).`
     );
 
-    // If frames and mouse events provided, we use Gemini or visual-spatial perception analysis
+    // If frames and mouse events provided, Qwen vision analyzes them
     let analyzedSteps: ExtractedVideoStep[] = [];
     let failureReason = NO_FRAMES;
 
@@ -123,46 +114,18 @@ Respond strictly in valid JSON format matching this array:
   }
 ]`;
 
-      const ai = getGenAI();
-      if (ai) {
-        try {
-          const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: [
-              prompt,
-              sampleFrame.startsWith("data:")
-                ? {
-                    inlineData: {
-                      mimeType: "image/jpeg",
-                      data: sampleFrame.split(",")[1],
-                    },
-                  }
-                : { text: "UI Screen Recording Analysis" },
-            ],
-            config: {
-              responseMimeType: "application/json",
-            },
-          });
-
-          const rawText = response.text || "[]";
-          analyzedSteps = buildAnalyzedSteps(JSON.parse(rawText), videoFrames);
-        } catch (geminiErr: any) {
-          failureReason = `Gemini vision breakdown failed: ${geminiErr.message}`;
+      try {
+        const message = sampleFrame.startsWith("data:")
+          ? buildVisionMessage(prompt, sampleFrame)
+          : { role: "user" as const, content: prompt };
+        const qwenResult = await sendQwenChatRequest([message], { format: "json" });
+        if (qwenResult.success) {
+          analyzedSteps = buildAnalyzedSteps(parseModelJson(qwenResult.content), videoFrames);
+        } else {
+          failureReason = `Vision model unavailable: ${qwenResult.error || "no response"}`;
         }
-      } else {
-        try {
-          const message = sampleFrame.startsWith("data:")
-            ? buildVisionMessage(prompt, sampleFrame)
-            : { role: "user" as const, content: prompt };
-          const qwenResult = await sendQwenChatRequest([message], { format: "json" });
-          if (qwenResult.success) {
-            analyzedSteps = buildAnalyzedSteps(parseModelJson(qwenResult.content), videoFrames);
-          } else {
-            failureReason = `Vision model unavailable: ${qwenResult.error || "no response"}`;
-          }
-        } catch (qwenErr: any) {
-          failureReason = `Vision model breakdown failed: ${qwenErr.message}`;
-        }
+      } catch (qwenErr: any) {
+        failureReason = `Vision model breakdown failed: ${qwenErr.message}`;
       }
     }
 

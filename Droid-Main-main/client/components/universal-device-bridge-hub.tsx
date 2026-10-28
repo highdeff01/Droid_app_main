@@ -278,7 +278,7 @@ export function UniversalDeviceBridgeHub({
     enableBackgroundAudio: true,
     enableMultiWindowHomeSync: true,
     audioFeedbackAlerts: true,
-    activeModel: "gemini-2.5-flash",
+    activeModel: "qwen3.5:2b",
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
@@ -1112,7 +1112,7 @@ export function UniversalDeviceBridgeHub({
       return;
     }
     setIsAiExecuting(true);
-    setAiPlanSummary("AI analyzing phone screen with Gemini Vision...");
+    setAiPlanSummary("AI analyzing phone screen with Qwen Vision...");
     try {
       const res = await fetch("/api/mobile-stream/ai-plan-and-act", {
         method: "POST",
@@ -1648,7 +1648,7 @@ export function UniversalDeviceBridgeHub({
               )}
             </div>
             <p className="text-[10px] text-purple-200/80 font-mono mt-0.5">
-              Streams phone view to main HUD below • Clicks & mouse inputs control actual device • Auto-records sequence steps • Enables Gemini Vision AI
+              Streams phone view to main HUD below • Clicks & mouse inputs control actual device • Auto-records sequence steps • Enables Qwen Vision AI
             </p>
           </div>
         </div>
@@ -2642,7 +2642,7 @@ export function UniversalDeviceBridgeHub({
                       <button
                         onClick={() => handleRunAiGoal(false)}
                         className="px-1.5 py-0.5 rounded bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 flex items-center gap-0.5"
-                        title="Detect UI elements with Gemini Vision (Hotkey [D])"
+                        title="Detect UI elements with Qwen Vision (Hotkey [D])"
                       >
                         <Bot className="w-2.5 h-2.5 text-emerald-400" /> Detect <span className="text-slate-500 text-[8px]">[D]</span>
                       </button>
@@ -3119,9 +3119,9 @@ export function UniversalDeviceBridgeHub({
                         <div className="p-2.5 rounded-xl bg-slate-900 border border-emerald-900/40 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-mono text-emerald-400 font-bold flex items-center gap-1">
-                              <Bot className="w-3.5 h-3.5" /> AI Gemini Screen Planner:
+                              <Bot className="w-3.5 h-3.5" /> AI Qwen Screen Planner:
                             </span>
-                            <span className="text-[9px] text-slate-400">Gemini Vision Automated Action</span>
+                            <span className="text-[9px] text-slate-400">Qwen Vision Automated Action</span>
                           </div>
                           <div className="flex gap-1.5">
                             <Input
@@ -4396,15 +4396,14 @@ export function UniversalDeviceBridgeHub({
             </div>
 
             <div className="space-y-1.5 p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-              <label className="font-bold text-white block">Active Gemini Vision Model:</label>
+              <label className="font-bold text-white block">Active Qwen Vision Model:</label>
               <select
                 value={workspaceSettings.activeModel}
                 onChange={(e) => handleSaveSettings({ activeModel: e.target.value })}
                 className="w-full h-8 px-2 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white font-mono"
               >
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended - Ultra Low Latency)</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Visual Reasoning)</option>
-                <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Lightweight Fast)</option>
+                <option value="qwen3.5:2b">Qwen 3.5 2B (QuantumClaw - Default)</option>
+                <option value="qwen2.5-vl:7b">Qwen 2.5 VL 7B (High-Precision OCR)</option>
               </select>
             </div>
           </div>
@@ -4678,7 +4677,7 @@ export function UniversalDeviceBridgeHub({
           <div className="w-full max-w-lg bg-slate-900 border border-amber-500/40 rounded-2xl p-4 space-y-3.5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Wand2 className="w-4 h-4 text-amber-400" /> AI Gemini Customizer for "{aiCustomizeModalWf.name}"
+                <Wand2 className="w-4 h-4 text-amber-400" /> AI Qwen Customizer for "{aiCustomizeModalWf.name}"
               </h3>
               <button onClick={() => setAiCustomizeModalWf(null)} className="text-slate-400 hover:text-white">✕</button>
             </div>

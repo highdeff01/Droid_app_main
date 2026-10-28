@@ -132,7 +132,6 @@ export const DetectGoalModal: React.FC<DetectGoalModalProps> = ({
               >
                 <option value="qwen3.5:2b">Qwen 3.5 2B (QuantumClaw Fast - Default)</option>
                 <option value="qwen2.5-vl:7b">Qwen 2.5 VL 7B (High-Precision OCR)</option>
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Cloud Vision Grounding)</option>
                 <option value="deepseek-r1:8b">DeepSeek R1 8B (Deep Reasoning)</option>
               </select>
             </div>

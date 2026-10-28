@@ -10,7 +10,6 @@ import {
   sendQwenChatRequest,
 } from "./ai-endpoint";
 import { normalizeVisionReport } from "./vision-report";
-import { detectScreenElementsAndSteps } from "./ai-gemini-service";
 import type { AiMonitorBrowserContext } from "./ai-monitor-store";
 
 export interface DetectedUIElement {
@@ -55,15 +54,6 @@ export interface ScreenPerceptionReport {
 
 const finiteOrNull = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
-
-/** Mean of the element confidences the analysis supplied; null when none did. */
-export function meanConfidence(elements: DetectedUIElement[]): number | null {
-  const values = elements
-    .map((el) => el.confidence)
-    .filter((v): v is number => v !== null);
-  if (values.length === 0) return null;
-  return values.reduce((sum, v) => sum + v, 0) / values.length;
-}
 
 /** Honest report for a failed analysis: no elements, no confidence, labelled simulated. */
 export function perceptionUnavailableReport(
@@ -160,71 +150,8 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
       this.lastDescription = report.screenDescription;
       return report;
     } catch (err) {
-      if (!process.env.GEMINI_API_KEY) {
-        return perceptionUnavailableReport(errorText(err));
-      }
-      console.warn("Qwen Vision perception failed, using configured Gemini:", err);
-      try {
-        return await this.analyzeWithLocalProvider(imageData, browserContext);
-      } catch (geminiErr) {
-        return perceptionUnavailableReport(
-          `${errorText(err)}; Gemini: ${errorText(geminiErr)}`,
-        );
-      }
+      return perceptionUnavailableReport(errorText(err));
     }
-  }
-
-  /**
-   * Perception via the app's configured AI provider (Gemini). Falls back to the
-   * heuristic report internally when no API key is configured.
-   */
-  private async analyzeWithLocalProvider(
-    imageData: string,
-    browserContext?: AiMonitorBrowserContext | null,
-  ): Promise<ScreenPerceptionReport> {
-    const analysis = await detectScreenElementsAndSteps({ imageData });
-
-    const elements: DetectedUIElement[] = (analysis.elements || []).map(
-      (el, idx) => ({
-        id: el.id || `elem_${idx + 1}`,
-        name: el.name || `Element ${idx + 1}`,
-        type: this.normalizeElementType(el.type),
-        boundingBox: {
-          x: el.x,
-          y: el.y,
-          width: el.width || 80,
-          height: el.height || 35,
-        },
-        center: { x: el.x, y: el.y },
-        confidence: finiteOrNull(el.confidence),
-        interactive: true,
-        textValue: el.suggestedTextPayload || "",
-      }),
-    );
-
-    const focus = analysis.primaryActionTarget;
-    const page = browserContext?.page;
-    const simulated = analysis.simulated === true;
-    const report: ScreenPerceptionReport = {
-      timestamp: Date.now(),
-      screenDescription:
-        this.describePage(browserContext) ||
-        analysis.summary ||
-        "Active workspace display with interactive elements.",
-      activeWindow:
-        page?.title || browserContext?.activeTab?.title || "Active Application",
-      visualStateChange: this.lastDescription ? "State updated" : "Initial frame",
-      elements: this.mergeBrowserElements(elements, browserContext),
-      feedbackPosition: focus ? { x: focus.x, y: focus.y } : { x: 0, y: 0 },
-      primarySuggestion: focus?.label ? `Focus ${focus.label}` : "",
-      confidence: simulated ? null : meanConfidence(elements),
-      source: simulated ? "heuristic" : "model",
-      simulated,
-      ...(simulated ? { simulationReason: analysis.simulationReason } : {}),
-    };
-
-    this.lastDescription = report.screenDescription;
-    return report;
   }
 
   /**
@@ -264,16 +191,6 @@ IMPORTANT: Output ONLY the raw JSON without markdown formatting or code blocks. 
       );
     }
     return lines.join("\n");
-  }
-
-  private describePage(
-    browserContext?: AiMonitorBrowserContext | null,
-  ): string {
-    if (!browserContext) return "";
-    const title = browserContext.page?.title || browserContext.activeTab?.title;
-    const url = browserContext.page?.url || browserContext.activeTab?.url;
-    if (!title && !url) return "";
-    return `Browser tab "${title || url}"${url ? ` (${url})` : ""} with ${browserContext.elements.length} interactive page element(s).`;
   }
 
   /** Puts exact DOM elements from the live page in front of visually detected ones. */

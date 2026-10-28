@@ -34,6 +34,7 @@ import { usePreviewMode } from "@/hooks/use-preview-mode";
 import { PREVIEW_BADGE, setPreviewOverride } from "@/lib/preview-mode";
 import { AiStatusBadge } from "@/components/ai-status-badge";
 import { AssistBridgeSettings } from "@/components/assist-bridge-settings";
+import { connectAiEndpoint, connectStatusText, type AiConnectResult } from "@/lib/ai-connect";
 
 /** Primary and default AI endpoint (quantumclaw, Ollama-compatible non-streaming /api/chat). */
 export const DEFAULT_MODEL_URL = "https://quantumclaw.net/ollama/api/chat";
@@ -77,6 +78,8 @@ export function GlobalSettingsModal({
     latencyMs?: number;
     message?: string;
   } | null>(null);
+  const [isConnecting, setIsConnecting] = useState<boolean>(false);
+  const [connectResult, setConnectResult] = useState<AiConnectResult | null>(null);
 
   // Load persisted settings on mount
   useEffect(() => {
@@ -140,6 +143,19 @@ export function GlobalSettingsModal({
       setIsTesting(false);
       setPingCount((n) => n + 1);
     }
+  };
+
+  const handleConnect = async () => {
+    setIsConnecting(true);
+    const result = await connectAiEndpoint(
+      modelUrl.trim() || DEFAULT_MODEL_URL,
+      modelName.trim() || DEFAULT_MODEL_NAME,
+    );
+    setConnectResult(result);
+    setIsConnecting(false);
+    setPingCount((n) => n + 1);
+    if (result.connected) toast.success(`AI connected and saved (${result.latencyMs}ms)`);
+    else toast.error(`AI offline: ${result.message}`);
   };
 
   const handleSave = async () => {
@@ -258,6 +274,27 @@ export function GlobalSettingsModal({
                   )}
                 </Button>
               </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  onClick={handleConnect}
+                  disabled={isConnecting}
+                  className="h-10 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold gap-1.5"
+                >
+                  {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                  {isConnecting ? "Connecting..." : "Connect"}
+                </Button>
+                {connectResult && (
+                  <span
+                    className={`flex items-center gap-1 text-xs font-bold ${
+                      connectResult.connected ? "text-emerald-300" : "text-rose-300"
+                    }`}
+                  >
+                    {connectResult.connected ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                    {connectStatusText(connectResult)}
+                  </span>
+                )}
+              </div>
               <AiStatusBadge refreshSignal={pingCount} />
             </div>
 
@@ -355,7 +392,6 @@ export function GlobalSettingsModal({
                 { id: "qwen3.5:2b", label: "Qwen 3.5 2B (Vision + Act)", tag: "Fast / Default" },
                 { id: "qwen2.5-vl:7b", label: "Qwen 2.5-VL 7B Instruct", tag: "High Accuracy" },
                 { id: "deepseek-r1:8b", label: "DeepSeek R1 Distill", tag: "Deep Reasoning" },
-                { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash Cloud", tag: "Cloud Grounded" },
               ].map((m) => (
                 <button
                   key={m.id}

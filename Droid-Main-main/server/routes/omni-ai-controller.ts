@@ -1,5 +1,6 @@
 import { RequestHandler } from "express";
 import { aiMonitorStore } from "../ai-monitor-store";
+import { DEFAULT_QWEN_MODEL } from "../ai-endpoint";
 
 export const SYSTEM_TABS = [
   { id: "dashboard", label: "Dashboard" },
@@ -24,7 +25,7 @@ export type SystemTab = (typeof SYSTEM_TABS)[number]["id"];
 
 let omniState = {
   activeTab: "screen" as string,
-  model: "gemini-2.5-flash",
+  model: DEFAULT_QWEN_MODEL,
   settings: {
     antiDrift: true,
     speedMultiplier: 1.0,

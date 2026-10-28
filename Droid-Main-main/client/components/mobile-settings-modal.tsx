@@ -58,7 +58,7 @@ export const MobileSettingsModal: React.FC<MobileSettingsModalProps> = ({
     enableBackgroundAudio: false,
     enableMultiWindowHomeSync: false,
     audioFeedbackAlerts: false,
-    activeModel: "gemini-2.5-flash",
+    activeModel: "qwen3.5:2b",
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -290,7 +290,7 @@ export const MobileSettingsModal: React.FC<MobileSettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Active Gemini Vision Model */}
+          {/* Active Qwen Vision Model */}
           <div className="space-y-2 p-3 rounded-xl bg-slate-900 border border-slate-800">
             <label className="font-bold text-white text-xs block flex items-center gap-1.5">
               <Brain className="w-3.5 h-3.5 text-purple-400" />
@@ -301,9 +301,8 @@ export const MobileSettingsModal: React.FC<MobileSettingsModalProps> = ({
               onChange={(e) => handleSave({ activeModel: e.target.value })}
               className="w-full h-8 px-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white font-mono focus:border-cyan-400 focus:outline-none"
             >
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended - Ultra Low Latency)</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Visual Reasoning)</option>
-              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Lightweight Fast)</option>
+              <option value="qwen3.5:2b">Qwen 3.5 2B (QuantumClaw - Default)</option>
+              <option value="qwen2.5-vl:7b">Qwen 2.5 VL 7B (High-Precision OCR)</option>
             </select>
           </div>
 

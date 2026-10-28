@@ -180,9 +180,10 @@ import { AssistantWorkspace } from "@/components/assistant-workspace";
 import { AutonomousWorkflowModal } from "@/components/autonomous-workflow-modal";
 import { MainAIOmniExecutive } from "@/components/main-ai-omni-executive";
 import { InteractiveDeviceControlDeck } from "@/components/interactive-device-control-deck";
-import { GlobalSettingsModal, DEFAULT_MODEL_URL, LAN_OLLAMA_URL } from "@/components/global-settings-modal";
+import { GlobalSettingsModal, DEFAULT_MODEL_URL, DEFAULT_MODEL_NAME, LAN_OLLAMA_URL } from "@/components/global-settings-modal";
 import { AiStatusBadge } from "@/components/ai-status-badge";
 import { AssistBridgeBadge } from "@/components/assist-bridge-status";
+import { connectAiEndpoint, connectStatusText, type AiConnectResult } from "@/lib/ai-connect";
 import { CoordinateCalibrationModal } from "@/components/coordinate-calibration-modal";
 import { ThreeAiAgentsSquad } from "@/components/three-ai-agents-squad";
 import { captureDelayMs, nextFailureStreak, type CaptureOutcome } from "@/lib/capture-backoff";
@@ -207,6 +208,8 @@ export default function Dashboard({
       : DEFAULT_MODEL_URL;
   });
   const [aiPingCount, setAiPingCount] = useState(0);
+  const [aiConnectResult, setAiConnectResult] = useState<AiConnectResult | null>(null);
+  const [isAiConnecting, setIsAiConnecting] = useState(false);
   const [screenshotUrl, setScreenshotUrl] = useState<string>(() => {
     return typeof window !== "undefined"
       ? generateDefaultDesktopFrame("Sightline AI Vision Core")
@@ -3122,9 +3125,35 @@ export default function Dashboard({
                     >
                       Ping Endpoint
                     </Button>
+                    <Button
+                      size="sm"
+                      disabled={isAiConnecting}
+                      onClick={async () => {
+                        setIsAiConnecting(true);
+                        const result = await connectAiEndpoint(
+                          configuredModelUrl.trim() || DEFAULT_MODEL_URL,
+                          localStorage.getItem("ai_model_name") || DEFAULT_MODEL_NAME,
+                        );
+                        setAiConnectResult(result);
+                        setIsAiConnecting(false);
+                        setAiPingCount((n) => n + 1);
+                        if (result.connected) toast.success(`AI connected and saved (${result.latencyMs}ms)`);
+                        else toast.error(`AI offline: ${result.message}`);
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4"
+                    >
+                      {isAiConnecting ? "Connecting..." : "Connect"}
+                    </Button>
                     <AiStatusBadge refreshSignal={aiPingCount} />
                     <AssistBridgeBadge />
                   </div>
+                  {aiConnectResult && (
+                    <div
+                      className={`text-xs font-bold ${aiConnectResult.connected ? "text-emerald-300" : "text-rose-300"}`}
+                    >
+                      {connectStatusText(aiConnectResult)}
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2 pt-1">
                     <span className="text-[11px] text-slate-400 self-center">Presets:</span>
                     <button
