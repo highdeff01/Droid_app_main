@@ -1,10 +1,12 @@
 import path from "path";
 import { createServer } from "./index";
 import { pingAiEndpoint } from "./ai-status";
+import { startAssistBridge } from "./assist-bridge";
 import * as express from "express";
 
 const app = createServer();
 void pingAiEndpoint();
+void startAssistBridge();
 const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || "127.0.0.1";
 

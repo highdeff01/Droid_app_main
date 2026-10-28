@@ -182,6 +182,7 @@ import { MainAIOmniExecutive } from "@/components/main-ai-omni-executive";
 import { InteractiveDeviceControlDeck } from "@/components/interactive-device-control-deck";
 import { GlobalSettingsModal, DEFAULT_MODEL_URL, DEFAULT_MODEL_NAME, LAN_OLLAMA_URL } from "@/components/global-settings-modal";
 import { AiStatusBadge } from "@/components/ai-status-badge";
+import { AssistBridgeBadge } from "@/components/assist-bridge-status";
 import { connectAiEndpoint, connectStatusText, type AiConnectResult } from "@/lib/ai-connect";
 import { CoordinateCalibrationModal } from "@/components/coordinate-calibration-modal";
 import { ThreeAiAgentsSquad } from "@/components/three-ai-agents-squad";
@@ -3144,6 +3145,7 @@ export default function Dashboard({
                       {isAiConnecting ? "Connecting..." : "Connect"}
                     </Button>
                     <AiStatusBadge refreshSignal={aiPingCount} />
+                    <AssistBridgeBadge />
                   </div>
                   {aiConnectResult && (
                     <div

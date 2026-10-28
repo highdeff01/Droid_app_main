@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import { usePreviewMode } from "@/hooks/use-preview-mode";
 import { PREVIEW_BADGE, setPreviewOverride } from "@/lib/preview-mode";
 import { AiStatusBadge } from "@/components/ai-status-badge";
+import { AssistBridgeSettings } from "@/components/assist-bridge-settings";
 import { connectAiEndpoint, connectStatusText, type AiConnectResult } from "@/lib/ai-connect";
 
 /** Primary and default AI endpoint (quantumclaw, Ollama-compatible non-streaming /api/chat). */
@@ -373,6 +374,9 @@ export function GlobalSettingsModal({
               </div>
             )}
           </div>
+
+          {/* Section 1b: Assist app bridge */}
+          <AssistBridgeSettings />
 
           {/* Section 2: Model & Perception Architecture */}
           <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3 shadow-inner">
