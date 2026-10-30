@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AssistBridgeBadge } from "@/components/assist-bridge-status";
 import { safePostJson } from "@/lib/api-helper";
 import { errorText } from "@/lib/assist-bridge-api";
+import { cn } from "@/lib/utils";
 
 /** Restarts the bridge listener with its current settings so droid-new can (re)connect. */
 async function restartListener(): Promise<AssistBridgeStatus> {
@@ -50,7 +51,7 @@ export function AssistBridgeToolbar() {
       <Button asChild size="sm" variant="outline" className="h-7 text-xs">
         <Link to="/assist/settings">droid-new settings</Link>
       </Button>
-      {message && <span className={message.ok ? "text-[11px] text-slate-400" : "text-[11px] text-red-300"}>{message.text}</span>}
+      {message && <span className={cn("text-[11px]", message.ok ? "text-slate-400" : "text-red-300")}>{message.text}</span>}
     </div>
   );
 }

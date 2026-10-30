@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { askAi, errorText } from "@/lib/assist-bridge-api";
 import { ActionButton, OutcomeView, sendRequest, useOutcome } from "./outcome";
 
@@ -37,7 +38,7 @@ export function AssistChatPanel() {
     <div className="space-y-2">
       <ul className="max-h-80 space-y-1 overflow-auto" aria-label="Chat messages">
         {messages.map((m, i) => (
-          <li key={i} data-role={m.role} className={m.role === "error" ? "text-xs text-red-300" : "text-xs text-slate-200"}>
+          <li key={i} data-role={m.role} className={cn("text-xs", m.role === "error" ? "text-red-300" : "text-slate-200")}>
             <span className="font-semibold">{m.role === "user" ? "You" : m.role === "assistant" ? "AI" : "Error"}: </span>
             {m.text}
           </li>
@@ -91,7 +92,7 @@ export function AssistSwarmPanel() {
         {results.map((r) => (
           <section key={r.role} data-status={r.status} className="rounded border border-slate-800 p-2 text-xs">
             <h4 className="font-semibold text-slate-300">{r.role} · {r.status}</h4>
-            <p className={r.status === "failed" ? "text-red-300" : "whitespace-pre-wrap text-slate-200"}>{r.text}</p>
+            <p className={cn(r.status === "failed" ? "text-red-300" : "whitespace-pre-wrap text-slate-200")}>{r.text}</p>
           </section>
         ))}
       </div>
