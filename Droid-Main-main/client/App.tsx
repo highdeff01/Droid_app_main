@@ -21,6 +21,8 @@ const Recordings = lazy(() => import("./pages/Recordings"));
 const Workflows = lazy(() => import("./pages/Workflows"));
 import PhoneDevicePanel from "./components/phone-device-panel";
 const MobileRemote = lazy(() => import("./pages/MobileRemote"));
+const Assist = lazy(() => import("./pages/Assist"));
+const AssistSettings = lazy(() => import("./pages/AssistSettings"));
 
 const queryClient = new QueryClient();
 
@@ -57,6 +59,8 @@ const App = () => (
                 <Route path="/phone-control" element={<PhoneDevicePanel pairedOnly />} />
                 <Route path="/mobile-remote" element={<MobileRemote />} />
                 <Route path="/mobile-link" element={<MobileRemote />} />
+                <Route path="/assist" element={<Assist />} />
+                <Route path="/assist/settings" element={<AssistSettings />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

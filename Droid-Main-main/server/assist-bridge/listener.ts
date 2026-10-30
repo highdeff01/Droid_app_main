@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import {
   ASSIST_BRIDGE_PROTOCOL_VERSION,
   ASSIST_COMMAND_TYPES,
+  ASSIST_REQUEST_KINDS,
   type AssistBridgeSettings,
   type AssistEnvelope,
 } from "../../shared/assist-bridge";
@@ -171,6 +172,7 @@ export class BridgeListener {
       protocol: ASSIST_BRIDGE_PROTOCOL_VERSION,
       intervalMs: this.deps.settings.intervalMs,
       commands: ASSIST_COMMAND_TYPES,
+      requests: ASSIST_REQUEST_KINDS,
     })));
     ws.on("message", async (data) => {
       const reply = await this.deps.handleCommand(data.toString());
