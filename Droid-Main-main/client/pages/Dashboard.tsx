@@ -183,6 +183,7 @@ import { InteractiveDeviceControlDeck } from "@/components/interactive-device-co
 import { GlobalSettingsModal, DEFAULT_MODEL_URL, DEFAULT_MODEL_NAME, LAN_OLLAMA_URL } from "@/components/global-settings-modal";
 import { AiStatusBadge } from "@/components/ai-status-badge";
 import { AssistBridgeBadge } from "@/components/assist-bridge-status";
+import { AssistBridgeToolbar } from "@/components/assist-bridge-toolbar";
 import { connectAiEndpoint, connectStatusText, type AiConnectResult } from "@/lib/ai-connect";
 import { CoordinateCalibrationModal } from "@/components/coordinate-calibration-modal";
 import { ThreeAiAgentsSquad } from "@/components/three-ai-agents-squad";
@@ -1807,6 +1808,7 @@ export default function Dashboard({
             </div>
           )}
         </div>
+        <AssistBridgeToolbar />
         <Tabs
           value={currentTab}
           onValueChange={handleTabSwitch}
