@@ -11,6 +11,7 @@ import type { NotesStore } from "./notes-store";
 import type { WorkflowProposer } from "./workflow-proposer";
 
 export type ErrorListener = (event: CompanionErrorEvent, task: FixTask) => void;
+export type DecisionListener = (proposal: WorkflowProposal) => void;
 
 /** Saved workflow lookup so fixes and improvements can see the steps that failed. */
 export type WorkflowLookup = (
@@ -29,6 +30,7 @@ export class ErrorBus {
   /** Follow-up ledger on the same durable store: every proposal and decision lands here. */
   readonly ledger: FeedbackLedger;
   private listeners: ErrorListener[] = [];
+  private decisionListeners: DecisionListener[] = [];
 
   constructor(
     store: DurableStore,
@@ -145,11 +147,27 @@ export class ErrorBus {
       editedText: edit?.editedText,
       comment: edit?.comment,
     });
-    return this.proposals.update(proposalId, { status })!;
+    const decided = this.proposals.update(proposalId, { status })!;
+    for (const listener of this.decisionListeners) listener(decided);
+    return decided;
   }
 
   dismissTask(taskId: string): FixTask | undefined {
     return this.tasks.update(taskId, { status: "dismissed" });
+  }
+
+  /** Queues a code file for approval; nothing is written until the proposal is approved. */
+  proposeCodeFile(summary: string, file: { path: string; content: string }): WorkflowProposal {
+    const proposal = this.saveProposal("code_file", summary, []);
+    return this.proposals.update(proposal.id, { file })!;
+  }
+
+  /** Listens for approve/reject decisions (approved code files are written by the listener). */
+  onDecision(listener: DecisionListener): () => void {
+    this.decisionListeners.push(listener);
+    return () => {
+      this.decisionListeners = this.decisionListeners.filter((l) => l !== listener);
+    };
   }
 
   private saveProposal(

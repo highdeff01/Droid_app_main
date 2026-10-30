@@ -107,11 +107,13 @@ export type ProposalStatus = "proposed" | "approved" | "rejected";
 
 export interface WorkflowProposal {
   id: string;
-  origin: "fix" | "improvement";
+  origin: "fix" | "improvement" | "code_file";
   taskId?: string;
   workflowId?: string;
   summary: string;
   steps: WorkflowStepDraft[];
+  /** code_file proposals: the file written into the app only once approved. */
+  file?: { path: string; content: string };
   status: ProposalStatus;
   createdAt: string;
 }

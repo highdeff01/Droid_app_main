@@ -18,12 +18,17 @@ function makeDeps(opts: {
   freshFrame?: () => Promise<FrameOutcome>;
   reportState?: () => Promise<unknown>;
   logNotice?: CommandDeps["logNotice"];
+  v2?: Partial<CommandDeps["v2"]>;
 } = {}): CommandDeps {
+  const refuse = async () => {
+    throw new Error("not wired in this test");
+  };
   return {
     freshFrame: opts.freshFrame ?? (async () => ({ live: false, message: "no frame" })),
     reportState: opts.reportState ?? (async () => ({})),
     runner: opts.runner ?? makeRunner().runner,
     logNotice: opts.logNotice ?? vi.fn(),
+    v2: { userRequest: refuse, stepUpdate: refuse, takeover: refuse, createFile: refuse, requestResult: refuse, ...opts.v2 },
   };
 }
 
