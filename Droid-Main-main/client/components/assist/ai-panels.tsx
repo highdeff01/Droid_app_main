@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { askAi, errorText } from "@/lib/assist-bridge-api";
+import { askAi, captureFrame, errorText } from "@/lib/assist-bridge-api";
 import { ActionButton, OutcomeView, sendRequest, useOutcome } from "./outcome";
 
 interface ChatMessage {
@@ -74,12 +74,20 @@ export function AssistSwarmPanel() {
   const settle = (role: string, status: SwarmResult["status"], text: string) =>
     setResults((all) => all.map((r) => (r.role === role ? { role, status, text } : r)));
 
-  const analyze = () => {
-    setResults(SWARM_ROLES.map(({ role }) => ({ role, status: "running", text: "Analyzing…" })));
+  const analyze = async () => {
+    setResults(SWARM_ROLES.map(({ role }) => ({ role, status: "running", text: "Capturing screen…" })));
+    let imageData: string;
+    try {
+      imageData = await captureFrame();
+    } catch (error) {
+      const text = `No live frame: ${errorText(error)}`;
+      setResults(SWARM_ROLES.map(({ role }) => ({ role, status: "failed", text })));
+      return;
+    }
     const extra = focus.trim() ? ` Focus: ${focus.trim()}` : "";
     for (const { role, prompt } of SWARM_ROLES) {
-      askAi(`${prompt}${extra}`, { sessionId: `assist-swarm-${role.toLowerCase()}` })
-        .then(({ answer, usedFrame }) => settle(role, "ok", usedFrame ? answer : `${answer}\n(no live frame was available)`))
+      askAi(`${prompt}${extra}`, { imageData, sessionId: `assist-swarm-${role.toLowerCase()}` })
+        .then(({ answer }) => settle(role, "ok", answer))
         .catch((error) => settle(role, "failed", errorText(error)));
     }
   };
@@ -87,7 +95,7 @@ export function AssistSwarmPanel() {
   return (
     <div className="space-y-2">
       <Textarea aria-label="Swarm focus" value={focus} onChange={(e) => setFocus(e.target.value)} placeholder="Optional: what should the swarm look for?" />
-      <ActionButton busy={running} onClick={analyze}>Analyze current screen</ActionButton>
+      <ActionButton busy={running} onClick={() => void analyze()}>Analyze current screen</ActionButton>
       <div className="grid gap-2 md:grid-cols-2">
         {results.map((r) => (
           <section key={r.role} data-status={r.status} className="rounded border border-slate-800 p-2 text-xs">

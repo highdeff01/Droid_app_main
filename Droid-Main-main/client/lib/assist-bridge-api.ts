@@ -46,6 +46,12 @@ export async function askAi(question: string, options: { sessionId?: string; ima
   return { answer, usedFrame: Boolean(reply.usedFrame) };
 }
 
+/** Grabs the current live frame (a data URL) from the main app's screen capture; throws on standby. */
+export async function captureFrame(): Promise<string> {
+  const reply = await safeFetchJson<{ imageData: string }>("/api/screen-capture");
+  return unwrap(reply, "imageData", "Screen capture");
+}
+
 export const assistBridgeApi = {
   request: (kind: AssistRequestKind, params: unknown) =>
     post<{ request: AssistRequestRecord }, "request">("/requests", { kind, params }, "request", `Request ${kind}`),

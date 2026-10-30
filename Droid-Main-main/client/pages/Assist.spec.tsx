@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import Assist, { ASSIST_TAB_GROUPS } from "./Assist";
 import { fromDraft } from "./AssistSettings";
 import { buildStep } from "@/components/assist/action-panels";
-import { askAi, assistBridgeApi, getRemoteSettings } from "@/lib/assist-bridge-api";
+import { askAi, assistBridgeApi, captureFrame, getRemoteSettings } from "@/lib/assist-bridge-api";
 
 const jsonReply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -50,6 +50,17 @@ describe("assist chat over the main app's own AI", () => {
   it("surfaces a 502 from an unreachable AI as an error, never an answer", async () => {
     mockFetch(502, { success: false, error: "Qwen HTTP 503: Service Unavailable" });
     await expect(askAi("hello")).rejects.toThrow("Qwen HTTP 503");
+  });
+
+  it("captures the live frame for the swarm from /api/screen-capture", async () => {
+    const fetchMock = mockFetch(200, { success: true, imageData: "data:image/png;base64,AAA" });
+    await expect(captureFrame()).resolves.toBe("data:image/png;base64,AAA");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/screen-capture");
+  });
+
+  it("refuses to analyse when the screen capture is on standby", async () => {
+    mockFetch(503, { success: false, error: "Screen capture standby" });
+    await expect(captureFrame()).rejects.toThrow("standby");
   });
 });
 
