@@ -5,6 +5,7 @@ import { AssistBridgeBadge } from "@/components/assist-bridge-status";
 import { AssistChatPanel, AssistScreenshotPanel, AssistSwarmPanel } from "@/components/assist/ai-panels";
 import { AssistCoordinatePanel, AssistVerifyPanels, AssistWorkflowPanel } from "@/components/assist/action-panels";
 import { AssistActivityPanel } from "@/components/assist/activity-panel";
+import { DrivingFlag } from "@/components/assist/driving-flag";
 
 interface AssistTab {
   value: string;
@@ -45,6 +46,7 @@ export default function Assist() {
       <header className="mb-4 flex flex-wrap items-center gap-2">
         <h1 className="text-lg font-semibold">Assist</h1>
         <AssistBridgeBadge />
+        <DrivingFlag />
         <Link to="/assist/settings" className="text-xs text-cyan-400 underline">droid-new settings</Link>
         <Link to="/dashboard" className="text-xs text-slate-400 underline">Dashboard</Link>
       </header>

@@ -13,7 +13,9 @@ import {
   type AssistRequestRecord,
   type CreatedFile,
   type CreateFilePayload,
+  type DrivingPayload,
   type InterceptNoticePayload,
+  type StoreDeltaPayload,
 } from "../../shared/assist-bridge";
 import { handleCommand, type CommandDeps } from "./commands";
 import type { FileCreator } from "./files";
@@ -24,6 +26,8 @@ import { makeEnvelope } from "./protocol";
 import { RequestBroker } from "./requests";
 import { ScriptRunner, type DeviceExecutor } from "./script-runner";
 import { StepCoordinator, type TakeoverPlanner } from "./steps";
+import { DrivingState, claimLine, yieldedLine } from "./driving";
+import { advanceWatermarks, applySyncEntries, fromPayload, loadSyncEntries, mergeLine, outgoingDelta, toPayload, type StoreWatermarks } from "./store-adapters";
 
 export const settingsUpdateSchema = z
   .object({
@@ -77,20 +81,30 @@ export interface BridgeServiceDeps {
 
 const AUTOMATION_OFF: AssistAutomation = { monitoring: false, autoAssist: false, autoTakeover: false };
 
+/** How often droid-main offers its learned-store delta while the bridge is connected. */
+const STORE_SYNC_MS = 15_000;
+
 /** Owns the bridge: settings, kill switch, listener lifecycle, status and the v2 coordinators. */
 export class AssistBridgeService {
   private listener: BridgeListener | null = null;
   private killSwitch = false;
   private startError: string | null = null;
+  private readonly logLine: (level: LogLevel, message: string) => void;
   readonly runner: ScriptRunner;
   readonly requests: RequestBroker;
   readonly steps: StepCoordinator;
   readonly monitor: ScreenMonitor;
+  /** Who holds the wheel, from droid-new's driving flag. */
+  readonly driving = new DrivingState();
+  /** Store-sync watermarks: the newest learned observation already sent to droid-new. */
+  private watermarks: StoreWatermarks = {};
+  private syncTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private settings: AssistBridgeSettings, private readonly deps: BridgeServiceDeps) {
     this.runner = new ScriptRunner({ execute: deps.execute, isKilled: () => this.killSwitch });
     const isConnected = () => Boolean(this.listener?.connected);
     const log = deps.log ?? ((level: LogLevel, message: string) => console.log(`[assist-bridge] ${level} ${message}`));
+    this.logLine = log;
     const emit = this.emit.bind(this);
     const request = this.request.bind(this);
     this.requests = new RequestBroker({
@@ -128,11 +142,24 @@ export class AssistBridgeService {
     }
     this.steps.start();
     this.monitor.start();
+    this.startStoreSync();
+  }
+
+  /** Syncs learned knowledge with droid-new on connect and on a cadence while the bridge is up. */
+  private startStoreSync(): void {
+    this.stopStoreSync();
+    this.syncTimer = setInterval(() => this.sendStoreDelta(), STORE_SYNC_MS);
+  }
+
+  private stopStoreSync(): void {
+    if (this.syncTimer) clearInterval(this.syncTimer);
+    this.syncTimer = null;
   }
 
   async stop(): Promise<void> {
     const listener = this.listener;
     this.listener = null;
+    this.stopStoreSync();
     this.steps.stop();
     this.monitor.stop();
     await listener?.stop();
@@ -184,6 +211,7 @@ export class AssistBridgeService {
       insecure: !isLoopbackHost(this.settings.host),
       killSwitch: this.killSwitch,
       settings: { ...rest, tokenSet: token.length > 0 },
+      driving: this.driving.orDefault(),
     };
   }
 
@@ -205,7 +233,36 @@ export class AssistBridgeService {
         takeover: (payload) => this.steps.takeover(payload, "assist"),
         createFile: (payload) => this.createFile(payload),
         requestResult: (payload) => this.requests.settle(payload),
+        storeDelta: (payload) => this.receiveStoreDelta(payload),
+        driving: (payload) => this.receiveDriving(payload),
       },
     };
+  }
+
+  /** Merges droid-new's learned-store delta into droid-main's stores, respecting the blacklist. */
+  private receiveStoreDelta(payload: StoreDeltaPayload): { merged: number } {
+    const result = applySyncEntries(fromPayload(payload.entries));
+    this.watermarks = advanceWatermarks(this.watermarks, result.added);
+    this.logLine("INFO", mergeLine("droid-new", result));
+    return { merged: result.added.length };
+  }
+
+  /** Applies droid-new's driving flag; droid-new is the arbiter, so its word is the flag. */
+  private receiveDriving(payload: DrivingPayload): { driver: string } {
+    const local = this.driving.get();
+    const next = this.driving.claim(payload);
+    if (local && local.driver !== next.driver) this.logLine("INFO", yieldedLine(local, next));
+    else this.logLine("INFO", claimLine(next));
+    return { driver: next.driver };
+  }
+
+  /** Sends droid-main's learned-store delta to droid-new (the two-way half of the sync). */
+  sendStoreDelta(): number {
+    if (!this.listener?.connected) return 0;
+    const delta = outgoingDelta(loadSyncEntries(), this.watermarks);
+    if (!delta.length) return 0;
+    this.listener.broadcast(makeEnvelope("store_delta", toPayload(delta)));
+    this.watermarks = advanceWatermarks(this.watermarks, delta);
+    return delta.length;
   }
 }

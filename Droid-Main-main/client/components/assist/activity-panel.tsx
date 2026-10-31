@@ -80,6 +80,21 @@ function StepRow({ step }: { step: StepRecord }) {
   );
 }
 
+function StoreSyncSection() {
+  const { busy, outcome, run } = useOutcome();
+  return (
+    <section aria-label="Shared knowledge" className="space-y-1">
+      <h4 className="text-[11px] font-semibold uppercase text-slate-400">Shared knowledge</h4>
+      <p className="text-xs text-slate-400">
+        Habits, familiar elements, element maps, access paths and blacklists sync both ways with droid-new.
+        A blacklist entry learned in either app blocks the same action in both.
+      </p>
+      <ActionButton busy={busy} onClick={() => void run(() => assistBridgeApi.syncNow())}>Send learned knowledge now</ActionButton>
+      <OutcomeView outcome={outcome} label="Store sync" />
+    </section>
+  );
+}
+
 /** Live bridge activity: user requests from droid-new, step consensus, handoffs and monitor toggles. */
 export function AssistActivityPanel() {
   const [activity, setActivity] = useState<Activity | null>(null);
@@ -105,6 +120,7 @@ export function AssistActivityPanel() {
     <div className="space-y-3">
       {error && <p role="alert" className="text-xs text-red-300">Bridge activity unavailable: {error}</p>}
       <MonitorToggles monitor={activity.monitor} onChanged={(monitor) => setActivity({ ...activity, monitor })} />
+      <StoreSyncSection />
       <section aria-label="Inbox" className="space-y-1">
         <h4 className="text-[11px] font-semibold uppercase text-slate-400">Requests from droid-new</h4>
         {!activity.inbox.length && <p className="text-xs text-slate-500">No requests yet.</p>}

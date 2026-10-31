@@ -88,4 +88,62 @@ describe("bridgeV2EndToEnd", () => {
       ws.terminate();
     }
   });
+
+  it("an inbound 'driving' envelope sets the bridge status driving flag to droid-new's claim", async () => {
+    const { base, service } = await startBridge();
+    const envelope = { type: "driving", id: "drive-1", ts: Date.now(), payload: { driver: "droid-main", since: 7, reason: "handoff for a stalled step" } };
+    const res = await fetch(`${base}/bridge/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(envelope),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.payload.ok).toBe(true);
+    expect(body.payload.result.driver).toBe("droid-main");
+    expect(service.status().driving?.driver).toBe("droid-main");
+  });
+
+  it("an inbound 'store_delta' with an avoidRules entry merges it and reports the count", async () => {
+    const { base } = await startBridge();
+    const now = Date.now();
+    const envelope = {
+      type: "store_delta",
+      id: "sync-1",
+      ts: now,
+      payload: {
+        entries: [
+          {
+            store: "avoidRules",
+            key: "e2e-rule-1",
+            at: now,
+            value: { id: "e2e-rule-1", action: "click", target: "Delete account", x: 0.5, y: 0.5, source: "habit", reason: "destroyed the account", strikes: 2, firstAt: now, lastAt: now, expiresAt: now + 60_000 },
+          },
+        ],
+      },
+    };
+    const res = await fetch(`${base}/bridge/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(envelope),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.payload.ok).toBe(true);
+    expect(body.payload.result.merged).toBe(1);
+  });
+
+  it("a malformed 'store_delta' payload is rejected with a validation error, not applied", async () => {
+    const { base } = await startBridge();
+    const envelope = { type: "store_delta", id: "sync-bad", ts: Date.now(), payload: { entries: [{ store: "not-a-store", key: "k", at: 1, value: {} }] } };
+    const res = await fetch(`${base}/bridge/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(envelope),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.payload.ok).toBe(false);
+    expect(body.payload.error).toContain("Invalid store_delta payload");
+  });
 });

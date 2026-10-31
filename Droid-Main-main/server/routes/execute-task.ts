@@ -12,8 +12,31 @@ import { centralLogHub } from "../log-hub";
 import { queueMobileAction } from "./mobile-stream";
 import { activeNativeControl, runNativeDesktopAction } from "../desktop-control";
 import { logInputActions } from "../input-action-log";
+import { avoidRuleStore, blockedLine, type AvoidRule } from "../assist-bridge/avoid-rules";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Screen pixels per normalised unit, matching the mobile-stream path, for rules synced from droid-new. */
+const SCREEN_W = 1920;
+const SCREEN_H = 1080;
+
+const normalise = (value: unknown, span: number): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value > 1 ? value / span : value;
+};
+
+/**
+ * The avoid rule that blocks this task, or null. Reads the same action/target/point the executor uses
+ * and checks the synced blacklist, so a rule learned in droid-new refuses the action here too.
+ */
+function blockedByBlacklist(body: any): AvoidRule | null {
+  const raw = body.task || body;
+  const action = String(raw.action || raw.actionType || "click").toLowerCase();
+  const target = String(raw.target || raw.targetName || raw.description || raw.text || action).trim() || action;
+  const pos = raw.targetPosition || (raw.x !== undefined ? { x: raw.x, y: raw.y } : null);
+  const point = pos ? { x: normalise(pos.x, SCREEN_W) ?? 0, y: normalise(pos.y, SCREEN_H) ?? 0 } : null;
+  return avoidRuleStore.blocking(action, target, point);
+}
 
 export interface InteractionRecord {
   id: string;
@@ -55,6 +78,15 @@ function waypointsDesc(pts: any[], pos: { x: number; y: number }): string {
  * Every task is logged to the action history with a screenshot of the moment it ran.
  */
 export async function executeDeviceTask(body: any): Promise<DeviceTaskResult> {
+  const blocked = blockedByBlacklist(body);
+  if (blocked) {
+    logInputActions([{ action: String(blocked.action), x: blocked.x ?? undefined, y: blocked.y ?? undefined }], {
+      origin: body.origin || "execute_task",
+      executed: false,
+      error: blockedLine(blocked),
+    });
+    return { success: false, executed: false, blocked: true, error: blockedLine(blocked) };
+  }
   const result = await runDeviceTask(body);
   const raw = body.task || body;
   const position = raw.targetPosition || { x: raw.x, y: raw.y };

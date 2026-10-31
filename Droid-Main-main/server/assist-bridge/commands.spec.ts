@@ -28,7 +28,7 @@ function makeDeps(opts: {
     reportState: opts.reportState ?? (async () => ({})),
     runner: opts.runner ?? makeRunner().runner,
     logNotice: opts.logNotice ?? vi.fn(),
-    v2: { userRequest: refuse, stepUpdate: refuse, takeover: refuse, createFile: refuse, requestResult: refuse, ...opts.v2 },
+    v2: { userRequest: refuse, stepUpdate: refuse, takeover: refuse, createFile: refuse, requestResult: refuse, storeDelta: refuse, driving: refuse, ...opts.v2 },
   };
 }
 

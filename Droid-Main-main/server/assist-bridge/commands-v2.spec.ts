@@ -15,7 +15,7 @@ function makeDeps(v2: Partial<CommandDeps["v2"]> = {}): CommandDeps {
     reportState: async () => ({}),
     runner: new ScriptRunner({ execute: async () => ({ success: true, executed: true }), isKilled: () => false }),
     logNotice: vi.fn(),
-    v2: { userRequest: refuse, stepUpdate: refuse, takeover: refuse, createFile: refuse, requestResult: refuse, ...v2 },
+    v2: { userRequest: refuse, stepUpdate: refuse, takeover: refuse, createFile: refuse, requestResult: refuse, storeDelta: refuse, driving: refuse, ...v2 },
   };
 }
 
