@@ -37,6 +37,8 @@ export const ASSIST_COMMAND_TYPES = [
   "takeover_step",
   "create_file",
   "request_result",
+  "store_delta",
+  "driving",
 ] as const;
 export type AssistCommandType = (typeof ASSIST_COMMAND_TYPES)[number];
 
@@ -52,8 +54,12 @@ export const ASSIST_EVENT_TYPES = [
 ] as const;
 export type AssistEventType = (typeof ASSIST_EVENT_TYPES)[number];
 
+/** Peer message types main sends droid-new (v2): learned-store sync and the driving flag. */
+export const ASSIST_PEER_MESSAGE_TYPES = ["store_delta", "driving"] as const;
+export type AssistPeerMessageType = (typeof ASSIST_PEER_MESSAGE_TYPES)[number];
+
 /** Server → assist message types. `request` carries a main → assist request (v2). */
-export type AssistServerMessageType = "hello" | "frame" | "frame_standby" | "reply" | "request" | AssistEventType;
+export type AssistServerMessageType = "hello" | "frame" | "frame_standby" | "reply" | "request" | AssistEventType | AssistPeerMessageType;
 
 export const SCRIPT_MAX_STEPS = 20;
 export const SCRIPT_MAX_TEXT = 500;
@@ -166,6 +172,54 @@ export const requestResultPayloadSchema = z
   .object({ requestId: z.string().min(1).max(200), ok: z.boolean(), result: z.unknown().optional(), error: z.string().max(4000).optional() })
   .strict();
 export type RequestResultPayload = z.infer<typeof requestResultPayloadSchema>;
+
+// ---------------------------------------------------------------------------
+// Protocol v2 (droid-new → main): learned-store sync and the driving flag.
+// ---------------------------------------------------------------------------
+
+/** Most learned-store entries a single `store_delta` may carry. */
+export const STORE_DELTA_MAX_ENTRIES = 500;
+/** Stores whose learned knowledge syncs both ways; the wire names droid-new uses. */
+export const SYNC_STORES = ["habits", "familiar", "elementMap", "accessPaths", "avoidRules", "patterns"] as const;
+export type SyncStore = (typeof SYNC_STORES)[number];
+
+/** One learned entry as it travels: its store, its identity, when last verified, and the value. */
+export interface StoreDeltaEntry {
+  store: SyncStore;
+  key: string;
+  at: number;
+  value: Record<string, unknown>;
+}
+
+export const storeDeltaEntrySchema = z
+  .object({
+    store: z.enum(SYNC_STORES),
+    key: z.string().min(1).max(300),
+    at: z.number().finite().min(0),
+    value: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
+export interface StoreDeltaPayload {
+  entries: StoreDeltaEntry[];
+}
+
+export const storeDeltaPayloadSchema = z.object({ entries: z.array(storeDeltaEntrySchema).max(STORE_DELTA_MAX_ENTRIES) }).strict();
+
+/** Who owns execution: droid-new is the boss, droid-main only drives when handed the wheel. */
+export const DRIVERS = ["droid-new", "droid-main"] as const;
+export type Driver = (typeof DRIVERS)[number];
+
+/** The driving flag: who holds the wheel, since when, and why. */
+export interface DrivingPayload {
+  driver: Driver;
+  since: number;
+  reason: string;
+}
+
+export const drivingPayloadSchema = z
+  .object({ driver: z.enum(DRIVERS), since: z.number().finite().min(0), reason: z.string().max(2000) })
+  .strict();
 
 /** droid-new's settings as managed remotely from the main app. Every field is optional. */
 export const assistRemoteSettingsSchema = z
@@ -316,6 +370,8 @@ export const ASSIST_COMMAND_PAYLOADS = {
   takeover_step: takeoverStepPayloadSchema,
   create_file: createFilePayloadSchema,
   request_result: requestResultPayloadSchema,
+  store_delta: storeDeltaPayloadSchema,
+  driving: drivingPayloadSchema,
 } satisfies Record<AssistCommandType, z.ZodTypeAny>;
 
 export const assistEnvelopeSchema = z.object({
@@ -366,4 +422,6 @@ export interface AssistBridgeStatus {
   insecure: boolean;
   killSwitch: boolean;
   settings: AssistBridgePublicSettings;
+  /** Who holds the wheel right now, from droid-new's driving flag; null until droid-new reports. */
+  driving: DrivingPayload | null;
 }

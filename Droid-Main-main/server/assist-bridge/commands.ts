@@ -2,10 +2,12 @@ import type {
   AssistCommandType,
   AssistFrame,
   CreateFilePayload,
+  DrivingPayload,
   InterceptNoticePayload,
   RequestResultPayload,
   RunScriptPayload,
   StepUpdatePayload,
+  StoreDeltaPayload,
   TakeoverStepPayload,
   UserRequestPayload,
 } from "../../shared/assist-bridge";
@@ -20,6 +22,10 @@ export interface V2CommandDeps {
   takeover: (payload: TakeoverStepPayload) => Promise<unknown>;
   createFile: (payload: CreateFilePayload) => Promise<unknown>;
   requestResult: (payload: RequestResultPayload) => unknown;
+  /** v2 peer: droid-new's learned-store delta, merged into droid-main's stores. */
+  storeDelta: (payload: StoreDeltaPayload) => unknown;
+  /** v2 peer: droid-new's driving flag, so the UI shows who holds the wheel. */
+  driving: (payload: DrivingPayload) => unknown;
 }
 
 export interface CommandDeps {
@@ -53,6 +59,8 @@ const HANDLERS: Record<AssistCommandType, Handler> = {
   takeover_step: (payload: TakeoverStepPayload, deps) => deps.v2.takeover(payload),
   create_file: (payload: CreateFilePayload, deps) => deps.v2.createFile(payload),
   request_result: async (payload: RequestResultPayload, deps) => deps.v2.requestResult(payload),
+  store_delta: async (payload: StoreDeltaPayload, deps) => deps.v2.storeDelta(payload),
+  driving: async (payload: DrivingPayload, deps) => deps.v2.driving(payload),
 };
 
 /** Validates and executes one command envelope; always resolves with its reply envelope. */

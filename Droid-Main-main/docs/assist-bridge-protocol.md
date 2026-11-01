@@ -96,9 +96,37 @@ and regulation flows both ways. Everything below is additive; v1 clients keep wo
 | `takeover_step` | `{ stepId, goal, step, tried?, reason?, screenshots?, script? }` | handoff record `{ id, stepId, origin: "assist", outcome, detail?, result? }` |
 | `create_file` | `{ kind: "workflow", workflow }` \| `{ kind: "fix_script", name, script: { steps } }` \| `{ kind: "code", path, content, summary }` | `{ kind, status: "written", path }` or `{ kind: "code", status: "proposed", proposalId, path }` |
 | `request_result` | `{ requestId, ok, result?, error? }` | the settled request record. Answers a main → assist `request` |
+| `store_delta` | `{ entries: [{ store, key, at, value }] }` | `{ merged }`. A delta of learned knowledge; see learned-store sync |
+| `driving` | `{ driver: "droid-new" \| "droid-main", since, reason }` | `{ driver }`. The driving flag; see who's driving |
 
 `script` and workflow `steps` use the same step grammar and limits as `run_script` (a workflow may
 have up to 100 steps). `screenshots` are at most five `data:image/(png|jpeg);base64,` URLs.
+
+### Learned-store sync
+
+Both apps keep their learned knowledge in the same store names — `habits`, `familiar`, `elementMap`,
+`accessPaths`, `avoidRules`, `patterns` — so an element learned reliably in one app becomes known to
+the other without a parallel store. Each app tracks a watermark per store and key (the newest `at` it
+has sent or seen) and sends only what changed, as a `store_delta`. Entries are keyed by their natural
+id; a conflict is settled by the most recent verified observation, and a tie keeps the local entry.
+Nothing is dropped: an inbound key the receiver lacks is added, a newer one replaces, an equal or older
+one is kept. Merge results are logged (`Store sync from <app>: learned N … kept M`).
+
+The `avoidRules` store is the shared blacklist. An entry blocks an action in both apps: the check runs
+at the single dispatch point (`server/routes/execute-task.ts` in the main app), matching action,
+target and, for pointer actions, the point. A rule synced from droid-new therefore refuses the same
+action here too. Rules have a lifetime (`expiresAt`); an expired rule no longer blocks.
+
+The two-way sync runs on connect and on a cadence (`STORE_SYNC_MS`, 15 s) and can be triggered by hand
+from the Assist page (`POST /api/assist-bridge/sync`).
+
+### Who's driving
+
+droid-new is the arbiter: it owns execution and settles disputes. The driving flag says which app
+currently owns execution and is broadcast as a `driving` peer message whenever it changes
+(`{ driver, since, reason }`). Both UIs show it (`DrivingFlag` on the main app's Assist page). A
+simultaneous command while droid-new drives does not take effect — it becomes a queued suggestion that
+droid-new may accept or dismiss. Disagreements route to the resolution center.
 
 ### Server → assist requests
 
@@ -185,3 +213,5 @@ middleware):
 | `POST /files` | create a workflow, fix script or code-file proposal |
 | `GET /monitor`, `POST /monitor` `{ monitoring?, autoAssist?, autoTakeover? }` | monitor status and toggles |
 | `POST /monitor/problem` `{ message, source? }` | report a problem for auto-assist |
+| `GET /driving` | the current driving flag `{ driver, since, reason }` |
+| `POST /sync` | send the main app's learned-store delta now; `{ sent }` is how many entries went |

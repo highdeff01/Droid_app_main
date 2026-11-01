@@ -59,6 +59,12 @@ export function createAssistBridgeRouter(bridge: AssistBridgeService): Router {
     }
     res.json({ success: true, status: bridge.setKillSwitch(parsed.data.tripped) });
   });
+  router.get("/driving", (_req, res) => {
+    res.json({ success: true, driving: bridge.status().driving });
+  });
+  router.post("/sync", (_req, res) => {
+    res.json({ success: true, sent: bridge.sendStoreDelta() });
+  });
   registerV2Routes(router, bridge);
   return router;
 }

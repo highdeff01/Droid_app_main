@@ -9,6 +9,7 @@ import type {
   AssistRequestRecord,
   CreateFilePayload,
   CreatedFile,
+  DrivingPayload,
   HandoffRecord,
   InboxRequest,
   RunScriptResult,
@@ -69,6 +70,10 @@ export const assistBridgeApi = {
     post<{ monitor: AssistMonitorStatus }, "monitor">("/monitor", changes, "monitor", "Monitor update"),
   reportProblem: (message: string, source?: string) =>
     post<{ problem: unknown }, "problem">("/monitor/problem", { message, source }, "problem", "Problem report"),
+  /** Who holds the wheel right now, from droid-new's driving flag. */
+  driving: () => get<{ driving: DrivingPayload }, "driving">("/driving", "driving", "Loading driving flag"),
+  /** Asks the bridge to send droid-main's learned-store delta now; resolves with how many entries went. */
+  syncNow: () => post<{ sent: number }, "sent">("/sync", {}, "sent", "Store sync"),
 };
 
 /** droid-new's current settings, fetched over the bridge. */
